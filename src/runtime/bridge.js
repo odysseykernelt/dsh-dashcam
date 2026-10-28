@@ -15,6 +15,13 @@ const { parseRequestTarget, toPathString, capabilityNeedsForOpen } = require('./
 
 const fsp = fs.promises;
 
+// 复核用的 realpath 必须是模块加载时抓到的原生版本。
+// Bridge 安装后 fs.realpathSync 是包装过的；异步路径里 callDepth 已经归零，
+// 再调它就会重新进守卫链——轻则多写一条账本，重则把「只写」的 open 判成越权。
+const REAL_REALPATH_SYNC = typeof fs.realpathSync.native === 'function'
+  ? fs.realpathSync.native
+  : fs.realpathSync;
+
 /** 补丁式覆盖永远是真子集。把差集明确写出来，比假装它不存在有用。 */
 const KNOWN_GAPS = Object.freeze([
   'vm 内生成的代码与原生扩展（.node）：同一进程内没有第二道墙，根治只有分进程或分 realm',
@@ -146,7 +153,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
     }
     let resolved = null;
     try {
-      resolved = fs.realpathSync(pathValue);
+      resolved = REAL_REALPATH_SYNC(pathValue);
     } catch {
       // 新建文件尚不存在时 realpath 会 ENOENT；路径级判定已在 guardOpen 完成。
       return;
@@ -404,12 +411,17 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
       for (const method of ['truncate', 'chmod', 'chown', 'utimes', 'mkdtemp']) {
         patchMethod(fsp, method, wrapFsMethod('write'), `fsp.${method}`);
       }
-      for (const method of ['symlink', 'link']) {
-        patchMethod(fsp, method, (original) => function wrappedWriteTarget(...args) {
-          guardPath('write', args[1]);
-          return original.apply(this, args);
-        }, `fsp.${method}`);
-      }
+      patchMethod(fsp, 'symlink', (original) => function wrappedSymlink(...args) {
+        guardPath('write', args[1]);
+        return original.apply(this, args);
+      }, 'fsp.symlink');
+      // 硬链接的 args[0] 是已存在文件：必须同时要读权限，与 fs.link 同口径。
+      // 只守 args[1] 的话，fs.promises.link 就是那条硬链接逃逸的后门。
+      patchMethod(fsp, 'link', (original) => function wrappedLink(...args) {
+        guardPath('read', args[0]);
+        guardPath('write', args[1]);
+        return original.apply(this, args);
+      }, 'fsp.link');
     }
   }
 

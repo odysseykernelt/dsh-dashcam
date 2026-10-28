@@ -192,6 +192,28 @@ test('绕过测试：覆写敏感环境变量需要 cred.write，而不是 env.w
   }
 });
 
+test('绕过测试：fs.promises.link 需要读权限（硬链接二次命名）', () => {
+  const runtime = setup({
+    requests: [{ cap: 'fs.write', scope: { paths: ['$PLUGIN/**'] }, reason: '写入自身目录' }],
+  });
+  const outsideDir = tempDir('bypass-hardlink-');
+  const outside = path.join(outsideDir, 'secret.txt');
+  fs.writeFileSync(outside, 'secret');
+  const bridge = createBridge({ guard: runtime.guard, ledger: runtime.ledger, plugin: runtime.manifest });
+  try {
+    // 只给写权限：把范围外文件 link 进插件目录，等于给它起了第二个名字。
+    // realpath 帮不上忙（两个名字都是真的），所以 link 必须同时要读权限。
+    assert.throws(
+      () => fs.promises.link(outside, path.join(runtime.dir, 'stolen.txt')),
+      /未声明|未授予|manifest/,
+    );
+  } finally {
+    bridge.uninstall();
+    cleanup(runtime.dir);
+    cleanup(outsideDir);
+  }
+});
+
 test('覆盖自检：句柄与实例入口登记在 guarded 里，knownGaps 不为空', () => {
   const runtime = setup({ requests: [] });
   const bridge = createBridge({ guard: runtime.guard, ledger: runtime.ledger, plugin: runtime.manifest });

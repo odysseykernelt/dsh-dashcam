@@ -201,6 +201,17 @@ JSONL，逐行追加，字段固定（不允许自由扩展）：
 v2 要求且必须是布尔值——升版本不能让历史账本变成“损坏”。
 v1/v2 账本在无 macKey 时仍可验证；启用 macKey 后每行都必须带合法 mac，旧账本启用密钥需整体重新锚定。
 密钥通过 `new Ledger(file, { macKey })` 或 `new LocalHost({ ledgerMacKey })` 注入，不落盘。
+
+mac 的三条硬规则（v3 实现口径）：
+
+1. **无密钥校验 v3 账本必须失败**（`mac_key_missing`）。文件自称 v3 却没验 mac 就返回 ok，
+   等于把「没验」说成「验过了」。
+2. **禁止降版本**：v3 记录之后再出现 v1/v2 行 → `version_downgrade`。否则追加一条无 mac 的
+   低版本行就能绕过。升级前的历史行（位于首条 v3 之前）不受影响。
+3. **尾部截断只能靠外部锚点发现**。`ledger.anchor()` 返回 `{count, head, mac}`，
+   `verify({ anchor })` 比对 `anchor_count_mismatch` / `anchor_head_mismatch`。
+   锚点必须存在账本之外才有意义；没有 `macKey` 时 `anchor()` 返回 `null`
+   （无密钥的 head 谁都能算，拿它当锚点等于没锚）。
 `interceptions()` 按 `intercepted=true` 给出
 “实际拦截的未声明 API 调用”清单，供离线审计与月度度量共用。
 

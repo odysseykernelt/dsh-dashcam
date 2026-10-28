@@ -195,6 +195,18 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 - [docs/ROLLOUT.md](docs/ROLLOUT.md)：六阶段上线、熔断阈值、三级回滚、双钥轮换、应急下架、月度度量。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.7.0 修复（mac 完整性三处硬伤）
+
+- **无密钥校验不再静默通过**：账本含 v3 行但 `verify()` 没拿到 `macKey` 时返回
+  `mac_key_missing`。之前这种情况 `ok === true`，等于把「没验 mac」说成「验过了」。
+- **禁止降版本**：v3 之后出现 v1/v2 行 → `version_downgrade`，堵住「追加一条无 mac 的低版本行」。
+- **新增外部锚点**：`ledger.anchor()` / `verify({ anchor })`。哈希链发现不了尾部截断——
+  砍掉最后几行，剩下的前缀依然自洽；锚点是唯一能发现它的东西。
+- **`fs.promises.link` 补上读权限**：`fs.link` 上轮已修，promises 版本漏了，硬链接逃逸还在。
+- **fd 复核改用原生 realpath**：异步 `open` 的回调里 `callDepth` 已归零，用被包装的
+  `fs.realpathSync` 会重新进守卫链——多写一条账本，且「只写」的 open 会被自己判成越权。
+- 用例数 108 → 114（新增 `test/ledger-mac.test.js` 五条 + 硬链接用例一条）。
+
 ## 1.6.0 新增（封闭世界补完 + 路径硬化）
 
 - **net / proc 能力句柄**：`createCapabilityHandles` 现在返回 `{ fs, net, proc }`。

@@ -65,6 +65,14 @@ function hmacSha256(key, text) {
   return crypto.createHmac('sha256', key).update(text, 'utf8').digest('hex');
 }
 
+/** 定长常量比较：长度不同直接 false，长度相同再走 timingSafeEqual。 */
+function safeEqualHex(left, right) {
+  const a = Buffer.from(String(left || ''), 'utf8');
+  const b = Buffer.from(String(right || ''), 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 function recordVersion(parsed) {
   if (parsed && parsed.v === 3) return 3;
   if (parsed && parsed.v === 2) return 2;
@@ -232,13 +240,21 @@ class Ledger {
     return this.records().filter((record) => record && record.intercepted === true);
   }
 
-  /** 逐行校验哈希链，返回第一处断裂位置与全部错误。 */
-  verify() {
+  /**
+   * 逐行校验哈希链与 mac。
+   *
+   * @param {{anchor?: {count:number, head:string, mac:string}}} options
+   *   传入外部锚点时额外检测「尾部被截断 / 追加」——纯哈希链发现不了这一类。
+   */
+  verify({ anchor = null } = {}) {
     const lines = REAL_EXISTS_SYNC(this.file)
       ? REAL_READ_FILE_SYNC(this.file, 'utf8').split(/\r?\n/).filter(Boolean)
       : [];
     let expectedPrev = 'GENESIS';
     const errors = [];
+    // 是否已经出现过带 mac 的行。出现之后再冒出低版本行，就是「降版本绕过 mac」。
+    let sawMacRecord = false;
+
     lines.forEach((line, index) => {
       let parsed;
       try {
@@ -247,19 +263,90 @@ class Ledger {
         errors.push({ line: index + 1, code: 'json_invalid', detail: error.message });
         return;
       }
+      const version = recordVersion(parsed);
+      if (sawMacRecord && version < 3) {
+        errors.push({
+          line: index + 1,
+          code: 'version_downgrade',
+          detail: 'v3 记录之后出现低版本行：疑似降版本以绕过 mac',
+        });
+      }
+      if (version >= 3) sawMacRecord = true;
       const result = verifyLine(parsed, index + 1, expectedPrev, this.macKey);
       if (!result.ok) {
         for (const error of result.errors) errors.push({ line: index + 1, ...error });
       }
       if (parsed && parsed.hash) expectedPrev = parsed.hash;
     });
+
+    // 账本自称 v3（有 mac 字段）却没给密钥：这时 mac 根本没被校验过，
+    // 不能让 verify 返回 ok 造成「已验签」的错觉。
+    if (sawMacRecord && !this.macKey) {
+      errors.push({
+        line: 0,
+        code: 'mac_key_missing',
+        detail: '账本包含 v3 记录，但未提供 macKey：mac 未被校验，不能当作完整审计',
+      });
+    }
+
+    const head = lastHashOf(lines);
+    if (anchor) {
+      if (!this.macKey) {
+        errors.push({
+          line: 0,
+          code: 'mac_key_missing',
+          detail: '校验外部锚点需要 macKey：没有密钥的 head 谁都能算',
+        });
+      } else if (typeof anchor.mac !== 'string') {
+        errors.push({ line: 0, code: 'anchor_invalid', detail: '锚点缺少 mac' });
+      } else if (!safeEqualHex(hmacSha256(this.macKey, `${anchor.count}:${anchor.head}`), anchor.mac)) {
+        errors.push({ line: 0, code: 'anchor_mac_mismatch', detail: '锚点 mac 不匹配：不是本密钥签发的锚点' });
+      } else if (Number(anchor.count) !== lines.length) {
+        errors.push({
+          line: 0,
+          code: 'anchor_count_mismatch',
+          detail: `锚点记录 ${anchor.count} 行，实际 ${lines.length} 行（尾部被截断或追加）`,
+        });
+      } else if (anchor.head !== head) {
+        errors.push({ line: 0, code: 'anchor_head_mismatch', detail: '锚点 head 与实际末行不一致' });
+      }
+    }
+
     return {
       ok: errors.length === 0,
       count: lines.length,
-      head: lastHashOf(lines),
+      head,
       errors,
     };
   }
+
+  /**
+   * 产出可外发的锚点：记录数 + 末行 hash + 两者被密钥签过的 mac。
+   *
+   * 为什么必须有：哈希链能发现「改中间行」，但发现不了「砍掉尾巴」——
+   * 剩下的前缀依然是一条自洽的链。只有把锚点存到账本之外（另一台机器、
+   * 另一个文件、日志系统），截断才会暴露。没有 macKey 时返回 null：
+   * 无密钥的 head 谁都能算，拿它当锚点等于没锚。
+   */
+  anchor() {
+    if (!this.macKey) return null;
+    const lines = REAL_EXISTS_SYNC(this.file)
+      ? REAL_READ_FILE_SYNC(this.file, 'utf8').split(/\r?\n/).filter(Boolean)
+      : [];
+    const head = lastHashOf(lines);
+    const count = lines.length;
+    return { count, head, mac: hmacSha256(this.macKey, `${count}:${head}`) };
+  }
 }
 
-module.exports = { Ledger, FIELDS, FIELDS_V1, FIELDS_V2, FIELDS_V3, verifyLine, recordVersion, hmacSha256 };
+module.exports = {
+  Ledger,
+  FIELDS,
+  FIELDS_V1,
+  FIELDS_V2,
+  FIELDS_V3,
+  verifyLine,
+  recordVersion,
+  hmacSha256,
+  safeEqualHex,
+};
