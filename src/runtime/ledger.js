@@ -15,6 +15,8 @@ const REAL_CLOSE_SYNC = fs.closeSync;
 const REAL_MKDIR_SYNC = fs.mkdirSync;
 const REAL_READ_FILE_SYNC = fs.readFileSync;
 const REAL_EXISTS_SYNC = fs.existsSync;
+const REAL_STAT_SYNC = fs.statSync;
+const REAL_FSTAT_SYNC = fs.fstatSync;
 
 // v1 没有 intercepted。既然升到 v2，就必须让 v1 的历史账本继续可验证：
 // 哈希链的价值在于「昨天的记录今天还能重算」，不能一升级就把旧账判成损坏。
@@ -175,6 +177,9 @@ class Ledger {
     this.seq = 0;
     this.lastHash = 'GENESIS';
     REAL_MKDIR_SYNC(path.dirname(this.file), { recursive: true });
+    // 单写者契约：账本用 seq 续号，跨进程并发追加会产生重复 seq，
+    // 结果是「自己写的账本自己验不过」。用文件大小做低成本并发检测。
+    this.size = REAL_EXISTS_SYNC(this.file) ? REAL_STAT_SYNC(this.file).size : 0;
     this._recover();
   }
 
@@ -203,16 +208,25 @@ class Ledger {
     const entry = buildRecord(record, seq, this.lastHash, record.ts || this.now(), this.macKey);
     const payload = Buffer.from(`${stableStringify(entry)}\n`, 'utf8');
     const fd = REAL_OPEN_SYNC(this.file, 'a');
+    let expected = null;
     try {
+      const actual = REAL_FSTAT_SYNC(fd).size;
+      if (actual !== this.size) {
+        throw new Error(
+          `检测到并发写入：账本期望 ${this.size} 字节，实际 ${actual} 字节。Ledger 只支持单写者`,
+        );
+      }
       let offset = 0;
       while (offset < payload.length) {
         offset += REAL_WRITE_SYNC(fd, payload, offset, payload.length - offset);
       }
+      expected = actual + payload.length;
     } finally {
       REAL_CLOSE_SYNC(fd);
     }
     this.seq = seq;
     this.lastHash = entry.hash;
+    this.size = expected;
     return entry;
   }
 

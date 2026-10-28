@@ -32,6 +32,11 @@ function createModuleRedirect({ handles, pluginRoot = null } = {}) {
   if (!handles || !handles.fs) throw new Error('createModuleRedirect 需要 handles.fs');
   const originalLoad = Module._load;
   const root = pluginRoot ? path.resolve(pluginRoot) : null;
+  // Windows 文件系统不区分大小写，字符串比较区分——不折叠的话，
+  // 宿主传 `C:\\PLUGIN`、实际模块是 `c:\\plugin\\...` 时会静默判定为「非插件模块」，
+  // require('fs') 直接拿到原生 fs，整个封闭世界失效且没有任何告警。
+  const fold = process.platform === 'win32' ? (value) => value.toLowerCase() : (value) => value;
+  const rootKey = root ? fold(root) : null;
   let installed = false;
   let loadDepth = 0;
   let hits = 0;
@@ -41,7 +46,8 @@ function createModuleRedirect({ handles, pluginRoot = null } = {}) {
     if (!parent) return loadDepth > 0;
     const filename = typeof parent.filename === 'string' ? path.resolve(parent.filename) : '';
     if (!filename) return loadDepth > 0;
-    return filename === root || filename.startsWith(root + path.sep);
+    const key = fold(filename);
+    return key === rootKey || key.startsWith(rootKey + path.sep);
   }
 
   function patched(request, parent) {

@@ -196,6 +196,31 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.9.0 修复（三视角审查）
+
+一次红队 / 架构 / 边界的三视角审查，确认 3 条必改、6 条建议，全部修完：
+
+- **H1 补丁失败不再静默**：`patchMethod` 装不上时记入 `unpatched`，`coverage()` 给出
+  `{unpatched, complete}`，并写一条 `ruleId='bridge_incomplete'` 账本。此前某个入口 patch 失败，
+  它就是裸的，而 `installed` 仍是 true。
+- **H2 完整性校验接线**：`createGuardChain({integrityEvery})`（默认 64）在判定循环里抽样
+  `verifyIntegrity()`。此前这套机制**只被测试调用过**——声称的防篡改在生产路径上不存在。
+- **H3 Windows 大小写**：模块重定向的父模块判定改为大小写不敏感（仅 win32）。
+  此前 `pluginRoot` 大小写与实际不一致会让 `require('fs')` 静默拿回原生 fs。
+- **M1 fetch 默认超时**：句柄的 `fetch` 在调用方未给 `signal` 时注入 30s 超时
+  （Node 原生 fetch 没有默认 timeout）。
+- **M2 glob cwd 不再静默忽略**：认不出的 `cwd` 类型现在直接拒绝，而不是退回
+  `process.cwd()` 让判定对象和真实遍历对象错位。（Node 自身的 `fs.glob` 目前只接受 string cwd，
+  URL 分支是防御性的。）
+- **M3 未知协议给出明确拒绝**：以前会回落到 http 模块，抛的是 Node 的
+  `ERR_INVALID_PROTOCOL`（错误信息误导）；现在直接说明「不支持该协议」。**实测并未真的发出
+  跨协议请求**，所以这条从"协议混淆"降级为"错误契约"问题。
+- **M4 单运行时**：`activate()` 拒绝第二个活动运行时（原生 Hook 会叠加、内层账本会漏记）。
+- **M5 账本单写者检测**：并发追加会报错，而不是写出重复 `seq` 让账本自己验不过。
+- **M6 失陷可见**：`coverage().compromised` 暴露完整性状态。
+- **L1/L2**：批量判定加上限（10k 目标）、ESM 入口给出明确错误。
+- 用例数 135 → 146。
+
 ## 1.8.0 新增（把「一条记录代表 N 个目标」这件事做完整）
 
 - **glob 账本聚合**：`fs.glob` / `globSync` / `fs.promises.glob` 不再一个结果一条账本。

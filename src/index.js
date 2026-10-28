@@ -11,6 +11,14 @@ const { createCapabilityHandles, createModuleRedirect } = require('./runtime/han
 
 const PLUGIN_ID = 'dsh-covenant';
 
+/**
+ * 进程内只能有一个活动运行时。
+ * 原生 Hook 会叠加：第二个 Bridge 把第一个的包装器当成「原始函数」，
+ * 于是判定只落在最外层那个 guard 上，内层账本静默漏记。
+ * LocalHost 用 `if (this.active) throw` 保证了这一点，activate 以前没有。
+ */
+let activeRuntimes = 0;
+
 /** 为一个插件建立独立受控运行时：守卫 + 一次性 grant + 可选 Bridge。 */
 function createPluginRuntime({
   manifest,
@@ -76,6 +84,13 @@ function createPluginRuntime({
  * 非侵入式：legacy 插件不拒绝激活，而是以 quarantine 档运行（没有声明就没有能力）。
  */
 function activate(host = {}) {
+  // 原生 Hook 会叠加：详见文件顶部 activeRuntimes 的注释。
+  if (activeRuntimes > 0) {
+    throw new Error(
+      '同一进程只能有一个活动的 covenant 运行时：原生 Hook 会叠加，后装的会独吞判定。'
+      + '请先 deactivate 上一个插件，或用 LocalHost 串行装载。',
+    );
+  }
   const runtime = createPluginRuntime({
     manifest: host.manifest,
     grants: host.grants || [],
@@ -99,11 +114,17 @@ function activate(host = {}) {
     host.on('pre-execute', runtime.guard.check);
   }
 
+  activeRuntimes += 1;
+  let released = false;
   return {
     id: PLUGIN_ID,
     runtime,
     deactivate() {
       runtime.dispose();
+      if (!released) {
+        released = true;
+        activeRuntimes -= 1;
+      }
     },
   };
 }

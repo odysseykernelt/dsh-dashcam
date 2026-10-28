@@ -35,6 +35,8 @@ function createGuardChain({
   home,
   onEvent = null,
   nativeHooks = false,
+  // 每 N 次判定抽样做一次完整性校验（0 = 关闭）。防线不接线等于不存在。
+  integrityEvery = 64,
 } = {}) {
   let compromised = null;
   let hooks = null;
@@ -42,6 +44,7 @@ function createGuardChain({
   // 窗口内照常判定、照常记账，只是不把拒绝抛出去——否则任何 legacy 插件的
   // 第一次 fs 调用都会让「安装」失败，非侵入式就名存实亡了。
   let observeDepth = 0;
+  let integrityTicks = 0;
   const stats = { requests: 0, allowed: 0, denied: 0, intercepted: 0, observed: 0, errors: 0, oneSealConsumed: 0 };
 
   function emit(event) {
@@ -61,6 +64,14 @@ function createGuardChain({
   function check(operation, payload = {}, options = {}) {
     const record = options.record !== false;
     stats.requests += 1;
+    if (integrityEvery > 0 && hooks && ++integrityTicks >= integrityEvery) {
+      integrityTicks = 0;
+      try {
+        hooks.verifyIntegrity();
+      } catch {
+        // 检测本身失败不改变本次判定；真被篡改时下一次判定会带 compromised。
+      }
+    }
     const ctx = { pluginRoot, home };
     let derived;
     try {
@@ -225,6 +236,12 @@ function createGuardChain({
    */
   function enforceBatch(operation, payloads = []) {
     if (!Array.isArray(payloads) || payloads.length === 0) return enforce(operation, {});
+    if (payloads.length > MAX_BATCH_TARGETS) {
+      throw new CovenantDenied(
+        `批量判定目标过多：${payloads.length} 超过上限 ${MAX_BATCH_TARGETS}，请调用方分块`,
+        { ruleId: 'batch_too_large' },
+      );
+    }
 
     // 混合能力的批次不能只写「最后一个」（或第一个）能力名：那会把 cred.read
     // 藏进 fs.read 里，事后审计就看不到凭证访问了。收集去重集合，>1 就记 mixed。
@@ -390,13 +407,18 @@ function createGuardChain({
       return observeDepth > 0;
     },
     coverage() {
-      if (hooks && typeof hooks.coverage === 'function') return hooks.coverage();
-      return {
-        entries: 0,
-        guarded: [],
-        knownGaps: ['原生 Hook 尚未安装：此时没有任何入口受控'],
-        caveat: '未安装 Hook 时守卫链只能靠宿主显式调用。',
-      };
+      const base = hooks && typeof hooks.coverage === 'function'
+        ? hooks.coverage()
+        : {
+          entries: 0,
+          guarded: [],
+          unpatched: [],
+          complete: false,
+          knownGaps: ['原生 Hook 尚未安装：此时没有任何入口受控'],
+          caveat: '未安装 Hook 时守卫链只能靠宿主显式调用。',
+        };
+      // 失陷状态必须能从外部看到，否则「已失陷」只活在 guard 的内存里。
+      return { ...base, compromised: compromised ? String(compromised) : null };
     },
     installNativeHooks,
     uninstallNativeHooks,
@@ -417,6 +439,9 @@ function createGuardChain({
   if (nativeHooks) installNativeHooks();
   return api;
 }
+
+/** 单次批量判定的目标数上限：同步逐条判定会阻塞事件循环，必须由调用方分块。 */
+const MAX_BATCH_TARGETS = 10_000;
 
 function isInterceptionCode(code) {
   return code === 'not_declared' || code === 'legacy' || code === 'derive_failed';

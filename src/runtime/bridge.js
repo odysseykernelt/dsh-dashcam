@@ -7,6 +7,7 @@ const net = require('node:net');
 const tls = require('node:tls');
 const dns = require('node:dns');
 const path = require('node:path');
+const { fileURLToPath } = require('node:url');
 const childProcess = require('node:child_process');
 const { CovenantDenied } = require('../errors');
 const { keyPatternCovers } = require('../contract/capabilities');
@@ -76,6 +77,9 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
 
   const checks = [];
   const restores = [];
+  // 装不上的入口：必须可见。否则「守卫已安装」是假象——某个入口 patch 失败，
+  // 它就是裸的，而 installed 仍然是 true。
+  const unpatched = [];
   const pluginInfo = plugin || guard.manifest || {};
   let envProxy = null;
   let envDescriptor = null;
@@ -86,10 +90,10 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
   let callDepth = 0;
 
   function patchMethod(target, prop, maker, label) {
-    if (!target) return false;
+    if (!target) { unpatched.push({ prop, reason: 'target_missing' }); return false; }
     const descriptor = Object.getOwnPropertyDescriptor(target, prop);
     const original = target[prop];
-    if (typeof original !== 'function') return false;
+    if (typeof original !== 'function') { unpatched.push({ prop, reason: 'not_function' }); return false; }
     const inner = maker(original);
     const wrapped = function passthroughAware(...args) {
       if (callDepth > 0) return original.apply(this, args);
@@ -100,7 +104,10 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
         callDepth -= 1;
       }
     };
-    if (!safeDefine(target, prop, wrapped, descriptor)) return false;
+    if (!safeDefine(target, prop, wrapped, descriptor)) {
+      unpatched.push({ prop, reason: 'define_failed' });
+      return false;
+    }
     checks.push({ target, prop, original, wrapped, label: label || prop });
     restores.push(() => {
       try {
@@ -187,9 +194,18 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
     return path.resolve(parent, entry.name);
   }
 
+  /**
+   * glob 的基准目录。Node 允许 `cwd` 是字符串**或 URL**；以前只认字符串，
+   * URL 会被静默忽略并退回 process.cwd()——结果路径按错误的基准解析，
+   * 判定的对象和真实被遍历的对象就不是同一个了。认不出的类型直接拒绝。
+   */
   function globBaseDir(args) {
-    const options = args.find((arg) => arg && typeof arg === 'object' && typeof arg.cwd === 'string');
-    return options ? path.resolve(options.cwd) : process.cwd();
+    const options = args.find((arg) => arg && typeof arg === 'object' && arg.cwd !== undefined);
+    if (!options) return process.cwd();
+    const { cwd } = options;
+    if (typeof cwd === 'string') return path.resolve(cwd);
+    if (cwd instanceof URL) return path.resolve(fileURLToPath(cwd));
+    throw new Error(`glob 的 cwd 类型不受支持：${Object.prototype.toString.call(cwd)}（只接受 string 或 URL）`);
   }
 
   /**
@@ -241,7 +257,11 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
   function installGlob() {
     if (typeof fs.globSync === 'function') {
       patchMethod(fs, 'globSync', (original) => function wrappedGlobSync(...args) {
-        return guardGlobResults(original.apply(this, args), globBaseDir(args));
+        // 先算基准目录再调原生：写成 guardGlobResults(original(...), globBaseDir(args))
+        // 时，参数求值顺序会让原生在 cwd 校验之前先跑，非法 cwd 由 Node 自己抛，
+        // 我们那条「不静默忽略」的拒绝永远走不到。
+        const baseDir = globBaseDir(args);
+        return guardGlobResults(original.apply(this, args), baseDir);
       }, 'fs.globSync');
     }
     if (typeof fs.glob === 'function') {
@@ -637,7 +657,10 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
     };
     const target = process.env;
     envDescriptor = Object.getOwnPropertyDescriptor(process, 'env');
-    if (!envDescriptor || envDescriptor.configurable === false) return;
+    if (!envDescriptor || envDescriptor.configurable === false) {
+      unpatched.push({ prop: 'process.env', reason: 'descriptor_locked' });
+      return;
+    }
 
     let inGuard = false;
     envProxy = new Proxy(target, {
@@ -681,6 +704,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
 
     if (!safeDefine(process, 'env', envProxy, envDescriptor)) {
       envProxy = null;
+      unpatched.push({ prop: 'process.env', reason: 'define_failed' });
       return;
     }
     checks.push({
@@ -727,7 +751,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
         }
       }
     }
-    return { ok: violations.length === 0, violations };
+    return { ok: violations.length === 0 && unpatched.length === 0, violations, unpatched: unpatched.slice() };
   }
 
   /** 覆盖自检：哪些入口受控、哪些不受控，一次说清楚。 */
@@ -735,9 +759,35 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
     return {
       entries: checks.length,
       guarded: checks.map((check) => check.label || check.prop),
+      unpatched: unpatched.slice(),
+      complete: unpatched.length === 0,
       knownGaps: KNOWN_GAPS.slice(),
       caveat: 'guarded 之外的一切入口都不受控：这是契约层，不是沙箱。',
     };
+  }
+
+  /**
+   * 装不上就记账：不阻断装载（那是宿主策略），但绝不假装完整。
+   * 账本记录 ruleId='bridge_incomplete'，coverage().unpatched 给出明细。
+   */
+  function reportIncomplete() {
+    if (unpatched.length === 0) return;
+    if (!ledger || typeof ledger.append !== 'function') return;
+    const detail = unpatched.map((item) => `${item.prop}(${item.reason})`).join(', ');
+    try {
+      ledger.append({
+        plugin: pluginInfo.id,
+        pluginVersion: pluginInfo.version,
+        capability: 'integrity',
+        action: 'patch',
+        scope: { unpatched: unpatched.map((item) => item.prop) },
+        decision: 'deny',
+        ruleId: 'bridge_incomplete',
+        reason: `有 ${unpatched.length} 个入口未能安装 Hook：${detail}`,
+      });
+    } catch {
+      // 账本写不进去也不清空 unpatched：coverage() 仍然会暴露它。
+    }
   }
 
   function install() {
@@ -749,6 +799,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
     installEnv();
     installGlob();
     installWorkerGuard();
+    reportIncomplete();
     if (autoSweep && guard.seal) guard.seal.startAutoSweep();
   }
 

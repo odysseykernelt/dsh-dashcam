@@ -331,6 +331,11 @@ class LocalHost {
  */
 function compileEntry(entry, source) {
   const resolved = path.resolve(entry);
+  // Bridge/Hook 建立在 CJS 模块图上；.mjs 走到 _compile 会按 CJS 解析，
+  // 报一个和真实原因无关的 SyntaxError。
+  if (path.extname(resolved) === '.mjs') {
+    throw new Error('暂不支持 ESM 入口（.mjs）：运行时 Hook 基于 CommonJS 模块图');
+  }
   const mod = new Module(resolved, null);
   mod.filename = resolved;
   mod.paths = Module._nodeModulePaths(path.dirname(resolved));

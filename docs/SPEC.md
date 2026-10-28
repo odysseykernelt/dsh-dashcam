@@ -163,6 +163,14 @@
   `dns` 与 `dns.promises`、`fetch`、`net.Server#listen`、`child_process`、`process.kill`、`process.env`。
 - 句柄获取即关口：`open` 通过后，fd 级 `readSync` / `writeSync` 直通——fd 无法映射回路径，这是设计而非遗漏。
 - 覆盖是**补丁式**的：`bridge.coverage()` 返回 `guarded` 清单与 `knownGaps`，差集不隐藏。
+
+**装不上也算覆盖缺口**：`patchMethod` 失败（属性被冻结、`configurable:false`、宿主 SDK 锁死）
+会记入 `coverage().unpatched`，并写一条 `ruleId='bridge_incomplete'` 的账本记录。
+`installed === true` 不代表每个入口都装上了；宿主应当检查 `coverage().complete`。
+
+**完整性校验是抽样执行的**：`createGuardChain({integrityEvery})`（默认 64，0 关闭）在每 N 次判定时
+调用一次 `verifyIntegrity()`。检测到替换后 `compromised` 置位，此后所有请求按
+`integrity_compromised` 拒绝；状态可从 `coverage().compromised` 读取。
 - 重入保护：Node 内置实现互相调用（如 `appendFileSync → writeFileSync`、`http.get → http.request`）在原始实现执行期间直通，避免重复判定与递归。
 - 完整性校验：保存每个被包装函数的引用；发现被替换即标记 `compromised`，此后一切请求按 `integrity_compromised` 拒绝，并写 `tamper_detected` Ledger。
 

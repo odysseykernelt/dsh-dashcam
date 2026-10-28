@@ -18,6 +18,12 @@ const { parseRequestTarget } = require('../derive');
 const DEFAULT_PORTS = Object.freeze({ 'http:': 80, 'https:': 443 });
 
 /**
+ * fetch 的默认超时。Node 原生 fetch 没有默认 timeout：对端不回包就永久挂起，
+ * 而句柄是唯一的出网入口，挂起等于把调用方拖死。调用方显式传 signal 时以它为准。
+ */
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
+/**
  * host 统一小写：derive.js 拼 scope 时本来就会小写，
  * 句柄先归一化，保证 Bridge、句柄、账本三处看到同一个字符串。
  * URL.hostname 已对 DNS 名做过小写处理，这里主要兜住对象形式里手写的 host。
@@ -97,7 +103,12 @@ function createNetHandle({ guard } = {}) {
       const target = requestTarget(args, fallbackProtocol);
       guardOutbound(target);
       // 判定通过后才选模块：句柄只有一个 request，http/https 由 URL 决定。
-      const implementation = table[target.protocol] || table[fallbackProtocol];
+      // 只认表里有的协议。以前会回落到 fallbackProtocol，于是 ftp://h:21 这种
+      // 有显式端口、能过判定的目标会被悄悄当成 http 请求打到 21 端口——协议被换掉了。
+      const implementation = table[target.protocol];
+      if (typeof implementation !== 'function') {
+        throw new Error(`net 句柄不支持协议 ${target.protocol}：拒绝降级成 ${fallbackProtocol} 发出去`);
+      }
       return implementation(...args);
     };
   }
@@ -122,7 +133,12 @@ function createNetHandle({ guard } = {}) {
     }
     guardOutbound(target);
     if (!nativeFetch) throw new Error('当前运行时没有原生 fetch');
-    return nativeFetch(input, init);
+    const options = { ...(init || {}) };
+    if (!options.signal && DEFAULT_FETCH_TIMEOUT_MS > 0 && typeof AbortSignal !== 'undefined'
+      && typeof AbortSignal.timeout === 'function') {
+      options.signal = AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS);
+    }
+    return nativeFetch(input, options);
   }
 
   const handle = {
