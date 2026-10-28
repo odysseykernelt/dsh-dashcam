@@ -10,6 +10,13 @@ const DEFAULT_MAC_KEY_ENV = 'DSH_COVENANT_MAC_KEY';
 /** HMAC 密钥下限。短于此长度的密钥不值得拿来防篡改。 */
 const MIN_MAC_KEY_BYTES = 32;
 
+/** 带 code 的密钥错误：CLI 可以据此只打消息、不打整段 stack。 */
+function macKeyError(message) {
+  const error = new Error(message);
+  error.code = 'mac_key_invalid';
+  return error;
+}
+
 function normalizeMacKey(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
@@ -17,7 +24,7 @@ function normalizeMacKey(value) {
   const bytes = Buffer.byteLength(text, 'utf8');
   if (bytes < MIN_MAC_KEY_BYTES) {
     // 只报长度，不回显密钥：错误消息也会进日志。
-    throw new Error(`mac 密钥太短：至少 ${MIN_MAC_KEY_BYTES} 字节（当前 ${bytes} 字节）`);
+    throw macKeyError(`mac 密钥太短：至少 ${MIN_MAC_KEY_BYTES} 字节（当前 ${bytes} 字节）`);
   }
   return text;
 }
@@ -44,10 +51,10 @@ function resolveLedgerMacKey({
     try {
       raw = fs.readFileSync(path.resolve(ledgerMacKeyFile), 'utf8');
     } catch (error) {
-      throw new Error(`读取 mac 密钥文件失败：${ledgerMacKeyFile}（${error.code || error.message}）`);
+      throw macKeyError(`读取 mac 密钥文件失败：${ledgerMacKeyFile}（${error.code || error.message}）`);
     }
     const fromFile = normalizeMacKey(raw);
-    if (!fromFile) throw new Error(`mac 密钥文件为空：${ledgerMacKeyFile}`);
+    if (!fromFile) throw macKeyError(`mac 密钥文件为空：${ledgerMacKeyFile}`);
     return { key: fromFile, source: 'file' };
   }
 
@@ -58,7 +65,7 @@ function resolveLedgerMacKey({
   const fromEnv = normalizeMacKey((env || {})[envName]);
   if (fromEnv) return { key: fromEnv, source: 'env' };
   if (explicitEnv) {
-    throw new Error(`环境变量 ${envName} 为空或不存在：显式指定了密钥来源就必须给得出密钥`);
+    throw macKeyError(`环境变量 ${envName} 为空或不存在：显式指定了密钥来源就必须给得出密钥`);
   }
   return { key: null, source: 'none' };
 }

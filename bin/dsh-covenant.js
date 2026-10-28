@@ -231,6 +231,10 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${error.stack || error.message}\n`);
+  // 配置类错误（密钥来源不对）只打一行消息：用户要的是「怎么修」，不是调用栈。
+  const text = error && error.code === 'mac_key_invalid'
+    ? `${error.message}\n`
+    : `${error.stack || error.message}\n`;
+  process.stderr.write(text);
   process.exitCode = 1;
 });
