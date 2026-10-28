@@ -3,6 +3,7 @@
 const { CovenantDenied } = require('../errors');
 const { authorizeAccess } = require('../contract/two-key');
 const { deriveOperation } = require('./derive');
+const { resolveLimits } = require('../policy');
 
 function recordLedger(ledger, record) {
   if (!ledger) return null;
@@ -36,8 +37,13 @@ function createGuardChain({
   onEvent = null,
   nativeHooks = false,
   // 每 N 次判定抽样做一次完整性校验（0 = 关闭）。防线不接线等于不存在。
-  integrityEvery = 64,
+  // 不传就取 policy.limits.integrityEvery（默认 64）。
+  integrityEvery = null,
 } = {}) {
+  const limits = resolveLimits(policy);
+  const effectiveIntegrityEvery = Number.isFinite(integrityEvery)
+    ? integrityEvery
+    : limits.integrityEvery;
   let compromised = null;
   let hooks = null;
   // 装载窗口：Hook 已经装好，但宿主还在 require 插件入口。
@@ -64,7 +70,7 @@ function createGuardChain({
   function check(operation, payload = {}, options = {}) {
     const record = options.record !== false;
     stats.requests += 1;
-    if (integrityEvery > 0 && hooks && ++integrityTicks >= integrityEvery) {
+    if (effectiveIntegrityEvery > 0 && hooks && ++integrityTicks >= effectiveIntegrityEvery) {
       integrityTicks = 0;
       try {
         hooks.verifyIntegrity();
@@ -236,9 +242,9 @@ function createGuardChain({
    */
   function enforceBatch(operation, payloads = []) {
     if (!Array.isArray(payloads) || payloads.length === 0) return enforce(operation, {});
-    if (payloads.length > MAX_BATCH_TARGETS) {
+    if (payloads.length > limits.batchTargets) {
       throw new CovenantDenied(
-        `批量判定目标过多：${payloads.length} 超过上限 ${MAX_BATCH_TARGETS}，请调用方分块`,
+        `批量判定目标过多：${payloads.length} 超过上限 ${limits.batchTargets}，请调用方分块`,
         { ruleId: 'batch_too_large' },
       );
     }
@@ -374,6 +380,7 @@ function createGuardChain({
       guard: api,
       ledger,
       plugin: manifest,
+      globBatchSize: limits.globBatchSize,
       ...options,
     });
     return hooks;

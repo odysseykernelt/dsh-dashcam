@@ -4,6 +4,7 @@ const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
 const { parseRequestTarget } = require('../derive');
+const { resolveLimits } = require('../../policy');
 
 /**
  * 网络能力句柄：把「能连到哪里」收成一个冻结对象。
@@ -18,10 +19,10 @@ const { parseRequestTarget } = require('../derive');
 const DEFAULT_PORTS = Object.freeze({ 'http:': 80, 'https:': 443 });
 
 /**
- * fetch 的默认超时。Node 原生 fetch 没有默认 timeout：对端不回包就永久挂起，
+ * fetch 的默认超时来源。Node 原生 fetch 没有默认 timeout：对端不回包就永久挂起，
  * 而句柄是唯一的出网入口，挂起等于把调用方拖死。调用方显式传 signal 时以它为准。
+ * 具体数值走 policy.limits.fetchTimeoutMs（0 = 不注入）。
  */
-const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * host 统一小写：derive.js 拼 scope 时本来就会小写，
@@ -81,10 +82,13 @@ function socketPair(rawPort, rawHost) {
   return { host: normalizeHost(rawHost), port };
 }
 
-function createNetHandle({ guard } = {}) {
+function createNetHandle({ guard, limits = null } = {}) {
   if (!guard || typeof guard.enforce !== 'function') {
     throw new Error('createNetHandle 需要 guard');
   }
+  const fetchTimeoutMs = Number.isFinite(limits && limits.fetchTimeoutMs)
+    ? limits.fetchTimeoutMs
+    : resolveLimits().fetchTimeoutMs;
 
   // 创建时钉住原生入口：插件之后替换 http.request / globalThis.fetch
   // 也改不了句柄实际调用的函数（与 fs 句柄的做法一致）。
@@ -134,9 +138,9 @@ function createNetHandle({ guard } = {}) {
     guardOutbound(target);
     if (!nativeFetch) throw new Error('当前运行时没有原生 fetch');
     const options = { ...(init || {}) };
-    if (!options.signal && DEFAULT_FETCH_TIMEOUT_MS > 0 && typeof AbortSignal !== 'undefined'
+    if (!options.signal && fetchTimeoutMs > 0 && typeof AbortSignal !== 'undefined'
       && typeof AbortSignal.timeout === 'function') {
-      options.signal = AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS);
+      options.signal = AbortSignal.timeout(fetchTimeoutMs);
     }
     return nativeFetch(input, options);
   }

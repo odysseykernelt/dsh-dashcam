@@ -196,6 +196,28 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.0 新增（可配置上限）
+
+写死的常量全部抽进 `policy.limits`，默认值不变：
+
+| 键 | 默认 | 作用 |
+| --- | --- | --- |
+| `batchTargets` | 10000 | 单次 `enforceBatch` 目标上限 |
+| `globBatchSize` | 256 | 异步 glob 分块大小 |
+| `fetchTimeoutMs` | 30000 | 出网 `fetch` 默认超时（0 = 不注入） |
+| `integrityEvery` | 64 | 每 N 次判定抽样完整性校验（0 = 关闭） |
+| `minMacKeyBytes` | 32 | `macKey` 最小字节数 |
+
+外加一个可选强约束 `policy.enforcement.strictPatch`：默认 `false`（补丁不完整只记账 +
+`coverage().unpatched` 暴露），打开后升级为`拒绝装载`。这是"非侵入式"与"fail-closed"
+之间唯一留给宿主的开关。
+
+```js
+new LocalHost({ policy: { limits: { fetchTimeoutMs: 5000 }, enforcement: { strictPatch: true } } });
+```
+
+- 用例数 146 → 153。
+
 ## 1.9.0 修复（三视角审查）
 
 一次红队 / 架构 / 边界的三视角审查，确认 3 条必改、6 条建议，全部修完：

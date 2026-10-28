@@ -17,14 +17,14 @@ function macKeyError(message) {
   return error;
 }
 
-function normalizeMacKey(value) {
+function normalizeMacKey(value, minBytes = MIN_MAC_KEY_BYTES) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   if (!text) return null;
   const bytes = Buffer.byteLength(text, 'utf8');
-  if (bytes < MIN_MAC_KEY_BYTES) {
+  if (bytes < minBytes) {
     // 只报长度，不回显密钥：错误消息也会进日志。
-    throw macKeyError(`mac 密钥太短：至少 ${MIN_MAC_KEY_BYTES} 字节（当前 ${bytes} 字节）`);
+    throw macKeyError(`mac 密钥太短：至少 ${minBytes} 字节（当前 ${bytes} 字节）`);
   }
   return text;
 }
@@ -42,8 +42,9 @@ function resolveLedgerMacKey({
   ledgerMacKeyFile = null,
   ledgerMacKeyEnv = null,
   env = process.env,
+  minBytes = MIN_MAC_KEY_BYTES,
 } = {}) {
-  const fromValue = normalizeMacKey(ledgerMacKey);
+  const fromValue = normalizeMacKey(ledgerMacKey, minBytes);
   if (fromValue) return { key: fromValue, source: 'value' };
 
   if (ledgerMacKeyFile) {
@@ -53,7 +54,7 @@ function resolveLedgerMacKey({
     } catch (error) {
       throw macKeyError(`读取 mac 密钥文件失败：${ledgerMacKeyFile}（${error.code || error.message}）`);
     }
-    const fromFile = normalizeMacKey(raw);
+    const fromFile = normalizeMacKey(raw, minBytes);
     if (!fromFile) throw macKeyError(`mac 密钥文件为空：${ledgerMacKeyFile}`);
     return { key: fromFile, source: 'file' };
   }
@@ -62,7 +63,7 @@ function resolveLedgerMacKey({
     ? ledgerMacKeyEnv.trim()
     : null;
   const envName = explicitEnv || DEFAULT_MAC_KEY_ENV;
-  const fromEnv = normalizeMacKey((env || {})[envName]);
+  const fromEnv = normalizeMacKey((env || {})[envName], minBytes);
   if (fromEnv) return { key: fromEnv, source: 'env' };
   if (explicitEnv) {
     throw macKeyError(`环境变量 ${envName} 为空或不存在：显式指定了密钥来源就必须给得出密钥`);
@@ -70,7 +71,7 @@ function resolveLedgerMacKey({
   return { key: null, source: 'none' };
 }
 const { runInstallPipeline, readRawPluginId } = require('../gates/index');
-const { loadPolicy } = require('../policy');
+const { loadPolicy, resolveLimits } = require('../policy');
 const { Ledger } = require('../runtime/ledger');
 const { OneSealStore } = require('../runtime/one-seal');
 const { createGuardChain } = require('../runtime/guards');
@@ -94,7 +95,12 @@ class LocalHost {
     this.rawPolicy = policy;
     this.policy = loadPolicy(policy);
     this.baseLedgerPath = ledgerPath;
-    const resolvedMac = resolveLedgerMacKey({ ledgerMacKey, ledgerMacKeyFile, ledgerMacKeyEnv });
+    const resolvedMac = resolveLedgerMacKey({
+      ledgerMacKey,
+      ledgerMacKeyFile,
+      ledgerMacKeyEnv,
+      minBytes: resolveLimits(this.policy).minMacKeyBytes,
+    });
     this.ledgerMacKey = resolvedMac.key;
     this.macKeySource = resolvedMac.source;
     this.blacklist = blacklist;
@@ -214,7 +220,9 @@ class LocalHost {
     // 默认注入能力句柄：插件 require('fs') 拿到的就是封闭集合，
     // 用不到的方法直接不存在。policy.sandbox.mode='global' 才回到原生 fs。
     const sandboxed = pluginPolicy.sandbox.mode === 'handles';
-    const handles = sandboxed ? createCapabilityHandles({ guard }) : null;
+    const handles = sandboxed
+      ? createCapabilityHandles({ guard, limits: resolveLimits(pluginPolicy) })
+      : null;
     // 入口源码由宿主先读出来：这次 fs 调用发生在 Hook 之前，属于宿主行为，
     // 不该被记成插件的一次未声明读取（否则 interceptions() 会变成噪音）。
     const resolvedEntry = path.resolve(record.entry);
@@ -222,6 +230,15 @@ class LocalHost {
 
     // Hook 必须在装载之前装好：插件顶层代码同样是攻击面，不能是法外之地。
     const bridge = guard.installNativeHooks();
+    // 默认只记账（H1）；strictPatch 打开时升级为拒绝装载。
+    if (pluginPolicy.enforcement.strictPatch === true) {
+      const coverage = guard.coverage();
+      if (coverage.complete === false) {
+        bridge.uninstall();
+        const detail = (coverage.unpatched || []).map((item) => `${item.prop}(${item.reason})`).join(', ');
+        throw new Error(`沙箱补丁不完整，按 strictPatch 拒绝装载：${detail || '未知入口'}`);
+      }
+    }
     // 重定向必须在 Hook 之后装：createBridge 自己也要 require 原生 fs。
     const redirect = handles
       ? createModuleRedirect({ handles, pluginRoot: record.pluginDir })

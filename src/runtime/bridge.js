@@ -14,6 +14,7 @@ const { keyPatternCovers } = require('../contract/capabilities');
 const { isSensitiveEnvKey } = require('../util/paths');
 const { parseRequestTarget, toPathString, capabilityNeedsForOpen } = require('./derive');
 const { sha256 } = require('../util/stable');
+const { resolveLimits } = require('../policy');
 
 const fsp = fs.promises;
 
@@ -72,7 +73,7 @@ function firstCommand(args) {
  * 只包装 Node 内置模块的公开入口；所有包装器都保留原始函数引用，
  * 以便卸载与完整性检测。
  */
-function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) {
+function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBatchSize = null } = {}) {
   if (!guard) throw new Error('createBridge 需要 guard');
 
   const checks = [];
@@ -230,7 +231,9 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
   }
 
   /** 分块：既不把单条账本撑到无限大，也不把百万条结果挂内存里。 */
-  const GLOB_BATCH_SIZE = 256;
+  const GLOB_BATCH_SIZE = Number.isFinite(globBatchSize) && globBatchSize > 0
+    ? globBatchSize
+    : resolveLimits().globBatchSize;
 
   /**
    * 异步迭代器版本：**先判定、再交付**。拒绝发生在消费者拿到这一批路径之前，
@@ -265,8 +268,26 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
       }, 'fs.globSync');
     }
     if (typeof fs.glob === 'function') {
+      // fs.glob 是**回调式**（Node 22：glob(pattern[, options], callback)），
+      // 异步迭代器在 fs.promises.glob 上。当成迭代器包装会把回调丢掉，
+      // 调用方直接收到 "The cb argument must be of type function"。
       patchMethod(fs, 'glob', (original) => function wrappedGlob(...args) {
-        return wrapGlobIterator(original.apply(this, args), globBaseDir(args));
+        const baseDir = globBaseDir(args);
+        const callback = typeof args[args.length - 1] === 'function' ? args[args.length - 1] : null;
+        if (!callback) {
+          // 没有回调：交给原生去抛它自己的类型错误，别替它决定语义。
+          return original.apply(this, args);
+        }
+        const leading = args.slice(0, -1);
+        return original.call(this, ...leading, function onGlob(error, entries) {
+          if (error) return callback.call(this, error);
+          try {
+            guardGlobResults(entries, baseDir);
+          } catch (denied) {
+            return callback.call(this, denied);
+          }
+          return callback.call(this, null, entries);
+        });
       }, 'fs.glob');
     }
     if (fsp && typeof fsp.glob === 'function') {

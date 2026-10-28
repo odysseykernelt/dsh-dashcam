@@ -395,3 +395,22 @@ await handles.fs.promises.readFile('cache.json');        // 每次调用都过�
 - **glob 类入口**（`fs.glob` / `globSync`）仍是缺口：路径在返回值里而不是参数里，参数级判定覆盖不到。
 - **权限边界**：Bridge 与句柄都在 Node 层。`worker_threads`、`vm` 生成的代码、原生扩展、直接 syscall
   始终在 Hook 之外；唯一根治是分进程 / 分 realm。
+
+## 12. 可配置上限（policy.limits）
+
+这些值原先散落在各模块里写死，宿主只能改源码。现在统一走策略层，默认值不变。
+
+| 键 | 默认 | 作用 | 调大的代价 |
+| --- | --- | --- | --- |
+| `batchTargets` | `10000` | 单次 `enforceBatch` 的目标数上限 | 同步逐条判定，会阻塞事件循环 |
+| `globBatchSize` | `256` | 异步 glob 迭代器的分块大小（同步 glob 不分块） | 单条账本记录变大 |
+| `fetchTimeoutMs` | `30000` | 出网 `fetch` 的默认超时；`0` = 不注入 | 对端挂起会拖死调用方 |
+| `integrityEvery` | `64` | 每 N 次判定抽样做一次 `verifyIntegrity()`；`0` = 关闭 | 每次抽样都会遍历全部已包装入口 |
+| `minMacKeyBytes` | `32` | `macKey` 的最小字节数 | 密钥熵下降，防篡改强度下降 |
+
+另有一个**可选强约束**：`policy.enforcement.strictPatch`（默认 `false`）。
+
+- `false`：Hook 装不完整时只记账（`ruleId='bridge_incomplete'`）+ 在 `coverage().unpatched` 暴露；
+- `true`：装不完整直接**拒绝装载**（`LocalHost.register` 抛错）。
+
+这是「非侵入式」与「fail-closed」之间唯一留给宿主的开关，默认取前者。
