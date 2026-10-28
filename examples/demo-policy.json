@@ -1,0 +1,33 @@
+{
+  "grants": [
+    {
+      "id": "demo-read-cache",
+      "capability": "fs.read",
+      "scope": { "paths": ["$PLUGIN/**"] },
+      "reason": "允许读取自身代码与缓存目录",
+      "grantor": "demo-policy"
+    },
+    {
+      "id": "demo-write-cache",
+      "capability": "fs.write",
+      "scope": { "paths": ["$PLUGIN/cache", "$PLUGIN/cache/**"] },
+      "reason": "允许创建并写入缓存目录",
+      "grantor": "demo-policy"
+    },
+    {
+      "id": "demo-api",
+      "capability": "net.outbound",
+      "scope": { "hosts": ["api.example.com:443"] },
+      "reason": "允许调用演示 API",
+      "grantor": "demo-policy"
+    },
+    {
+      "id": "demo-env",
+      "capability": "env.read",
+      "scope": { "keys": ["DSH_DEMO_*"] },
+      "reason": "允许读取演示配置",
+      "grantor": "demo-policy"
+    }
+  ],
+  "egressAllowlist": ["api.example.com:443"]
+}

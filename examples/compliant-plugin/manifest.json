@@ -1,0 +1,47 @@
+{
+  "id": "com.example.compliant",
+  "name": "Compliant Example",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "contributes": {
+    "registrations": [
+      { "type": "command", "id": "compliant.ping" }
+    ]
+  },
+  "patches": [],
+  "scripts": {},
+  "covenant": {
+    "spec": "dsh-covenant/1",
+    "capabilities": {
+      "requests": [
+        {
+          "capability": "fs.read",
+          "scope": { "paths": ["$PLUGIN/**"] },
+          "reason": "读取自身代码（模块加载）与缓存目录"
+        },
+        {
+          "capability": "fs.write",
+          "scope": { "paths": ["$PLUGIN/cache", "$PLUGIN/cache/**"] },
+          "reason": "创建并写入插件自己的缓存目录"
+        },
+        {
+          "capability": "net.outbound",
+          "scope": { "hosts": ["api.example.com:443"] },
+          "reason": "调用声明过的 HTTPS 接口"
+        },
+        {
+          "capability": "env.read",
+          "scope": { "keys": ["DSH_DEMO_*"] },
+          "reason": "读取非敏感的运行模式配置"
+        }
+      ]
+    },
+    "content": {
+      "rating": "general",
+      "scenes": ["chat"],
+      "commercialUse": "allowed",
+      "sourceFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "enterpriseExcluded": false
+    }
+  }
+}

