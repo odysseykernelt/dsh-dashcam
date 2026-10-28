@@ -15,7 +15,8 @@ const { runAutopsy } = require('../src/autopsy/autopsy');
 const { computeMetrics, monthlyMetrics } = require('../src/governance/metrics');
 const { Blacklist } = require('../src/governance/blacklist');
 const { checkCircuitBreaker } = require('../src/governance/rollout');
-const { LocalHost } = require('../src/host/local-host');
+const { LocalHost, resolveLedgerMacKey } = require('../src/host/local-host');
+const { Ledger } = require('../src/runtime/ledger');
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -184,10 +185,25 @@ async function main() {
   }
 
   if (command === 'metrics') {
-    const records = fs.readFileSync(rest[1], 'utf8')
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
+    // 先校验、再统计：在一个校验不过的账本上算指标，等于给篡改后的数据背书。
+    const resolvedMac = resolveLedgerMacKey({
+      ledgerMacKeyFile: flags['mac-key-file'] || null,
+      ledgerMacKeyEnv: flags['mac-key-env'] || null,
+    });
+    const ledger = new Ledger(rest[1], { macKey: resolvedMac.key });
+    const verification = ledger.verify(flags.anchor ? { anchor: readJson(flags.anchor) } : {});
+    if (!verification.ok) {
+      process.stderr.write(`账本校验失败（${verification.errors.length} 处）：\n`);
+      for (const error of verification.errors.slice(0, 5)) {
+        process.stderr.write(`  line ${error.line} ${error.code} — ${error.detail}\n`);
+      }
+      if (verification.errors.some((error) => error.code === 'mac_key_missing')) {
+        process.stderr.write('提示：该账本是 v3（带 mac）。请用 --mac-key-file <path> 或 --mac-key-env <NAME> 提供密钥。\n');
+      }
+      process.exitCode = 1;
+      return;
+    }
+    const records = ledger.records();
     const events = flags.events ? readJson(flags.events) : [];
     output({
       total: computeMetrics({ ledgerRecords: records, installEvents: events }),

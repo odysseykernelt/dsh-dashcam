@@ -195,6 +195,22 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 - [docs/ROLLOUT.md](docs/ROLLOUT.md)：六阶段上线、熔断阈值、三级回滚、双钥轮换、应急下架、月度度量。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.8.0 新增（把「一条记录代表 N 个目标」这件事做完整）
+
+- **glob 账本聚合**：`fs.glob` / `globSync` / `fs.promises.glob` 不再一个结果一条账本。
+  100 个匹配 = **1 条** `two-key-batch` 记录（判定仍然逐个做）。异步迭代器按 256 条分块，**判完再交付**。
+- **worker 的 eval 不再把源码写进账本**：`new Worker(code, {eval:true})` 的 command 现在是
+  `worker:eval:<源码 sha256 前 12 位>`——可去重、可对账，但源码不落盘。
+- **批量记录的审计口径修正**：混合能力的批次不再记成单一能力（否则 `cred.read` 会被藏进 `fs.read`），
+  记 `capability:'mixed'` 且 `scope.capabilities` 列出全部；observe 窗口内的越界也不再被记成 allow。
+- **MAC 密钥托管**：`resolveLedgerMacKey()` 支持「值 > 文件 > 环境变量」，短于 32 字节直接拒绝，
+  显式指定却取不到一律失败关闭；`LocalHost.redact()` 给出不含密钥的摘要。
+- **CLI `metrics` 先校验再统计**：账本校验不过（含 `mac_key_missing`）直接非零退出，
+  并提示 `--mac-key-file` / `--mac-key-env`；支持 `--anchor <file>`。
+- 度量口径：新增 `batchRecords` / `batchedTargets` / `effectiveRequests` / `targetInterceptionRate`
+  等并列字段，旧字段语义不变（记录数 vs 目标数，两套读数并存）。
+- 用例数 114 → 135（新增 glob / worker / mac-custody / 批量守卫 / 度量 / 不变量六组）。
+
 ## 1.7.0 修复（mac 完整性三处硬伤）
 
 - **无密钥校验不再静默通过**：账本含 v3 行但 `verify()` 没拿到 `macKey` 时返回

@@ -6,6 +6,7 @@ const { Ledger } = require('./runtime/ledger');
 const { OneSealStore } = require('./runtime/one-seal');
 const { createGuardChain } = require('./runtime/guards');
 const { isQuarantined } = require('./contract/manifest');
+const { resolveLedgerMacKey } = require('./host/local-host');
 const { createCapabilityHandles, createModuleRedirect } = require('./runtime/handles');
 
 const PLUGIN_ID = 'dsh-covenant';
@@ -16,6 +17,9 @@ function createPluginRuntime({
   grants = [],
   policy: policyInput = {},
   ledgerPath = path.join(process.cwd(), '.dsh-ledger.jsonl'),
+  ledgerMacKey = null,
+  ledgerMacKeyFile = null,
+  ledgerMacKeyEnv = null,
   ledger = null,
   seal = null,
   blacklist = null,
@@ -28,7 +32,8 @@ function createPluginRuntime({
   // activate 默认不重定向：宿主自己也用 fs，替它把 require('fs') 换掉是失礼的。
   // 真正需要封闭面的宿主要么用 LocalHost，要么显式传 sandbox: 'handles'。
   const sandboxMode = sandbox || 'global';
-  const audit = ledger || new Ledger(ledgerPath);
+  const resolvedMac = resolveLedgerMacKey({ ledgerMacKey, ledgerMacKeyFile, ledgerMacKeyEnv });
+  const audit = ledger || new Ledger(ledgerPath, { macKey: resolvedMac.key });
   const seals = seal || new OneSealStore({ ttlMs: policy.oneSeal.ttlMs });
   const guard = createGuardChain({
     manifest,
@@ -76,6 +81,9 @@ function activate(host = {}) {
     grants: host.grants || [],
     policy: host.policy || {},
     ledgerPath: host.ledgerPath,
+    ledgerMacKey: host.ledgerMacKey || null,
+    ledgerMacKeyFile: host.ledgerMacKeyFile || null,
+    ledgerMacKeyEnv: host.ledgerMacKeyEnv || null,
     ledger: host.ledger,
     seal: host.seal,
     blacklist: host.blacklist,

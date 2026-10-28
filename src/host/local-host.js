@@ -4,6 +4,64 @@ const fs = require('node:fs');
 const Module = require('node:module');
 const path = require('node:path');
 const { loadManifest } = require('../contract/manifest');
+
+/** 默认的环境变量名：宿主不传任何参数时也会看它。 */
+const DEFAULT_MAC_KEY_ENV = 'DSH_COVENANT_MAC_KEY';
+/** HMAC 密钥下限。短于此长度的密钥不值得拿来防篡改。 */
+const MIN_MAC_KEY_BYTES = 32;
+
+function normalizeMacKey(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const bytes = Buffer.byteLength(text, 'utf8');
+  if (bytes < MIN_MAC_KEY_BYTES) {
+    // 只报长度，不回显密钥：错误消息也会进日志。
+    throw new Error(`mac 密钥太短：至少 ${MIN_MAC_KEY_BYTES} 字节（当前 ${bytes} 字节）`);
+  }
+  return text;
+}
+
+/**
+ * 解析 Ledger 的 HMAC 密钥。优先级：直接传值 > 文件 > 环境变量。
+ *
+ * 三种来源任一显式给出却失败，都**抛错**，绝不静默退化成「无密钥的 v2」：
+ * 那正是账本「看着有 mac、其实没人验」的来源。默认环境变量缺失不算错（返回 none）。
+ *
+ * @returns {{key: string|null, source: 'value'|'file'|'env'|'none'}}
+ */
+function resolveLedgerMacKey({
+  ledgerMacKey = null,
+  ledgerMacKeyFile = null,
+  ledgerMacKeyEnv = null,
+  env = process.env,
+} = {}) {
+  const fromValue = normalizeMacKey(ledgerMacKey);
+  if (fromValue) return { key: fromValue, source: 'value' };
+
+  if (ledgerMacKeyFile) {
+    let raw;
+    try {
+      raw = fs.readFileSync(path.resolve(ledgerMacKeyFile), 'utf8');
+    } catch (error) {
+      throw new Error(`读取 mac 密钥文件失败：${ledgerMacKeyFile}（${error.code || error.message}）`);
+    }
+    const fromFile = normalizeMacKey(raw);
+    if (!fromFile) throw new Error(`mac 密钥文件为空：${ledgerMacKeyFile}`);
+    return { key: fromFile, source: 'file' };
+  }
+
+  const explicitEnv = typeof ledgerMacKeyEnv === 'string' && ledgerMacKeyEnv.trim()
+    ? ledgerMacKeyEnv.trim()
+    : null;
+  const envName = explicitEnv || DEFAULT_MAC_KEY_ENV;
+  const fromEnv = normalizeMacKey((env || {})[envName]);
+  if (fromEnv) return { key: fromEnv, source: 'env' };
+  if (explicitEnv) {
+    throw new Error(`环境变量 ${envName} 为空或不存在：显式指定了密钥来源就必须给得出密钥`);
+  }
+  return { key: null, source: 'none' };
+}
 const { runInstallPipeline, readRawPluginId } = require('../gates/index');
 const { loadPolicy } = require('../policy');
 const { Ledger } = require('../runtime/ledger');
@@ -19,6 +77,8 @@ class LocalHost {
   constructor({
     ledgerPath = path.join(process.cwd(), '.dsh-ledger.jsonl'),
     ledgerMacKey = null,
+    ledgerMacKeyFile = null,
+    ledgerMacKeyEnv = null,
     policy = {},
     blacklist = null,
     trust = null,
@@ -27,7 +87,9 @@ class LocalHost {
     this.rawPolicy = policy;
     this.policy = loadPolicy(policy);
     this.baseLedgerPath = ledgerPath;
-    this.ledgerMacKey = ledgerMacKey;
+    const resolvedMac = resolveLedgerMacKey({ ledgerMacKey, ledgerMacKeyFile, ledgerMacKeyEnv });
+    this.ledgerMacKey = resolvedMac.key;
+    this.macKeySource = resolvedMac.source;
     this.blacklist = blacklist;
     this.trust = trust;
     this.channel = channel;
@@ -234,6 +296,18 @@ class LocalHost {
     return this.lastLedger;
   }
 
+  /**
+   * 可安全打印的密钥配置摘要：**不含密钥本身**。
+   * 日志、报告、coverage 都可以放心带上这个对象。
+   */
+  redact() {
+    return {
+      macEnabled: Boolean(this.ledgerMacKey),
+      keyLength: this.ledgerMacKey ? Buffer.byteLength(this.ledgerMacKey, 'utf8') : 0,
+      source: this.macKeySource || 'none',
+    };
+  }
+
   /** 当前活动 Hook 的覆盖自检；sandbox 模式另外给出模块重定向信息。 */
   coverage() {
     if (!this.active) return null;
@@ -260,4 +334,10 @@ function compileEntry(entry, source) {
   return mod.exports;
 }
 
-module.exports = { LocalHost };
+module.exports = {
+  LocalHost,
+  resolveLedgerMacKey,
+  normalizeMacKey,
+  DEFAULT_MAC_KEY_ENV,
+  MIN_MAC_KEY_BYTES,
+};

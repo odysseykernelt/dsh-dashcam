@@ -226,15 +226,28 @@ function createGuardChain({
   function enforceBatch(operation, payloads = []) {
     if (!Array.isArray(payloads) || payloads.length === 0) return enforce(operation, {});
 
-    let capability = 'unknown';
-    let action = operation;
+    // 混合能力的批次不能只写「最后一个」（或第一个）能力名：那会把 cred.read
+    // 藏进 fs.read 里，事后审计就看不到凭证访问了。收集去重集合，>1 就记 mixed。
+    const capabilities = new Set();
+    const actions = new Set();
+    const noteCapability = (decision) => {
+      if (decision.capability && decision.capability !== 'unknown') capabilities.add(decision.capability);
+      if (decision.action) actions.add(decision.action);
+    };
     for (let index = 0; index < payloads.length; index += 1) {
       const decision = check(operation, payloads[index], { record: false });
-      capability = decision.capability || capability;
-      action = decision.action || action;
-      if (!decision.allowed) {
-        const intercepted = Boolean(decision.intercepted);
-        if (intercepted) stats.intercepted += 1;
+      noteCapability(decision);
+      // observe 窗口里 check 会把拒绝「放行」并返回 observed:true（不抛错），
+      // 但批量绝不能因此记成 allow：账本必须如实留一条 deny，否则账上说全过、
+      // 实际有越界，统计计数器与账本互相矛盾。
+      const denied = !decision.allowed || decision.observed === true;
+      if (denied) {
+        const code = decision.observed ? decision.observedCode : decision.code;
+        const reason = decision.observed ? decision.observedReason : decision.reason;
+        const intercepted = decision.observed
+          ? (decision.intercepted === true || isInterceptionCode(decision.observedCode))
+          : Boolean(decision.intercepted);
+        // stats 已由 check 计过（denied / intercepted / observed），这里不重复计数。
         const entry = recordLedger(ledger, {
           plugin: manifest && manifest.id,
           pluginVersion: manifest && manifest.version,
@@ -242,27 +255,48 @@ function createGuardChain({
           action: decision.action,
           scope: { batch: true, count: index + 1, sample: decision.scope },
           decision: 'deny',
-          ruleId: decision.code,
-          reason: decision.reason,
+          ruleId: code,
+          reason,
           intercepted,
         });
-        const denial = new CovenantDenied(decision.reason, {
+        const ledgerSeq = entry ? entry.seq : null;
+        if (observeDepth > 0) {
+          return {
+            allowed: true,
+            batch: true,
+            observed: true,
+            count: index + 1,
+            observedCode: code,
+            ledgerSeq,
+          };
+        }
+        const denial = new CovenantDenied(reason, {
           capability: decision.capability,
           scope: decision.scope,
-          ruleId: decision.code,
-          ledgerSeq: entry ? entry.seq : null,
+          ruleId: code,
+          ledgerSeq,
         });
         denial.batch = { count: index + 1, index };
         throw denial;
       }
     }
 
+    const capabilityList = [...capabilities];
+    const actionList = [...actions];
+    const capability = capabilityList.length === 0
+      ? 'unknown'
+      : (capabilityList.length === 1 ? capabilityList[0] : 'mixed');
+    const action = actionList.length === 1 ? actionList[0] : operation;
     const entry = recordLedger(ledger, {
       plugin: manifest && manifest.id,
       pluginVersion: manifest && manifest.version,
       capability,
       action,
-      scope: { batch: true, count: payloads.length },
+      scope: {
+        batch: true,
+        count: payloads.length,
+        ...(capabilityList.length > 1 ? { capabilities: capabilityList } : {}),
+      },
       decision: 'allow',
       ruleId: 'two-key-batch',
       reason: declaredReasonOf(authorizationForBatch(operation, payloads[0])),

@@ -12,6 +12,7 @@ const { CovenantDenied } = require('../errors');
 const { keyPatternCovers } = require('../contract/capabilities');
 const { isSensitiveEnvKey } = require('../util/paths');
 const { parseRequestTarget, toPathString, capabilityNeedsForOpen } = require('./derive');
+const { sha256 } = require('../util/stable');
 
 const fsp = fs.promises;
 
@@ -191,9 +192,50 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
     return options ? path.resolve(options.cwd) : process.cwd();
   }
 
+  /**
+   * glob 结果的判定：**逐个判、只写一条账本**。
+   *
+   * 逐条 guardPath 的后果是 1 万文件的目录 = 1 万条账本记录 + 1 万次 open/write/close，
+   * 审计文件会被自己的遍历撑爆。所以走 enforceBatch：判定质量不降级，记账合并。
+   * 同一路径出现多次（globSync 可能混给字符串与 Dirent）只判一次。
+   */
   function guardGlobResults(entries, baseDir) {
-    for (const entry of entries) guardPath('read', globEntryPath(entry, baseDir));
+    const seen = new Set();
+    const payloads = [];
+    for (const entry of entries) {
+      const target = globEntryPath(entry, baseDir);
+      if (seen.has(target)) continue;
+      seen.add(target);
+      payloads.push({ path: target });
+    }
+    if (payloads.length === 0) return entries;
+    guard.enforceBatch('fs.read', payloads);
     return entries;
+  }
+
+  /** 分块：既不把单条账本撑到无限大，也不把百万条结果挂内存里。 */
+  const GLOB_BATCH_SIZE = 256;
+
+  /**
+   * 异步迭代器版本：**先判定、再交付**。拒绝发生在消费者拿到这一批路径之前，
+   * 已交付的前几批是已经判过的（流式 API 只能做到这个粒度）。
+   */
+  function wrapGlobIterator(iter, baseDir) {
+    return (async function* guarded() {
+      let chunk = [];
+      const flush = function* () {
+        if (chunk.length === 0) return;
+        const pending = chunk;
+        chunk = [];
+        guardGlobResults(pending, baseDir);
+        yield* pending;
+      };
+      for await (const entry of iter) {
+        chunk.push(entry);
+        if (chunk.length >= GLOB_BATCH_SIZE) yield* flush();
+      }
+      yield* flush();
+    })();
   }
 
   function installGlob() {
@@ -204,27 +246,12 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
     }
     if (typeof fs.glob === 'function') {
       patchMethod(fs, 'glob', (original) => function wrappedGlob(...args) {
-        const baseDir = globBaseDir(args);
-        const iter = original.apply(this, args);
-        // fs.glob 返回异步迭代器：包一层逐条判定，拒绝发生在消费者拿到路径之前。
-        return (async function* guarded() {
-          for await (const entry of iter) {
-            guardPath('read', globEntryPath(entry, baseDir));
-            yield entry;
-          }
-        })();
+        return wrapGlobIterator(original.apply(this, args), globBaseDir(args));
       }, 'fs.glob');
     }
     if (fsp && typeof fsp.glob === 'function') {
       patchMethod(fsp, 'glob', (original) => function wrappedFspGlob(...args) {
-        const baseDir = globBaseDir(args);
-        const iter = original.apply(this, args);
-        return (async function* guarded() {
-          for await (const entry of iter) {
-            guardPath('read', globEntryPath(entry, baseDir));
-            yield entry;
-          }
-        })();
+        return wrapGlobIterator(original.apply(this, args), globBaseDir(args));
       }, 'fsp.glob');
     }
   }
@@ -235,6 +262,20 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
    * command = 入口文件路径（声明按 proc.spawn 的命令精确/基名口径匹配）。
    * vm 无法这样处理：它共享本进程对象图，只能列入 knownGaps。
    */
+  /**
+   * Worker 的命令名口径。
+   * `new Worker(code, { eval: true })` 的第一个参数是**源码**：直接塞进 command 会
+   * 把整段代码写进账本（撑大、且可能带敏感字面量），而且它永远匹配不上任何命令声明。
+   * 所以 eval 模式用稳定标识 `worker:eval:<源码 sha256 前 12 位>`——可去重、可对账，
+   * 但不把源码本身落盘。
+   */
+  function workerCommand(filename, options) {
+    if (options && options.eval === true) {
+      return `worker:eval:${sha256(String(filename)).slice(0, 12)}`;
+    }
+    return toPathString(filename);
+  }
+
   function installWorkerGuard() {
     let workerThreads;
     try {
@@ -247,7 +288,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false } = {}) 
     const descriptor = Object.getOwnPropertyDescriptor(workerThreads, 'Worker');
     const WrappedWorker = function Worker(filename, options) {
       if (callDepth === 0) {
-        guard.enforce('proc.spawn', { command: toPathString(filename) });
+        guard.enforce('proc.spawn', { command: workerCommand(filename, options) });
       }
       // 用 Original 作为 new.target，保证 instanceof 与内部槽位与原类一致。
       return Reflect.construct(OriginalWorker, [filename, options],

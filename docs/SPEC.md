@@ -178,6 +178,8 @@
 - 任何一条被拒时写 **一条** `deny`：`scope={batch:true,count:K,sample:<第一个越界目标>}`，然后抛 `CovenantDenied`
   （`reason` 仍是原文，不做二次包装）。`count` 反映「检查到第几个就失败」，便于定位越界在序列里的位置。
 - **不要与 One-Seal 混用**：批量内部仍会按目标逐个消费一次性授权。
+- `fs.glob` / `fs.globSync` / `fs.promises.glob` 走这条路：结果先去重，再交给 `enforceBatch`。
+  异步迭代器按 256 条一块判定、**判完再交付**（已交付的前几块是判过的；流式 API 只能到这个粒度）。
 - 账本口径变化：一条批量记录代表 N 个目标。度量侧用 `scope.count` 还原影响面，不要把
   「记录数」直接当成「请求数」。
 
@@ -227,6 +229,19 @@ mac 的三条硬规则（v3 实现口径）：
    `verify({ anchor })` 比对 `anchor_count_mismatch` / `anchor_head_mismatch`。
    锚点必须存在账本之外才有意义；没有 `macKey` 时 `anchor()` 返回 `null`
    （无密钥的 head 谁都能算，拿它当锚点等于没锚）。
+
+**密钥从哪来**：`resolveLedgerMacKey()`，优先级 **直接传值 > 文件 > 环境变量**（默认名
+`DSH_COVENANT_MAC_KEY`）。三条硬规则：
+
+1. **显式给出却取不到，必须抛错**。指定了 `ledgerMacKeyFile` / `ledgerMacKeyEnv` 却读不到、读为空，
+   一律失败关闭——绝不静默退化成「无密钥的 v2」，那正是「账本看着有 mac、其实没人验」的来源。
+   只有「既没传值、也没指定来源、默认环境变量恰好为空」才判定为 `none`。
+2. **密钥至少 32 字节**（`MIN_MAC_KEY_BYTES`）。短于该值直接拒绝，且错误消息只报长度、不回显密钥。
+3. **密钥不进任何输出**：`LocalHost.redact()` 只返回 `{macEnabled, keyLength, source}`；
+   账本、门禁报告、`coverage()`、错误消息里都不得出现密钥本身。
+
+CLI 的 `metrics` 现在是「先校验、再统计」：校验不过（含 `mac_key_missing`）直接非零退出并提示
+`--mac-key-file` / `--mac-key-env`，不再在校验不过的账本上算指标。
 `interceptions()` 按 `intercepted=true` 给出
 “实际拦截的未声明 API 调用”清单，供离线审计与月度度量共用。
 
