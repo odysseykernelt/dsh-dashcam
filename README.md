@@ -192,7 +192,8 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 ## 文档
 
 - [docs/SPEC.md](docs/SPEC.md)：能力分类、scope 语义、Two-Key、Ledger、门禁、签名、画像、Autopsy。
-- [docs/ROLLOUT.md](docs/ROLLOUT.md)：六阶段上线、熔断阈值、三级回滚、双钥轮换、应急下架、月度度量。
+- [docs/ROLLOUT.md](docs/ROLLOUT.md)：六阶段上线、熔断阈值、三级回滚、双钥轮换、应急下架、月度度量、
+  以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
 ## 1.8.0 新增（把「一条记录代表 N 个目标」这件事做完整）
