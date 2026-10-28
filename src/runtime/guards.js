@@ -54,7 +54,12 @@ function createGuardChain({
     }
   }
 
-  function check(operation, payload = {}) {
+  /**
+   * @param {{record?: boolean}} options record=false 时只判定、不写账本，
+   *   供 enforceBatch 把成百上千个目标压成一条记录（判定仍然逐个做）。
+   */
+  function check(operation, payload = {}, options = {}) {
+    const record = options.record !== false;
     stats.requests += 1;
     const ctx = { pluginRoot, home };
     let derived;
@@ -70,7 +75,7 @@ function createGuardChain({
         scope: null,
         action: operation,
       };
-      denial.ledgerSeq = recordLedger(ledger, {
+      denial.ledgerSeq = record ? (recordLedger(ledger, {
         plugin: manifest && manifest.id,
         pluginVersion: manifest && manifest.version,
         capability: denial.capability,
@@ -80,7 +85,7 @@ function createGuardChain({
         ruleId: 'derive',
         reason: denial.reason,
         intercepted: true,
-      })?.seq || null;
+      })?.seq || null) : null;
       emit({ type: 'deny', ...denial });
       return denial;
     }
@@ -146,7 +151,7 @@ function createGuardChain({
       statisticsIncrement(stats, 'denied');
       const intercepted = isInterceptionCode(denial.code);
       if (intercepted) stats.intercepted += 1;
-      const entry = recordLedger(ledger, {
+      const entry = record ? recordLedger(ledger, {
         plugin: manifest && manifest.id,
         pluginVersion: manifest && manifest.version,
         capability: denial.capability,
@@ -156,7 +161,7 @@ function createGuardChain({
         ruleId: denial.code,
         reason: denial.reason,
         intercepted,
-      });
+      }) : null;
       denial.ledgerSeq = entry ? entry.seq : null;
       denial.intercepted = intercepted;
       if (observeDepth > 0) {
@@ -177,9 +182,9 @@ function createGuardChain({
     }
 
     statisticsIncrement(stats, 'allowed');
-    let entry;
+    let entry = null;
     try {
-      entry = recordLedger(ledger, {
+      if (record) entry = recordLedger(ledger, {
         plugin: manifest && manifest.id,
         pluginVersion: manifest && manifest.version,
         capability: base.capability,
@@ -206,6 +211,91 @@ function createGuardChain({
     };
     emit({ type: 'allow', ...result });
     return result;
+  }
+
+  /**
+   * 批量判定：每个目标都单独过 Two-Key，但**只写一条账本**。
+   *
+   * 存在理由：一次 glob / 目录遍历可以产生上万个目标，一条一个记录会把审计文件撑爆
+   * （1 万条 = 1 万次 open/write/close）。所以判定不合并、只合并记账：
+   * 拒绝时写一条 deny 并抛错（reason 原文照搬），全部通过时写一条 allow，
+   * ruleId 为 'two-key-batch'，scope 里带 count。
+   *
+   * 注意：一次性授权（oneSeal）仍会按目标逐个消费——批量调用不要和 One-Seal 混用。
+   */
+  function enforceBatch(operation, payloads = []) {
+    if (!Array.isArray(payloads) || payloads.length === 0) return enforce(operation, {});
+
+    let capability = 'unknown';
+    let action = operation;
+    for (let index = 0; index < payloads.length; index += 1) {
+      const decision = check(operation, payloads[index], { record: false });
+      capability = decision.capability || capability;
+      action = decision.action || action;
+      if (!decision.allowed) {
+        const intercepted = Boolean(decision.intercepted);
+        if (intercepted) stats.intercepted += 1;
+        const entry = recordLedger(ledger, {
+          plugin: manifest && manifest.id,
+          pluginVersion: manifest && manifest.version,
+          capability: decision.capability,
+          action: decision.action,
+          scope: { batch: true, count: index + 1, sample: decision.scope },
+          decision: 'deny',
+          ruleId: decision.code,
+          reason: decision.reason,
+          intercepted,
+        });
+        const denial = new CovenantDenied(decision.reason, {
+          capability: decision.capability,
+          scope: decision.scope,
+          ruleId: decision.code,
+          ledgerSeq: entry ? entry.seq : null,
+        });
+        denial.batch = { count: index + 1, index };
+        throw denial;
+      }
+    }
+
+    const entry = recordLedger(ledger, {
+      plugin: manifest && manifest.id,
+      pluginVersion: manifest && manifest.version,
+      capability,
+      action,
+      scope: { batch: true, count: payloads.length },
+      decision: 'allow',
+      ruleId: 'two-key-batch',
+      reason: declaredReasonOf(authorizationForBatch(operation, payloads[0])),
+      intercepted: false,
+    });
+    const result = {
+      allowed: true,
+      batch: true,
+      capability,
+      action,
+      count: payloads.length,
+      ledgerSeq: entry ? entry.seq : null,
+    };
+    emit({ type: 'allow', ...result });
+    return result;
+  }
+
+  /** 只为拿到「真正覆盖第一项」的声明理由，不复用 check（它会计数、记账）。 */
+  function authorizationForBatch(operation, payload) {
+    try {
+      const ctx = { pluginRoot, home };
+      const derived = deriveOperation(operation, payload, ctx);
+      return authorizeAccess({
+        manifest,
+        grants,
+        capability: derived.capability,
+        scope: derived.scope,
+        seal,
+        now: seal && typeof seal.now === 'function' ? seal.now() : Date.now(),
+      });
+    } catch {
+      return null;
+    }
   }
 
   function enforce(operation, payload = {}) {
@@ -257,6 +347,7 @@ function createGuardChain({
   const api = {
     check,
     enforce,
+    enforceBatch,
     stats,
     manifest,
     beginObserve,
