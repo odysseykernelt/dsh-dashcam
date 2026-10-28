@@ -166,6 +166,21 @@
 - 重入保护：Node 内置实现互相调用（如 `appendFileSync → writeFileSync`、`http.get → http.request`）在原始实现执行期间直通，避免重复判定与递归。
 - 完整性校验：保存每个被包装函数的引用；发现被替换即标记 `compromised`，此后一切请求按 `integrity_compromised` 拒绝，并写 `tamper_detected` Ledger。
 
+### 6.0.1 批量判定（enforceBatch）
+
+一次 glob / 目录遍历可以产生上万个目标。一个目标一条账本，等于把审计文件撑爆
+（1 万条 = 1 万次 open/write/close），而且这些记录本身没有任何额外信息量。
+
+`guard.enforceBatch(operation, payloads)` 的口径是 **判定不合并、记账合并**：
+
+- 每个 payload 仍然单独推导、单独过 Two-Key——判定质量不因为批量而降级；
+- 全部通过时只写 **一条** `allow`：`ruleId='two-key-batch'`、`scope={batch:true,count:N}`；
+- 任何一条被拒时写 **一条** `deny`：`scope={batch:true,count:K,sample:<第一个越界目标>}`，然后抛 `CovenantDenied`
+  （`reason` 仍是原文，不做二次包装）。`count` 反映「检查到第几个就失败」，便于定位越界在序列里的位置。
+- **不要与 One-Seal 混用**：批量内部仍会按目标逐个消费一次性授权。
+- 账本口径变化：一条批量记录代表 N 个目标。度量侧用 `scope.count` 还原影响面，不要把
+  「记录数」直接当成「请求数」。
+
 ### 6.1 One-Seal
 
 - `seal.issue(grant)` 登记一次性授予。生命周期为 `available → reserve → commit`（删除），
