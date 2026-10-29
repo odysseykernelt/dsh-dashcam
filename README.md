@@ -200,6 +200,27 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 - [docs/ROLLOUT.md](docs/ROLLOUT.md)：六阶段上线、熔断阈值、三级回滚、双钥轮换、应急下架、月度度量、
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
+- [docs/multiprocess.md](docs/multiprocess.md)：多进程运行时原型的设计文档（目标/架构/迁移路径/开放问题）。
+
+## 1.11.0 新增（多进程运行时原型 · 垂直切片）
+
+一个**能跑通的最小闭环**，验证「把插件关进子进程、宿主替它做 IO」这条链路：
+
+- `src/runtime/ipc/protocol.js`：RPC 消息 schema 与校验（请求/响应/控制三种形状，畸形输入返回 false 不抛）。
+- `src/runtime/ipc/child.js`：子进程桥 + 能力客户端桩（**不 require 任何原生能力模块**，只能走 RPC）。
+- `src/host/child-host.js`：宿主侧 `ChildHost`——`fork` 子进程，收到 `fs.read` 后先 `guard.enforce` 再执行真实 IO。
+- `examples/child-plugin.js`：示例插件（跑在子进程里）。
+
+切片只实现 `fs.read` / `fs.write` / `ping` + `invoke`，已验证：
+
+```text
+授权内读取成功（IO 发生在宿主）✅
+越界读取被宿主拒绝且账本留痕 ✅
+子进程崩溃时 invoke 以错误收场而非悬挂 ✅
+```
+
+**这不是迁移**，只是原型。真正落地要解决的硬问题见 [docs/multiprocess.md](docs/multiprocess.md) 的开放问题（sync fs 无法跨异步 IPC、判定与执行分家、IPC 新攻击面、性能）。
+- 用例数 159 → 178。
 
 ## 1.10.2 设计微调 + 一致性修复
 
