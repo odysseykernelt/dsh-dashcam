@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('node:path');
-const { loadPolicy } = require('./policy');
+const { loadPolicy, resolveLimits } = require('./policy');
 const { Ledger } = require('./runtime/ledger');
 const { OneSealStore } = require('./runtime/one-seal');
 const { createGuardChain } = require('./runtime/guards');
@@ -55,7 +55,9 @@ function createPluginRuntime({
   // Hook 挂在守卫入口：任何进入守卫链的调用都先经过原生模块 Hook 翻译，
   // 再由同一个 check() 做 Two-Key 判定并写 Ledger。
   const bridge = patchBuiltins ? guard.installNativeHooks() : null;
-  const handles = sandboxMode === 'handles' ? createCapabilityHandles({ guard }) : null;
+  const handles = sandboxMode === 'handles'
+    ? createCapabilityHandles({ guard, limits: resolveLimits(policy) })
+    : null;
   const redirect = handles
     ? createModuleRedirect({ handles, pluginRoot })
     : null;
@@ -108,13 +110,20 @@ function activate(host = {}) {
     sandbox: host.sandbox || null,
   });
 
-  if (typeof host.registerPreExecute === 'function') {
-    host.registerPreExecute(runtime.guard.check);
-  } else if (host && typeof host.on === 'function') {
-    host.on('pre-execute', runtime.guard.check);
-  }
-
+  // 先占位再注册回调：回调抛错时 Hook 已经装好了，若此时计数还是 0，
+  // 下一次 activate 会顺利通过互斥检查并把 Hook 叠上去——正是这条互斥要防的事。
   activeRuntimes += 1;
+  try {
+    if (typeof host.registerPreExecute === 'function') {
+      host.registerPreExecute(runtime.guard.check);
+    } else if (host && typeof host.on === 'function') {
+      host.on('pre-execute', runtime.guard.check);
+    }
+  } catch (error) {
+    activeRuntimes -= 1;
+    runtime.dispose();
+    throw error;
+  }
   let released = false;
   return {
     id: PLUGIN_ID,

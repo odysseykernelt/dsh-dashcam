@@ -196,6 +196,19 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.1 修复（第二轮三视角审查）
+
+- **H-1 `fetchTimeoutMs` 真的生效了**：`createCapabilityHandles` 以前把 `limits` 收了却不往下传，
+  宿主设 3 秒、实际 30 秒。现在一路传到 net 句柄，并有走 `LocalHost → ctx.handles.net` 的集成用例。
+- **M-1 计数器提前占位**：`activate()` 以前先注册回调再 `+1`，回调抛错时 Hook 已装但计数为 0，
+  下一次激活会叠加。现在失败会回滚计数并 `dispose()`。
+- **M-3 limits 校验**：`batchTargets: 'abc'` 会让上限比较恒为 false（静默失效）；现在
+  `resolveLimits`/`loadPolicy` 直接拒绝非整数/越界值。`fetchTimeoutMs: 0` 是合法值。
+- **M-4 `coverage().installed`**：`strictPatch` 拒绝装载后不再留下"指向已卸载 Bridge"的假象。
+- **L-1 账本写失败的归因**：部分写入后把基准对齐到真实大小，磁盘错误不再被报成"并发写入"；
+  真正的并发检测保持原样（不会被重对齐吞掉）。
+- 用例数 153 → 158。
+
 ## 1.10.0 新增（可配置上限）
 
 写死的常量全部抽进 `policy.limits`，默认值不变：

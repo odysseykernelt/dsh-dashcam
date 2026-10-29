@@ -209,18 +209,34 @@ class Ledger {
     const payload = Buffer.from(`${stableStringify(entry)}\n`, 'utf8');
     const fd = REAL_OPEN_SYNC(this.file, 'a');
     let expected = null;
+    let concurrent = false;
     try {
       const actual = REAL_FSTAT_SYNC(fd).size;
-      if (actual !== this.size) {
+      // this.size === null 表示「上一次写失败、真实大小未知」：以磁盘为准重新对齐，
+      // 而不是把磁盘故障当成并发写入报出去。
+      if (this.size !== null && actual !== this.size) {
+        concurrent = true;
         throw new Error(
           `检测到并发写入：账本期望 ${this.size} 字节，实际 ${actual} 字节。Ledger 只支持单写者`,
         );
       }
+      this.size = actual;
       let offset = 0;
       while (offset < payload.length) {
         offset += REAL_WRITE_SYNC(fd, payload, offset, payload.length - offset);
       }
       expected = actual + payload.length;
+    } catch (error) {
+      // 部分写入（磁盘满等）会让文件大小已经改变：把基准对齐到真实大小。
+      // 但"检测到并发"这条不能对齐——那等于接受别人写的字节，下一次 append 就会接在它后面。
+      if (!concurrent) {
+        try {
+          this.size = REAL_FSTAT_SYNC(fd).size;
+        } catch {
+          this.size = null;
+        }
+      }
+      throw error;
     } finally {
       REAL_CLOSE_SYNC(fd);
     }

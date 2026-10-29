@@ -20,6 +20,15 @@ const DEFAULT_LIMITS = Object.freeze({
   minMacKeyBytes: 32,
 });
 
+/** 每个 limit 的合法下界，用于拒绝"看起来配了、其实让保护失效"的值。 */
+const LIMIT_MINIMUMS = Object.freeze({
+  batchTargets: 1,
+  globBatchSize: 1,
+  fetchTimeoutMs: 0,
+  integrityEvery: 0,
+  minMacKeyBytes: 1,
+});
+
 const DEFAULT_POLICY = Object.freeze({
   // 默认不授予任何能力。
   grants: Object.freeze([]),
@@ -92,7 +101,7 @@ function loadPolicy(raw = {}, context = {}) {
     enterprise: mergeObject(DEFAULT_POLICY.channels.enterprise, raw.channels && raw.channels.enterprise),
   };
   policy.enforcement = mergeObject(DEFAULT_POLICY.enforcement, raw.enforcement);
-  policy.limits = mergeObject(DEFAULT_LIMITS, raw.limits);
+  policy.limits = resolveLimits({ limits: raw.limits });
   policy.sandbox = mergeObject(DEFAULT_POLICY.sandbox, raw.sandbox);
   policy.credentialReview = mergeObject(DEFAULT_POLICY.credentialReview, raw.credentialReview);
   policy.oneSeal = mergeObject(DEFAULT_POLICY.oneSeal, raw.oneSeal);
@@ -102,9 +111,25 @@ function loadPolicy(raw = {}, context = {}) {
   return policy;
 }
 
-/** 把 policy.limits 与默认值合并，供不想加载整份 policy 的模块复用。 */
+/**
+ * 把 policy.limits 与默认值合并，并做类型/范围校验。
+ *
+ * 为什么必须校验：`batchTargets: 'abc'` 会让 `payloads.length > limits.batchTargets`
+ * 恒为 false——上限静默失效，属 fail-open；`integrityEvery: -1` 会让完整性校验静默关闭。
+ * 配置错误应当尽早失败，而不是变成一处没人知道的空缺。
+ */
 function resolveLimits(policy = {}) {
-  return { ...DEFAULT_LIMITS, ...((policy && policy.limits) || {}) };
+  const merged = { ...DEFAULT_LIMITS, ...((policy && policy.limits) || {}) };
+  for (const key of Object.keys(LIMIT_MINIMUMS)) {
+    const value = merged[key];
+    const minimum = LIMIT_MINIMUMS[key];
+    if (!Number.isInteger(value) || value < minimum) {
+      throw new Error(
+        `policy.limits.${key} 非法：${JSON.stringify(value)}（要求 >= ${minimum} 的整数，默认 ${DEFAULT_LIMITS[key]}）`,
+      );
+    }
+  }
+  return merged;
 }
 
 module.exports = { DEFAULT_POLICY, DEFAULT_LIMITS, loadPolicy, resolveLimits };

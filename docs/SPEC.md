@@ -414,3 +414,10 @@ await handles.fs.promises.readFile('cache.json');        // 每次调用都过�
 - `true`：装不完整直接**拒绝装载**（`LocalHost.register` 抛错）。
 
 这是「非侵入式」与「fail-closed」之间唯一留给宿主的开关，默认取前者。
+
+**limits 会被校验**：`resolveLimits()` 要求每个键是整数且不低于下界
+（`batchTargets`/`globBatchSize`/`minMacKeyBytes` ≥ 1，`fetchTimeoutMs`/`integrityEvery` ≥ 0）。
+非法值直接抛错——`batchTargets: 'abc'` 会让上限比较恒为 false，属静默 fail-open，必须尽早失败。
+
+`coverage()` 增加 `installed` 字段：区分「Hook 从未安装」与「装了又被卸载」。
+`strictPatch` 拒绝装载时会走 `uninstallNativeHooks()`，因此不会留下指向已卸载 Bridge 的 coverage。

@@ -234,7 +234,9 @@ class LocalHost {
     if (pluginPolicy.enforcement.strictPatch === true) {
       const coverage = guard.coverage();
       if (coverage.complete === false) {
-        bridge.uninstall();
+        // 用 guard.uninstallNativeHooks() 而不是 bridge.uninstall()：
+        // 前者会把 guard.hooks 置空，coverage() 才不会继续指向一个已卸载的 Bridge。
+        guard.uninstallNativeHooks();
         const detail = (coverage.unpatched || []).map((item) => `${item.prop}(${item.reason})`).join(', ');
         throw new Error(`沙箱补丁不完整，按 strictPatch 拒绝装载：${detail || '未知入口'}`);
       }

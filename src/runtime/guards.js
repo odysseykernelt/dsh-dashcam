@@ -425,7 +425,11 @@ function createGuardChain({
           caveat: '未安装 Hook 时守卫链只能靠宿主显式调用。',
         };
       // 失陷状态必须能从外部看到，否则「已失陷」只活在 guard 的内存里。
-      return { ...base, compromised: compromised ? String(compromised) : null };
+      return {
+        ...base,
+        installed: Boolean(hooks),
+        compromised: compromised ? String(compromised) : null,
+      };
     },
     installNativeHooks,
     uninstallNativeHooks,
@@ -446,9 +450,6 @@ function createGuardChain({
   if (nativeHooks) installNativeHooks();
   return api;
 }
-
-/** 单次批量判定的目标数上限：同步逐条判定会阻塞事件循环，必须由调用方分块。 */
-const MAX_BATCH_TARGETS = 10_000;
 
 function isInterceptionCode(code) {
   return code === 'not_declared' || code === 'legacy' || code === 'derive_failed';

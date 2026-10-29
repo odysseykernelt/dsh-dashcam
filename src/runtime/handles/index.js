@@ -14,7 +14,9 @@ function createCapabilityHandles({ guard, limits = null } = {}) {
   }
   return Object.freeze({
     fs: createFsHandle({ guard }),
-    net: createNetHandle({ guard }),
+    // limits 必须一路传到 net：fetchTimeoutMs 是在句柄**创建时**读取的，
+    // 中间这一跳吞掉参数，宿主设的超时就会静默失效（上一轮 H1 的同类型病灶）。
+    net: createNetHandle({ guard, limits }),
     proc: createProcHandle({ guard }),
   });
 }
