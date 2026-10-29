@@ -16,7 +16,7 @@ const DEFAULT_LIMITS = Object.freeze({
   fetchTimeoutMs: 30_000,
   /** 每 N 次判定抽样做一次完整性校验；0 = 关闭。 */
   integrityEvery: 64,
-  /** mac 密钥的最小字节数。 */
+  /** mac 密钥的最小字节数。下界与默认值一致，拒绝配小绕过。 */
   minMacKeyBytes: 32,
 });
 
@@ -26,7 +26,8 @@ const LIMIT_MINIMUMS = Object.freeze({
   globBatchSize: 1,
   fetchTimeoutMs: 0,
   integrityEvery: 0,
-  minMacKeyBytes: 1,
+  // 32 是 HMAC-SHA256 的安全长度；允许配更小等于允许把保护关掉，不接受。
+  minMacKeyBytes: 32,
 });
 
 const DEFAULT_POLICY = Object.freeze({
@@ -54,10 +55,11 @@ const DEFAULT_POLICY = Object.freeze({
     strictPatch: false,      // true = Hook 装不完整就拒绝装载（默认只记账 + 标 ReviewRequired）
   }),
   limits: DEFAULT_LIMITS,
-  // 能力注入：'handles' = require('fs') 返回封闭句柄；'global' = 原生 fs。
-  // LocalHost 默认 handles；activate() 默认 global（宿主自己也用 fs，不能替它换掉）。
+  // 能力注入：'handles' = require('fs') 返回封闭句柄；'global' = 原生 fs + Bridge 守卫。
+  // 默认 global：存量插件零改动即可运行，守卫由 Bridge 补丁承担。
+  // 'handles' 是显式选项——它会让 require('fs') 拿到封闭面，需要插件使用 ctx.handles。
   sandbox: Object.freeze({
-    mode: 'handles',
+    mode: 'global',
   }),
   // null 表示未配置；安全门禁会标记出来，企业通道要求显式配置。
   egressAllowlist: null,

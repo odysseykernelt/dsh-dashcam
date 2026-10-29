@@ -37,9 +37,14 @@ function createPluginRuntime({
   sandbox = null,
 } = {}) {
   const policy = loadPolicy(policyInput);
-  // activate 默认不重定向：宿主自己也用 fs，替它把 require('fs') 换掉是失礼的。
-  // 真正需要封闭面的宿主要么用 LocalHost，要么显式传 sandbox: 'handles'。
-  const sandboxMode = sandbox || 'global';
+  // sandbox 的单一真相是 policy.sandbox.mode（默认 'global'）。
+  // 参数 sandbox 只是显式覆盖，兼容两种写法：'handles' 字符串，或 { mode: 'handles' }。
+  // 不能在这里硬编码 'global'：那会让 activate() 无视 policy，与 LocalHost 行为分叉，
+  // 而且 { mode: 'handles' } 这种对象会因 truthy 被当成「开了」、实际却落回 global。
+  const sandboxOverride = typeof sandbox === 'string'
+    ? sandbox
+    : (sandbox && typeof sandbox === 'object' ? sandbox.mode : null);
+  const sandboxMode = sandboxOverride || policy.sandbox.mode || 'global';
   const resolvedMac = resolveLedgerMacKey({ ledgerMacKey, ledgerMacKeyFile, ledgerMacKeyEnv });
   const audit = ledger || new Ledger(ledgerPath, { macKey: resolvedMac.key });
   const seals = seal || new OneSealStore({ ttlMs: policy.oneSeal.ttlMs });

@@ -1,6 +1,6 @@
 {
   "name": "dsh-covenant",
-  "version": "1.10.1",
+  "version": "1.10.2",
   "description": "DeepSeek Harness 插件契约、运行时守卫、门禁、签名、画像卡与离线诊断",
   "main": "src/index.js",
   "type": "commonjs",

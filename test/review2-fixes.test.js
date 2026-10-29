@@ -57,6 +57,8 @@ test('H-1：policy.limits 真的能传到插件拿到的 net 句柄', async () =
   const host = new LocalHost({
     ledgerPath: path.join(dir, 'ledger.jsonl'),
     policy: {
+      // H-1 验证的是「limits → 句柄」这条链；句柄只在 handles 模式注入，故显式开启。
+      sandbox: { mode: 'handles' },
       limits: { fetchTimeoutMs: 0 },
       grants: [{ capability: 'net.outbound', scope: { hosts: ['example.com:443'] } }],
     },
@@ -142,4 +144,44 @@ test('L-1：并发检测仍然生效（重对齐的改动没有把它吞掉）',
   } finally {
     cleanup(dir);
   }
+});
+
+test('P1：createPluginRuntime 读 policy.sandbox.mode，且兼容对象/字符串写法', () => {
+  const { createPluginRuntime } = require('../src/index');
+  const dir = tempDir('p1-');
+  const base = {
+    manifest: MANIFEST,
+    grants: [],
+    patchBuiltins: false,
+    autoSweep: false,
+    ledgerPath: path.join(dir, 'ledger.jsonl'),
+    pluginRoot: dir,
+  };
+
+  // 对象写法（文档里写的 sandbox: { mode: 'handles' }）
+  const viaObject = createPluginRuntime({ ...base, policy: { sandbox: { mode: 'handles' } } });
+  try {
+    assert.notEqual(viaObject.handles, null, '对象写法必须生效，不能因 truthy 被静默忽略');
+    assert.notEqual(viaObject.redirect, null);
+  } finally {
+    viaObject.dispose();
+  }
+
+  // 字符串写法（旧接口兼容）
+  const viaString = createPluginRuntime({ ...base, sandbox: 'handles' });
+  try {
+    assert.notEqual(viaString.handles, null, '字符串写法仍然有效');
+  } finally {
+    viaString.dispose();
+  }
+
+  // 默认 = global
+  const defaultGlobal = createPluginRuntime({ ...base });
+  try {
+    assert.equal(defaultGlobal.handles, null);
+    assert.equal(defaultGlobal.redirect, null);
+  } finally {
+    defaultGlobal.dispose();
+  }
+  cleanup(dir);
 });

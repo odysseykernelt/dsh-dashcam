@@ -290,18 +290,20 @@ await handles.fs.promises.readFile('cache.json');        // 每次调用都过�
 
 ### 6.4 能力注入（module redirect）
 
-句柄只有在插件肯用它时才有用。能力注入把这件事变成默认：
+句柄只有在插件肯用它时才有用。但封闭面天生不完整（`openSync`、`fs.promises.open`、`watch`、`globSync`
+都不在句柄里），默认开它会打断存量插件。因此两条路径都默认 `global`，`handles` 是显式选项：
 
-- `policy.sandbox.mode = 'handles'`（`LocalHost` 默认）时，装载期间安装 `Module._load` 重定向：
+- `policy.sandbox.mode = 'handles'`（**非默认，需显式配置**）时，装载期间安装 `Module._load` 重定向：
   `require('fs')` / `require('node:fs')` / `require('fs/promises')` 返回**能力句柄**，而不是原生模块。
 - 插件代码不用改：它照旧 `require('node:fs')`，拿到的是封闭集合。用不到的方法（`readSync` 等）**不存在**，
-  于是「越界」从「被 Hook 拦下」变成「根本没有这个入口」。
+  于是「越界」从「被 Hook 拦下」变成「根本没有这个入口」。但这要求插件只使用句柄内的方法，
+  或用 `ctx.handles`——`openSync` 无法兼容（必须返回 fd），所以不能做默认值。
 - **只对 `pluginRoot` 下的模块生效**：宿主的 `require('fs')` 不受影响；入口模块 parent 为 `null`，
-  用 `redirect.enter()/exit()` 的装载窗口兜住。
+  用 `redirect.enter()/exit()` 的装载窗口兜住；插件目录下的 `node_modules` 依赖也在 pluginRoot 内，同样被重定向。
 - 顺序要求：Bridge 与 handles 模块必须已加载，重定向最后安装，否则它们自己会 require 到句柄而递归。
-- `sandbox.mode = 'global'` 是显式的 legacy 开关：插件拿原生 fs，只靠 Hook 事后拦截。
-- `activate()` 默认 `global`——宿主自己也用 fs，替它换掉 `require('fs')` 是失礼的；要封闭面请用 `LocalHost`
-  或显式传 `sandbox: 'handles'`。
+- `policy.sandbox.mode = 'global'`（**默认**）：插件拿原生 fs，由 Bridge 守卫事后拦截。
+- `activate()` 与 `LocalHost` 默认一致（`global`），避免门禁阶段与运行时行为分叉；
+  要封闭面请显式传 `sandbox: { mode: 'handles' }`。
 - **同一进程只允许一条重定向**：第二条 `install()` 直接抛错。两条会互相覆盖 `originalLoad`，
   卸载顺序一错就再也还原不回去；宁可报错，也不要静默错位。
 

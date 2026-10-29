@@ -162,20 +162,25 @@ handles.fs.coverage();                               // { closed: true, methods:
 
 ## 能力注入：让 require('fs') 直接返回句柄（1.5.0）
 
-句柄再好，插件不用也没用。所以 `LocalHost` 默认打开 `policy.sandbox.mode = 'handles'`：
+句柄再好，插件不用也没用。但封闭面天生不完整——`openSync`、`fs.promises.open`、`watch`、`globSync`
+在句柄里都没有，默认开它会直接把存量插件打成 `TypeError`。所以 `LocalHost` 与 `activate()` 都默认
+`sandbox.mode = 'global'`，只靠 Bridge 守卫；`handles` 是宿主显式选择的沙箱模式：
 
 ```js
-// 插件代码完全不用改
+// global（默认）：插件代码完全不用改
 const fs = require('node:fs');
-fs.readFileSync('cache.json');   // 走能力句柄 → 过守卫链
+fs.readFileSync('cache.json');   // 原生 fs → 过 Bridge 守卫链
+fs.openSync('cache.json', 'r');  // 同样可用
+
+// handles（显式开启，需要插件使用 ctx.handles）
 fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 ```
 
 - 装载期间安装 `Module._load` 重定向，`fs` / `node:fs` / `fs/promises` 都换成句柄。
-- **只对插件目录下的模块生效**，宿主的 `require('fs')` 不受影响。
+- **只对插件目录下的模块生效**，宿主的 `require('fs')` 不受影响；插件自带 `node_modules` 依赖也在 pluginRoot 之内，同样被重定向。
 - 顺序有讲究：Bridge 先装（它自己要用原生 fs），重定向后装，否则会递归。
-- `sandbox.mode = 'global'` 是显式的 legacy 开关：拿原生 fs，只靠 Hook 事后拦。
-- `activate()` 默认不重定向（宿主也依赖 fs），要封闭面用 `LocalHost` 或显式 `sandbox: 'handles'`。
+- `sandbox.mode = 'handles'` 是显式沙箱开关：拿封闭面，要求插件走 `ctx.handles`。
+- 默认值必须保可用性：不开 `handles`，存量插件零改动即可运行。
 
 ## 为什么是非侵入式
 
@@ -195,6 +200,20 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 - [docs/ROLLOUT.md](docs/ROLLOUT.md)：六阶段上线、熔断阈值、三级回滚、双钥轮换、应急下架、月度度量、
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
+
+## 1.10.2 设计微调 + 一致性修复
+
+- **`sandbox.mode` 默认 `global`**：封闭句柄面不完整（`openSync` / `fs.promises.open` / `watch` /
+  `globSync` 都不在句柄里，`openSync` 因必须返回 fd 无法兼容），默认开 `handles` 会打断存量插件。
+  现在两条路径（`LocalHost` 与 `activate()`）都默认 `global`，`handles` 是显式选项。
+- **`minMacKeyBytes` 下限提到 32**：`policy.limits` 不再允许把 HMAC-SHA256 强度关掉；
+  低层 `resolveLedgerMacKey(minBytes)` 仍可自定义。
+- **P1 修复**：`createPluginRuntime` 现在以 `policy.sandbox.mode` 为唯一真相，并兼容
+  `sandbox: 'handles'`（字符串）与 `sandbox: { mode: 'handles' }`（对象）两种写法。此前对象写法
+  会因 truthy 被静默忽略、实际跑在 global。
+- **P2 修正文档**：`node_modules` 依赖在 `pluginRoot` 之内，**会被**重定向（旧文档说不会）。
+- **P3/P4**：更新过期的 `activate` 注释；默认用例不再显式传 `sandbox`。
+- 用例数 158 → 159。
 
 ## 1.10.1 修复（第二轮三视角审查）
 
@@ -299,10 +318,10 @@ new LocalHost({ policy: { limits: { fetchTimeoutMs: 5000 }, enforcement: { stric
 
 ## 1.5.0 新增（能力注入）
 
-- **`require('fs')` 返回能力句柄**：`LocalHost` 默认 `sandbox.mode='handles'`，按 `pluginRoot` 范围重定向
-  `fs` / `node:fs` / `fs/promises`。插件不改代码就进封闭世界；`sandbox.mode='global'` 是显式 legacy 开关。
+- **`require('fs')` 可选返回能力句柄**：`sandbox.mode='handles'`（显式开启）时按 `pluginRoot` 范围重定向
+  `fs` / `node:fs` / `fs/promises`；默认 `global`，用原生 fs + Bridge 守卫，存量插件零改动。
 - **句柄补 `constants`**：只是一堆数字，不构成能力面，放行能显著降低改造量。
-- **`activate()` 默认不重定向**：宿主自己也要 fs，替它换掉 `require('fs')` 是失礼的。
+- **两条路径默认一致**：`activate()` 与 `LocalHost` 都默认 `global`，不会出现「门禁一套、运行时另一套」。
 - **度量分开统计**：新增 `undeclaredInterceptions` / `undeclaredInterceptionRate` 与
   `grantDenials` / `grantDenialRate`——「插件越界」和「宿主没发钥匙」不该混在一个拦截率里。
 - 用例数 77 → 84（新增 `test/sandbox.test.js` 七条）。

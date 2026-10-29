@@ -113,7 +113,7 @@ bug，而是这类「进程内治理」方案的物理边界。上线前逐项�
 | 2 | `vm` / 原生扩展（`.node`）/ Worker 内部 | 同一进程内没有第二道墙；Worker 的模块表是新的 | 高风险插件放独立进程或独立 realm；企业通道直接拒收含原生扩展的包 | 安全门禁 `scan.findings` 出现 `native_module` 的必须走隔离，不能只贴标签 |
 | 3 | 账本可写性 | HMAC 只保证「无密钥者伪造不了」；进程账号若对账本目录有写权限，可以直接截断 | 账本放独立存储（append-only 挂载 / 外部日志系统）；定期 `anchor()` 外发 | 用运行账号试删账本，应当失败；`metrics --anchor <锚点文件>` 应通过 |
 | 4 | `macKey` 托管 | 密钥进了仓库/镜像/日志，等于没有密钥 | KMS 或编排层注入（`DSH_COVENANT_MAC_KEY` / `--mac-key-file`）；谁能读写进运维文档；轮换按「新账本 + 旧账本重新锚定」做 | `redact()` 只露 `{macEnabled,keyLength,source}`；密钥在仓库与日志里 grep 不到 |
-| 5 | 沙箱模式 | `sandbox.mode='global'` 的插件仍可直连全局 API | 新插件一律 `handles`；存量用 `global` 的登记为技术债并排期 | `host.coverage().sandbox.kind === 'module-redirect'` |
+| 5 | 沙箱模式 | 默认 `global` 只靠 Hook 事后拦；`handles` 需要插件改用 `ctx.handles`（`openSync` 等无法兼容） | 高敏插件显式 `sandbox.mode='handles'`；存量保持默认 `global`，零改动 | `host.coverage().sandbox.kind` 与策略一致：`global` → `none`，`handles` → `module-redirect` |
 
 **上线检查清单**（逐项打勾；缺项要在画像卡上标 `ReviewRequired`，不要标 `Verified`）：
 

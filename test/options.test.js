@@ -97,9 +97,12 @@ test('limits.minMacKeyBytes：密钥下限可调', () => {
   try {
     const shortKey = 'k'.repeat(8);
     assert.throws(() => resolveLedgerMacKey({ ledgerMacKey: shortKey }), /太短/);
-    const relaxed = resolveLedgerMacKey({ ledgerMacKey: shortKey, minBytes: 8 });
-    assert.equal(relaxed.source, 'value');
-    assert.equal(relaxed.key, shortKey);
+    assert.equal(resolveLedgerMacKey({ ledgerMacKey: shortKey, minBytes: 8 }).key, shortKey);
+    // policy 侧不允许把下限配到 32 以下：那等于允许把 HMAC 强度关掉。
+    assert.throws(
+      () => resolveLimits({ limits: { minMacKeyBytes: 8 } }),
+      /minMacKeyBytes/,
+    );
   } finally {
     cleanup(dir);
   }

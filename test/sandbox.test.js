@@ -84,7 +84,7 @@ test('重定向：装载窗口内 parent 为 null 的入口也算插件', () => 
   }
 });
 
-test('LocalHost：默认注入句柄，插件 require("fs") 拿到封闭面', async () => {
+test('LocalHost：显式 sandbox=handles 时插件 require("fs") 拿到封闭面', async () => {
   const dir = tempDir('sandbox-host-');
   const pluginDir = path.join(dir, 'plugin');
   fs.mkdirSync(pluginDir);
@@ -116,7 +116,10 @@ test('LocalHost：默认注入句柄，插件 require("fs") 拿到封闭面', as
   const { LocalHost } = require('../src/host/local-host');
   const host = new LocalHost({
     ledgerPath: path.join(dir, 'ledger.jsonl'),
-    policy: { grants: [{ capability: 'fs.read', scope: { paths: ['$PLUGIN/**'] } }] },
+    policy: {
+      sandbox: { mode: 'handles' },
+      grants: [{ capability: 'fs.read', scope: { paths: ['$PLUGIN/**'] } }],
+    },
   });
   try {
     await host.install(pluginDir);
@@ -131,7 +134,7 @@ test('LocalHost：默认注入句柄，插件 require("fs") 拿到封闭面', as
   }
 });
 
-test('LocalHost：sandbox=global 时插件拿到原生 fs', async () => {
+test('LocalHost：默认 global，插件拿到原生 fs（存量插件零改动）', async () => {
   const dir = tempDir('sandbox-global-');
   const pluginDir = path.join(dir, 'plugin');
   fs.mkdirSync(pluginDir);
@@ -151,7 +154,7 @@ test('LocalHost：sandbox=global 时插件拿到原生 fs', async () => {
   const { LocalHost } = require('../src/host/local-host');
   const host = new LocalHost({
     ledgerPath: path.join(dir, 'ledger.jsonl'),
-    policy: { sandbox: { mode: 'global' } },
+    policy: {}, // 不显式传 sandbox：本用例要验证的就是「默认 = global」
   });
   try {
     await host.install(pluginDir);
