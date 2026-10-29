@@ -16,7 +16,7 @@
  */
 
 // 子进程可向宿主请求的能力（白名单）。
-const OPS = Object.freeze(['fs.read', 'fs.write', 'net.outbound', 'ping']);
+const OPS = Object.freeze(['fs.read', 'fs.readMany', 'fs.write', 'net.outbound', 'ping']);
 
 // 宿主发给子进程的控制操作（白名单）。
 const CONTROL_OPS = Object.freeze(['invoke']);

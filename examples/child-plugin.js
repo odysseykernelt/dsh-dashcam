@@ -9,6 +9,10 @@ const { startChildBridge } = require('../src/runtime/ipc/child');
 
 startChildBridge({
   async onInvoke(payload, client) {
+    if (Array.isArray(payload.paths)) {
+      const texts = await client.fs.readFileMany(payload.paths);
+      return { ok: true, texts };
+    }
     if (!payload || typeof payload.path !== 'string') {
       throw new Error('missing payload.path');
     }

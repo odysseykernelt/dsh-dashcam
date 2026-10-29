@@ -98,3 +98,30 @@ test('多进程切片：子进程崩溃时 invoke 以错误收场而不是悬挂
     cleanup(runtime.dir);
   }
 });
+
+test('多进程切片：批量读一次 RPC 读多个文件，且账本只写一条', async () => {
+  const runtime = setup('/**');
+  fs.writeFileSync(path.join(runtime.dir, 'a.txt'), 'A');
+  fs.writeFileSync(path.join(runtime.dir, 'b.txt'), 'B');
+
+  const host = new ChildHost({ guard: runtime.guard, childEntry: CHILD_ENTRY });
+  host.start();
+  try {
+    const result = await host.invoke({
+      paths: [path.join(runtime.dir, 'a.txt'), path.join(runtime.dir, 'b.txt')],
+    });
+    assert.deepEqual(result, { ok: true, texts: ['A', 'B'] });
+
+    const batchRecords = runtime.ledger.records().filter((record) => record.ruleId === 'two-key-batch');
+    assert.equal(batchRecords.length, 1, '批量读只该写一条 batch 账本');
+    assert.equal(batchRecords[0].scope.count, 2);
+  } finally {
+    host.stop();
+    cleanup(runtime.dir);
+  }
+});
+
+test('ChildHost 已接进公开导出', () => {
+  const api = require('../src/index');
+  assert.equal(typeof api.ChildHost, 'function');
+});

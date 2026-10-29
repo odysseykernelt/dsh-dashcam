@@ -180,4 +180,6 @@ module.exports = {
   ...require('./governance/rollout'),
   // 宿主
   ...require('./host/local-host'),
+  // 多进程运行时（原型）：只导出宿主入口，ipc/protocol、ipc/child 按路径直接 require。
+  ChildHost: require('./host/child-host').ChildHost,
 };

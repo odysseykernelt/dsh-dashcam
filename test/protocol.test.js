@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const protocol = require('../src/runtime/ipc/protocol.js');
 
 test('导出契约精确（OPS / CONTROL_OPS / 函数）', () => {
-  assert.deepEqual(protocol.OPS, ['fs.read', 'fs.write', 'net.outbound', 'ping']);
+  assert.deepEqual(protocol.OPS, ['fs.read', 'fs.readMany', 'fs.write', 'net.outbound', 'ping']);
   assert.deepEqual(protocol.CONTROL_OPS, ['invoke']);
   assert.ok(Object.isFrozen(protocol.OPS));
   assert.ok(Object.isFrozen(protocol.CONTROL_OPS));

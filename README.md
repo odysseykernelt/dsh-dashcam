@@ -202,6 +202,15 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 - [docs/multiprocess.md](docs/multiprocess.md)：多进程运行时原型的设计文档（目标/架构/迁移路径/开放问题）。
 
+## 1.11.1 多进程切片可当工具用
+
+- **`ChildHost` 接进公开导出**：`require('dsh-covenant').ChildHost`。
+- **批量读**：子进程 `client.fs.readFileMany(paths)` 把 N 次 RPC 压成一次；宿主侧仍逐个按
+  `fs.read` 授权（复用 `guard.enforceBatch`：判定不合并、账本合并），只写一条
+  `two-key-batch` 记录。
+- 示例插件 `onInvoke` 支持 `payload.paths` 数组。
+- 用例数 178 → 180。
+
 ## 1.11.0 新增（多进程运行时原型 · 垂直切片）
 
 一个**能跑通的最小闭环**，验证「把插件关进子进程、宿主替它做 IO」这条链路：

@@ -23,6 +23,9 @@ function startChildBridge({ onInvoke }) {
   const client = Object.freeze({
     fs: Object.freeze({
       readFile: async (path) => request('fs.read', { path }),
+      // 批量读是「传输层便利」，不是新能力：宿主侧仍逐个按 fs.read 授权，
+      // 只是把 N 次 RPC 压成一次、账本也只写一条（见 host 的 _fsReadMany）。
+      readFileMany: async (paths) => request('fs.readMany', { paths }),
       writeFile: async (path, data) => request('fs.write', { path, data }),
     }),
     net: Object.freeze({

@@ -60,6 +60,11 @@ class ChildHost {
           this._reply(msg.id, true, value);
           break;
         }
+        case 'fs.readMany': {
+          const value = this._fsReadMany(msg.payload);
+          this._reply(msg.id, true, value);
+          break;
+        }
         case 'fs.write': {
           this._fsWrite(msg.payload);
           this._reply(msg.id, true, null);
@@ -83,6 +88,17 @@ class ChildHost {
     const target = payload && payload.path;
     this.guard.enforce('fs.read', { path: target });
     return fs.readFileSync(target, 'utf8');
+  }
+
+  /**
+   * 批量读：授权仍逐个按 fs.read 判定（enforceBatch：判定不合并、账本合并），
+   * 通过后宿主逐个执行真实 IO。子进程拿不到 fd，也拿不到任何原生 fs。
+   */
+  _fsReadMany(payload) {
+    const paths = payload && Array.isArray(payload.paths) ? payload.paths : [];
+    const targets = paths.map((target) => ({ path: target }));
+    this.guard.enforceBatch('fs.read', targets);
+    return paths.map((target) => fs.readFileSync(target, 'utf8'));
   }
 
   _fsWrite(payload) {
