@@ -22,9 +22,11 @@ function normalizeMacKey(value, minBytes = MIN_MAC_KEY_BYTES) {
   const text = String(value).trim();
   if (!text) return null;
   const bytes = Buffer.byteLength(text, 'utf8');
-  if (bytes < minBytes) {
+  // 调用方传的 minBytes 只能抬高、不能低于安全下限：否则「可调」就成了绕过口。
+  const floor = Math.max(Number(minBytes) || 0, MIN_MAC_KEY_BYTES);
+  if (bytes < floor) {
     // 只报长度，不回显密钥：错误消息也会进日志。
-    throw macKeyError(`mac 密钥太短：至少 ${minBytes} 字节（当前 ${bytes} 字节）`);
+    throw macKeyError(`mac 密钥太短：至少 ${floor} 字节（当前 ${bytes} 字节）`);
   }
   return text;
 }
@@ -217,12 +219,11 @@ class LocalHost {
       policy: pluginPolicy,
       pluginRoot: record.pluginDir,
     });
-    // 默认注入能力句柄：插件 require('fs') 拿到的就是封闭集合，
-    // 用不到的方法直接不存在。policy.sandbox.mode='global' 才回到原生 fs。
+    // 能力句柄始终可用：插件走 ctx.handles 就是封闭面，不看 sandbox 模式。
+    // 只有 sandbox.mode='handles' 才额外把插件目录内的 require('fs') 重定向过来；
+    // 默认 'global' 保持原生 fs，存量插件零改动。
     const sandboxed = pluginPolicy.sandbox.mode === 'handles';
-    const handles = sandboxed
-      ? createCapabilityHandles({ guard, limits: resolveLimits(pluginPolicy) })
-      : null;
+    const handles = createCapabilityHandles({ guard, limits: resolveLimits(pluginPolicy) });
     // 入口源码由宿主先读出来：这次 fs 调用发生在 Hook 之前，属于宿主行为，
     // 不该被记成插件的一次未声明读取（否则 interceptions() 会变成噪音）。
     const resolvedEntry = path.resolve(record.entry);
@@ -242,7 +243,7 @@ class LocalHost {
       }
     }
     // 重定向必须在 Hook 之后装：createBridge 自己也要 require 原生 fs。
-    const redirect = handles
+    const redirect = sandboxed
       ? createModuleRedirect({ handles, pluginRoot: record.pluginDir })
       : null;
     let module;
@@ -267,17 +268,42 @@ class LocalHost {
     this.active = { pluginId, ledger, seal, guard, bridge, handles, redirect };
     this.modules.set(pluginId, module);
     if (typeof module.activate === 'function') {
-      await module.activate({
-        plugin: record.manifest,
-        ledger,
-        guard,
-        seal,
-        fs: handles ? handles.fs : fs,
-        handles,
-        registerPreExecute: (handler) => {
-          this.active.preExecute = handler;
-        },
-      });
+      try {
+        await module.activate({
+          plugin: record.manifest,
+          ledger,
+          guard,
+          seal,
+          fs: sandboxed ? handles.fs : fs,
+          handles,
+          registerPreExecute: (handler) => {
+            this.active.preExecute = handler;
+          },
+        });
+      } catch (error) {
+        // activate 抛错时必须回滚，否则宿主卡在「已有活动 Bridge」的半装载状态：
+        // active / modules 已写入，Hook 与重定向已安装，后续注册会直接失败，
+        // 而插件其实从未成功激活。
+        try {
+          if (typeof module.deactivate === 'function') await module.deactivate();
+        } catch {
+          // 回滚失败不掩盖原始错误。
+        }
+        try {
+          if (redirect) redirect.uninstall();
+        } catch {
+          // 同上。
+        }
+        try {
+          bridge.uninstall();
+        } catch {
+          // 同上。
+        }
+        seal.stop();
+        this.modules.delete(pluginId);
+        this.active = null;
+        throw new Error(`注册失败（activate 抛错）：${error.message}`);
+      }
     }
     return { id: pluginId, registered: true };
   }

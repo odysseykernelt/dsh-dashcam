@@ -92,12 +92,13 @@ test('limits.fetchTimeoutMs：0 不注入超时，正值注入', async () => {
   }
 });
 
-test('limits.minMacKeyBytes：密钥下限可调', () => {
+test('limits.minMacKeyBytes：下限只能抬高，不能降到 32 以下', () => {
   const dir = tempDir('options-mac-');
   try {
     const shortKey = 'k'.repeat(8);
     assert.throws(() => resolveLedgerMacKey({ ledgerMacKey: shortKey }), /太短/);
-    assert.equal(resolveLedgerMacKey({ ledgerMacKey: shortKey, minBytes: 8 }).key, shortKey);
+    // 函数级参数也不能放宽：否则「可调」就是绕过 policy 的后门。
+    assert.throws(() => resolveLedgerMacKey({ ledgerMacKey: shortKey, minBytes: 8 }), /太短/);
     // policy 侧不允许把下限配到 32 以下：那等于允许把 HMAC 强度关掉。
     assert.throws(
       () => resolveLimits({ limits: { minMacKeyBytes: 8 } }),

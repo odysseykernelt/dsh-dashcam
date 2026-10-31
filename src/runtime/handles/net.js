@@ -4,6 +4,7 @@ const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
 const { parseRequestTarget } = require('../derive');
+const { fetchWithRevalidation } = require('../redirects');
 const { resolveLimits } = require('../../policy');
 
 /**
@@ -126,23 +127,28 @@ function createNetHandle({ guard, limits = null } = {}) {
   }
 
   async function fetch(input, init) {
-    let target;
-    if (typeof input === 'string' || input instanceof URL) {
-      target = requestTarget([input], 'https:');
-    } else if (input && typeof input === 'object' && typeof input.url === 'string') {
-      // Request 对象：唯一可信的判定依据是它已经解析好的绝对 URL。
-      target = requestTarget([input.url], 'https:');
-    } else {
-      throw new Error('net 句柄的 fetch 只接受字符串 / URL / Request 对象');
-    }
-    guardOutbound(target);
     if (!nativeFetch) throw new Error('当前运行时没有原生 fetch');
     const options = { ...(init || {}) };
     if (!options.signal && fetchTimeoutMs > 0 && typeof AbortSignal !== 'undefined'
       && typeof AbortSignal.timeout === 'function') {
       options.signal = AbortSignal.timeout(fetchTimeoutMs);
     }
-    return nativeFetch(input, options);
+    return fetchWithRevalidation({
+      nativeFetch,
+      input,
+      init: options,
+      // Request 对象：唯一可信的判定依据是它已经解析好的绝对 URL。
+      resolveTarget(value) {
+        if (typeof value === 'string' || value instanceof URL) {
+          return requestTarget([value], 'https:');
+        }
+        if (value && typeof value === 'object' && typeof value.url === 'string') {
+          return requestTarget([value.url], 'https:');
+        }
+        throw new Error('net 句柄的 fetch 只接受字符串 / URL / Request 对象');
+      },
+      guardTarget: guardOutbound,
+    });
   }
 
   const handle = {

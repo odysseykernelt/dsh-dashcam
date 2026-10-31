@@ -148,7 +148,12 @@ test('LocalHost：默认 global，插件拿到原生 fs（存量插件零改动�
   fs.writeFileSync(path.join(pluginDir, 'index.js'), [
     "'use strict';",
     'const fs = require("node:fs");',
-    'module.exports = { hasReadSync: typeof fs.readSync === "function", activate() {}, invoke() { return {}; }, deactivate() {} };',
+    'module.exports = {',
+    '  hasReadSync: typeof fs.readSync === "function",',
+    '  activate(ctx) { this.ctx = ctx; },',
+    '  invoke() { return {}; },',
+    '  deactivate() {},',
+    '};',
   ].join('\n'));
 
   const { LocalHost } = require('../src/host/local-host');
@@ -159,9 +164,40 @@ test('LocalHost：默认 global，插件拿到原生 fs（存量插件零改动�
   try {
     await host.install(pluginDir);
     await host.register('com.example.global');
-    assert.equal(host.modules.get('com.example.global').hasReadSync, true);
+    const module = host.modules.get('com.example.global');
+    assert.equal(module.hasReadSync, true);
+    // 句柄常驻：新插件可以直接用 ctx.handles，不必先切到 handles 模式。
+    assert.ok(module.ctx.handles, 'ctx.handles 在默认 global 下也常驻');
+    assert.equal(typeof module.ctx.handles.fs.readFileSync, 'function');
+    assert.equal(module.ctx.fs.readSync, fs.readSync, 'ctx.fs 仍是原生 fs');
+    assert.equal(host.coverage().sandbox.kind, 'none');
   } finally {
     try { await host.uninstall('com.example.global'); } catch {}
+    cleanup(dir);
+  }
+});
+
+test('handles 模式：pluginRoot 必须显式、绝对、存在且是目录', () => {
+  const { createPluginRuntime } = require('../src/index');
+  // 不传 pluginRoot：不能静默回落到 cwd，否则会把宿主自己的 require('fs') 也换掉。
+  assert.throws(() => createPluginRuntime({ sandbox: 'handles' }), /显式传 pluginRoot/);
+  assert.throws(
+    () => createPluginRuntime({ sandbox: 'handles', pluginRoot: path.join('relative', 'dir') }),
+    /绝对路径/,
+  );
+  const dir = tempDir('sandbox-root-');
+  try {
+    assert.throws(
+      () => createPluginRuntime({ sandbox: 'handles', pluginRoot: path.join(dir, 'missing') }),
+      /pluginRoot 不可用/,
+    );
+    const filePath = path.join(dir, 'not-a-dir.js');
+    fs.writeFileSync(filePath, '');
+    assert.throws(
+      () => createPluginRuntime({ sandbox: 'handles', pluginRoot: filePath }),
+      /不是目录/,
+    );
+  } finally {
     cleanup(dir);
   }
 });

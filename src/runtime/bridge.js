@@ -13,6 +13,7 @@ const { CovenantDenied } = require('../errors');
 const { keyPatternCovers } = require('../contract/capabilities');
 const { isSensitiveEnvKey } = require('../util/paths');
 const { parseRequestTarget, toPathString, capabilityNeedsForOpen } = require('./derive');
+const { fetchWithRevalidation } = require('./redirects');
 const { sha256 } = require('../util/stable');
 const { resolveLimits } = require('../policy');
 
@@ -88,6 +89,9 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
   let installed = false;
   // 重入计数：Node 内置实现经常互相调用（如 appendFileSync → writeFileSync、
   // http.get → http.request）。原始实现执行期间必须直通，否则会重复守卫甚至递归。
+  // 关键：这个窗口只包住**原生调用**，不包住判定。判定期间插件传入的参数会被强转
+  // （路径、URL、命令），toString/valueOf 里跑的是插件代码；若判定也在窗口内，
+  // 插件就能在强转里发起任意调用而不进守卫链、不落账本。
   let callDepth = 0;
 
   function patchMethod(target, prop, maker, label) {
@@ -95,15 +99,19 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     const descriptor = Object.getOwnPropertyDescriptor(target, prop);
     const original = target[prop];
     if (typeof original !== 'function') { unpatched.push({ prop, reason: 'not_function' }); return false; }
-    const inner = maker(original);
-    const wrapped = function passthroughAware(...args) {
-      if (callDepth > 0) return original.apply(this, args);
+    // 交给 maker 的是「带重入窗口的原生调用」，判定代码因此始终在 callDepth === 0 下执行。
+    const invokeOriginal = function invokeOriginal(...callArgs) {
       callDepth += 1;
       try {
-        return inner.apply(this, args);
+        return original.apply(this, callArgs);
       } finally {
         callDepth -= 1;
       }
+    };
+    const inner = maker(invokeOriginal);
+    const wrapped = function guardedEntry(...args) {
+      if (callDepth > 0) return original.apply(this, args);
+      return inner.apply(this, args);
     };
     if (!safeDefine(target, prop, wrapped, descriptor)) {
       unpatched.push({ prop, reason: 'define_failed' });
@@ -597,21 +605,25 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
       fetchDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
       const wrapped = function wrappedFetch(input, init) {
         if (callDepth > 0) return original.call(this, input, init);
-        let target;
-        if (typeof input === 'string' || input instanceof URL) {
-          target = parseRequestTarget([input], 'https:');
-        } else if (input && typeof input === 'object' && input.url) {
-          target = parseRequestTarget([input.url], 'https:');
-        } else {
-          target = { host: 'localhost', port: 443 };
-        }
-        callDepth += 1;
-        try {
-          guard.enforce('net.outbound', { host: target.host, port: target.port || 443 });
-        } finally {
-          callDepth -= 1;
-        }
-        return original.call(this, input, init);
+        // 原生 fetch 默认跟随重定向，且跟随后的跳数不再经过守卫链。交给复判器：
+        // 每一跳重新判定，跳数封顶，拿不到可复放 body 就交回调用方。
+        return fetchWithRevalidation({
+          nativeFetch: original,
+          input,
+          init,
+          resolveTarget(value) {
+            if (typeof value === 'string' || value instanceof URL) {
+              return parseRequestTarget([value], 'https:');
+            }
+            if (value && typeof value === 'object' && typeof value.url === 'string') {
+              return parseRequestTarget([value.url], 'https:');
+            }
+            return { host: 'localhost', port: 443 };
+          },
+          guardTarget(target) {
+            guard.enforce('net.outbound', { host: target.host, port: target.port || 443 });
+          },
+        });
       };
       if (safeDefine(globalThis, 'fetch', wrapped, fetchDescriptor)) {
         checks.push({ target: globalThis, prop: 'fetch', original, wrapped });

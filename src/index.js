@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('node:fs');
 const path = require('node:path');
 const { loadPolicy, resolveLimits } = require('./policy');
 const { Ledger } = require('./runtime/ledger');
@@ -31,7 +32,7 @@ function createPluginRuntime({
   ledger = null,
   seal = null,
   blacklist = null,
-  pluginRoot = process.cwd(),
+  pluginRoot = null,
   patchBuiltins = true,
   autoSweep = true,
   sandbox = null,
@@ -45,6 +46,26 @@ function createPluginRuntime({
     ? sandbox
     : (sandbox && typeof sandbox === 'object' ? sandbox.mode : null);
   const sandboxMode = sandboxOverride || policy.sandbox.mode || 'global';
+  // handles 模式会把 pluginRoot 内的 require('fs') 换成句柄。
+  // 没有显式根目录就只能回落到 process.cwd()，那会把宿主自己的 fs 一并换掉，
+  // 所以这里宁可拒绝，也不静默用一个猜出来的根。
+  const hasExplicitRoot = typeof pluginRoot === 'string' && pluginRoot.length > 0;
+  if (sandboxMode === 'handles') {
+    if (!hasExplicitRoot) {
+      throw new Error('sandbox.mode=handles 必须显式传 pluginRoot（绝对路径）：否则模块重定向会覆盖宿主自己的 require("fs")');
+    }
+    if (!path.isAbsolute(pluginRoot)) {
+      throw new Error(`pluginRoot 必须是绝对路径：${pluginRoot}`);
+    }
+    let stat;
+    try {
+      stat = fs.statSync(pluginRoot);
+    } catch (error) {
+      throw new Error(`pluginRoot 不可用：${pluginRoot}（${error.code || error.message}）`);
+    }
+    if (!stat.isDirectory()) throw new Error(`pluginRoot 不是目录：${pluginRoot}`);
+  }
+  const root = hasExplicitRoot ? path.resolve(pluginRoot) : process.cwd();
   const resolvedMac = resolveLedgerMacKey({ ledgerMacKey, ledgerMacKeyFile, ledgerMacKeyEnv });
   const audit = ledger || new Ledger(ledgerPath, { macKey: resolvedMac.key });
   const seals = seal || new OneSealStore({ ttlMs: policy.oneSeal.ttlMs });
@@ -55,16 +76,20 @@ function createPluginRuntime({
     seal: seals,
     blacklist,
     policy,
-    pluginRoot,
+    pluginRoot: root,
   });
+  // 能力句柄始终可用：插件走 ctx.handles 就能拿到封闭面，不依赖 sandbox 模式。
+  // sandbox.mode='handles' 只是额外把插件目录内的 require('fs') 也重定向过来。
+  //
+  // 顺序很关键：句柄必须在 Bridge **之前**创建。句柄在创建时钉住原生函数引用，
+  // 它自己会先判一次；若先装 Bridge，句柄钉住的就变成包装函数，同一次调用会被判两次
+  // （账本两条，oneSeal 授权会在第二次判定时直接判成 exhausted 而失败）。
+  const handles = createCapabilityHandles({ guard, limits: resolveLimits(policy) });
   // Hook 挂在守卫入口：任何进入守卫链的调用都先经过原生模块 Hook 翻译，
   // 再由同一个 check() 做 Two-Key 判定并写 Ledger。
   const bridge = patchBuiltins ? guard.installNativeHooks() : null;
-  const handles = sandboxMode === 'handles'
-    ? createCapabilityHandles({ guard, limits: resolveLimits(policy) })
-    : null;
-  const redirect = handles
-    ? createModuleRedirect({ handles, pluginRoot })
+  const redirect = sandboxMode === 'handles'
+    ? createModuleRedirect({ handles, pluginRoot: root })
     : null;
   if (redirect) redirect.install();
   if (autoSweep) seals.startAutoSweep(policy.oneSeal.sweepIntervalMs);
@@ -180,6 +205,4 @@ module.exports = {
   ...require('./governance/rollout'),
   // 宿主
   ...require('./host/local-host'),
-  // 多进程运行时（原型）：只导出宿主入口，ipc/protocol、ipc/child 按路径直接 require。
-  ChildHost: require('./host/child-host').ChildHost,
 };

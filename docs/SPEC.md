@@ -160,7 +160,11 @@
 - Bridge 覆盖：`fs` / `fs.promises` 的读写删除、复制/重命名、**句柄获取（`open` / `openSync` / `opendir`）**、
   `realpath`、元数据写入（`truncate` / `chmod` / `chown` / `utimes` / `mkdtemp` / `symlink` / `link`）、
   `http/https`、`net.connect` / `net.createConnection` / **`net.Socket#connect`**、`tls.connect`、
-  `dns` 与 `dns.promises`、`fetch`、`net.Server#listen`、`child_process`、`process.kill`、`process.env`。
+  `dns` 与 `dns.promises`、`fetch`（**重定向逐跳复判**，见下）、`net.Server#listen`、`child_process`、`process.kill`、`process.env`。
+- `fetch` 的每一跳都是独立判定：包装器强制 `redirect:'manual'`，按 `Location` 重新过
+  守卫链，跳数封顶 5 跳，协议收紧到 `http`/`https`；拿不到可复放 body（`Request` + 307/308）
+  时把 3xx 原样交回调用方，绝不由 Bridge 自己跟出去。否则「声明 api.example.com」的插件
+  可以被对端 302 到 `169.254.169.254`，判定只看第一跳等于没判。
 - 句柄获取即关口：`open` 通过后，fd 级 `readSync` / `writeSync` 直通——fd 无法映射回路径，这是设计而非遗漏。
 - 覆盖是**补丁式**的：`bridge.coverage()` 返回 `guarded` 清单与 `knownGaps`，差集不隐藏。
 
@@ -171,7 +175,7 @@
 **完整性校验是抽样执行的**：`createGuardChain({integrityEvery})`（默认 64，0 关闭）在每 N 次判定时
 调用一次 `verifyIntegrity()`。检测到替换后 `compromised` 置位，此后所有请求按
 `integrity_compromised` 拒绝；状态可从 `coverage().compromised` 读取。
-- 重入保护：Node 内置实现互相调用（如 `appendFileSync → writeFileSync`、`http.get → http.request`）在原始实现执行期间直通，避免重复判定与递归。
+- 重入保护：Node 内置实现互相调用（如 `appendFileSync → writeFileSync`、`http.get → http.request`）在原始实现执行期间直通，避免重复判定与递归。**重入窗口只包住原生调用**，`deriveOperation` / `authorizeAccess` 的参数解析与判定始终在窗口外执行——否则参数上的 `toString` / `valueOf` 可以在窗口里回调 Bridge 做不受管的原生调用。
 - 完整性校验：保存每个被包装函数的引用；发现被替换即标记 `compromised`，此后一切请求按 `integrity_compromised` 拒绝，并写 `tamper_detected` Ledger。
 
 ### 6.0.1 批量判定（enforceBatch）
@@ -280,6 +284,8 @@ await handles.fs.promises.readFile('cache.json');        // 每次调用都过�
 - 端口必填（`connect` / `createConnection`）：缺省端口会被 Node 解释成 Unix socket / 具名管道，
   那类目标无法用 `host:port` 定性，句柄直接拒绝，而不是猜一个 0 号端口放行。
 - host 统一小写；未知协议没有默认端口时抛错，不编造端口。
+- `fetch` 与 Bridge 共用同一个复判器（`runtime/redirects.js`）：每一跳重新判定、跳数封顶、
+  协议收紧。句柄是「封闭面」不是「免检面」，重定向不能从它这里溜出去。
 
 **proc 句柄（`createProcHandle`）**：`spawn` / `spawnSync` / `exec` / `execSync` / `execFile` /
 `execFileSync` / `fork` / `kill`。
@@ -302,8 +308,12 @@ await handles.fs.promises.readFile('cache.json');        // 每次调用都过�
   用 `redirect.enter()/exit()` 的装载窗口兜住；插件目录下的 `node_modules` 依赖也在 pluginRoot 内，同样被重定向。
 - 顺序要求：Bridge 与 handles 模块必须已加载，重定向最后安装，否则它们自己会 require 到句柄而递归。
 - `policy.sandbox.mode = 'global'`（**默认**）：插件拿原生 fs，由 Bridge 守卫事后拦截。
+- `ctx.handles` **不受 `sandbox.mode` 影响，始终可用**：新插件可以直接走句柄；
+  模式只决定 `require('fs')` 是否被重定向，决定「存量插件是否需要改代码」。
 - `activate()` 与 `LocalHost` 默认一致（`global`），避免门禁阶段与运行时行为分叉；
   要封闭面请显式传 `sandbox: { mode: 'handles' }`。
+- **`handles` 模式必须显式传 `pluginRoot`**（绝对路径、存在且为目录）：缺失时拒绝启动，
+  不静默回落到 `process.cwd()`——否则模块重定向会把宿主自己的 `require('fs')` 一并换掉。
 - **同一进程只允许一条重定向**：第二条 `install()` 直接抛错。两条会互相覆盖 `originalLoad`，
   卸载顺序一错就再也还原不回去；宁可报错，也不要静默错位。
 

@@ -1,7 +1,25 @@
 'use strict';
 
+const fs = require('node:fs');
 const Module = require('node:module');
 const path = require('node:path');
+
+// 在 Bridge 安装之前捕获原生 realpath：本模块被 require 时 Hook 还没装，
+// 之后调用 realpathSync 会走守卫——插件没声明读 pluginRoot 时就会被拒。
+const REAL_REALPATH_SYNC = fs.realpathSync.native || fs.realpathSync;
+
+/**
+ * 根目录归一化：Node 的 CJS filename 是 realpath 结果，
+ * 若 root 保留符号链接路径，前缀永远匹配不上，重定向会静默失效（fail-open）。
+ */
+function realpathOrResolve(value) {
+  const resolved = path.resolve(value);
+  try {
+    return REAL_REALPATH_SYNC(resolved);
+  } catch {
+    return resolved;
+  }
+}
 
 /** 需要重定向的模块请求 → 句柄上的对应面。 */
 const REDIRECTS = [
@@ -31,7 +49,7 @@ let current = null;
 function createModuleRedirect({ handles, pluginRoot = null } = {}) {
   if (!handles || !handles.fs) throw new Error('createModuleRedirect 需要 handles.fs');
   const originalLoad = Module._load;
-  const root = pluginRoot ? path.resolve(pluginRoot) : null;
+  const root = pluginRoot ? realpathOrResolve(pluginRoot) : null;
   // Windows 文件系统不区分大小写，字符串比较区分——不折叠的话，
   // 宿主传 `C:\\PLUGIN`、实际模块是 `c:\\plugin\\...` 时会静默判定为「非插件模块」，
   // require('fs') 直接拿到原生 fs，整个封闭世界失效且没有任何告警。

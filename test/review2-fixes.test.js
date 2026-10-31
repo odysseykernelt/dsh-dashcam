@@ -178,8 +178,8 @@ test('P1：createPluginRuntime 读 policy.sandbox.mode，且兼容对象/字符�
   // 默认 = global
   const defaultGlobal = createPluginRuntime({ ...base });
   try {
-    assert.equal(defaultGlobal.handles, null);
-    assert.equal(defaultGlobal.redirect, null);
+    assert.notEqual(defaultGlobal.handles, null, '句柄常驻：默认模式下也提供 ctx.handles');
+    assert.equal(defaultGlobal.redirect, null, '默认 global 不重定向 require("fs")');
   } finally {
     defaultGlobal.dispose();
   }

@@ -160,7 +160,7 @@ handles.fs.coverage();                               // { closed: true, methods:
 
 现在只覆盖 `fs`。`net` / `proc` 按同一模式扩展：一个方法一次 `guard.enforce`。
 
-## 能力注入：让 require('fs') 直接返回句柄（1.5.0）
+## 能力注入：让 require('fs') 可选返回句柄（1.5.0）
 
 句柄再好，插件不用也没用。但封闭面天生不完整——`openSync`、`fs.promises.open`、`watch`、`globSync`
 在句柄里都没有，默认开它会直接把存量插件打成 `TypeError`。所以 `LocalHost` 与 `activate()` 都默认
@@ -180,6 +180,8 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 - **只对插件目录下的模块生效**，宿主的 `require('fs')` 不受影响；插件自带 `node_modules` 依赖也在 pluginRoot 之内，同样被重定向。
 - 顺序有讲究：Bridge 先装（它自己要用原生 fs），重定向后装，否则会递归。
 - `sandbox.mode = 'handles'` 是显式沙箱开关：拿封闭面，要求插件走 `ctx.handles`。
+- `ctx.handles` **始终可用**（默认 `global` 下也是）：新插件可以只走句柄，不必先切模式；
+  `sandbox.mode` 只决定 `require('fs')` 是否被重定向。
 - 默认值必须保可用性：不开 `handles`，存量插件零改动即可运行。
 
 ## 为什么是非侵入式
@@ -200,36 +202,27 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 - [docs/ROLLOUT.md](docs/ROLLOUT.md)：六阶段上线、熔断阈值、三级回滚、双钥轮换、应急下架、月度度量、
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
-- [docs/multiprocess.md](docs/multiprocess.md)：多进程运行时原型的设计文档（目标/架构/迁移路径/开放问题）。
 
-## 1.11.1 多进程切片可当工具用
+## 1.10.3 修复（第三轮三视角审查）
 
-- **`ChildHost` 接进公开导出**：`require('dsh-covenant').ChildHost`。
-- **批量读**：子进程 `client.fs.readFileMany(paths)` 把 N 次 RPC 压成一次；宿主侧仍逐个按
-  `fs.read` 授权（复用 `guard.enforceBatch`：判定不合并、账本合并），只写一条
-  `two-key-batch` 记录。
-- 示例插件 `onInvoke` 支持 `payload.paths` 数组。
-- 用例数 178 → 180。
-
-## 1.11.0 新增（多进程运行时原型 · 垂直切片）
-
-一个**能跑通的最小闭环**，验证「把插件关进子进程、宿主替它做 IO」这条链路：
-
-- `src/runtime/ipc/protocol.js`：RPC 消息 schema 与校验（请求/响应/控制三种形状，畸形输入返回 false 不抛）。
-- `src/runtime/ipc/child.js`：子进程桥 + 能力客户端桩（**不 require 任何原生能力模块**，只能走 RPC）。
-- `src/host/child-host.js`：宿主侧 `ChildHost`——`fork` 子进程，收到 `fs.read` 后先 `guard.enforce` 再执行真实 IO。
-- `examples/child-plugin.js`：示例插件（跑在子进程里）。
-
-切片只实现 `fs.read` / `fs.write` / `ping` + `invoke`，已验证：
-
-```text
-授权内读取成功（IO 发生在宿主）✅
-越界读取被宿主拒绝且账本留痕 ✅
-子进程崩溃时 invoke 以错误收场而非悬挂 ✅
-```
-
-**这不是迁移**，只是原型。真正落地要解决的硬问题见 [docs/multiprocess.md](docs/multiprocess.md) 的开放问题（sync fs 无法跨异步 IPC、判定与执行分家、IPC 新攻击面、性能）。
-- 用例数 159 → 178。
+- **S0 重入窗口越权**：`patchMethod` 以前把「判定 + 原生调用」整段包在 `callDepth` 里，
+  于是参数上的 `toString` / `valueOf` 可以在判定期间回调 Bridge 做**不受管**的原生调用
+  （`fs.existsSync({toString(){ fs.readFileSync(/etc/passwd) }})` 可读出内容且账本零记录）。
+  现在重入窗口只包住原生调用，判定与参数解析始终在窗口外。
+- **S2 句柄重复判定**：句柄必须在 Bridge **之前**创建。顺序颠倒时句柄钉住的是包装函数，
+  同一次 `ctx.handles` 调用会被判两次（账本两条，`oneSeal` 第二次直接判成 exhausted）。
+- **S2 `sandbox` 字符串写法**：`{ sandbox: 'handles' }` 以前被静默丢掉、实际跑 global；
+  现在字符串映射为 `{mode}`，且 `mode` 走白名单校验，非法值直接报错。
+- **S2 注册半装载**：`module.activate` 抛错时依次回滚 deactivate / 重定向 / Bridge / seal /
+  `modules` / `active`，不会把宿主卡在「已有活动 Bridge，后续注册全部失败」。
+- **S3 `fetch` 重定向 SSRF**：包装器强制 `redirect:'manual'`，每一跳按 `Location` 重新判定，
+  跳数封顶 5、协议收紧到 http/https；拿不到可复放 body 时把 3xx 交回调用方，绝不自行跟随。
+  Bridge 与 net 句柄共用 `runtime/redirects.js`。
+- **S3 前端 XSS 汇聚点**：驾驶舱模板给所有插件可控字段接上 `esc()` 转义出口。
+- **IPv6 host 断言**：`host:port` 切分先剥方括号，`[::1]:443` 与 `::1:443` 两种写法等价比较。
+  （修复过程中发现新切分函数与校验函数同名导致 `normalizeHosts` 返回对象、端口比较失效——
+  已改名 `splitHostPortPair` 并补用例锁死。）
+- 用例数 159 → 166。
 
 ## 1.10.2 设计微调 + 一致性修复
 

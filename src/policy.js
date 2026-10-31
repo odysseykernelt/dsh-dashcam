@@ -96,6 +96,27 @@ function mergeObject(base, override) {
   return result;
 }
 
+const SANDBOX_MODES = Object.freeze(['global', 'handles']);
+
+/**
+ * sandbox 配置归一化。
+ *
+ * 必须单独处理字符串写法：`{ sandbox: 'handles' }` 是文档里出现过的旧接口，
+ * mergeObject 只合并对象，字符串会被静默丢掉、落回 global——宿主以为开了封闭面，
+ * 实际只有补丁式覆盖，而且没有任何告警。这里把它映射成对象，并对 mode 做白名单校验，
+ * 未知取值直接报错而不是静默降级。
+ */
+function resolveSandbox(raw) {
+  const input = typeof raw === 'string' ? { mode: raw } : raw;
+  const merged = mergeObject(DEFAULT_POLICY.sandbox, input);
+  if (!SANDBOX_MODES.includes(merged.mode)) {
+    throw new Error(
+      `policy.sandbox.mode 非法：${JSON.stringify(merged.mode)}（可选 ${SANDBOX_MODES.join(' / ')}）`,
+    );
+  }
+  return Object.freeze(merged);
+}
+
 function loadPolicy(raw = {}, context = {}) {
   const policy = mergeObject(DEFAULT_POLICY, raw);
   policy.channels = {
@@ -104,7 +125,7 @@ function loadPolicy(raw = {}, context = {}) {
   };
   policy.enforcement = mergeObject(DEFAULT_POLICY.enforcement, raw.enforcement);
   policy.limits = resolveLimits({ limits: raw.limits });
-  policy.sandbox = mergeObject(DEFAULT_POLICY.sandbox, raw.sandbox);
+  policy.sandbox = resolveSandbox(raw.sandbox);
   policy.credentialReview = mergeObject(DEFAULT_POLICY.credentialReview, raw.credentialReview);
   policy.oneSeal = mergeObject(DEFAULT_POLICY.oneSeal, raw.oneSeal);
   policy.circuitBreaker = mergeObject(DEFAULT_POLICY.circuitBreaker, raw.circuitBreaker);

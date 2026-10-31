@@ -267,12 +267,33 @@ function pathPatternCovers(granted, requested) {
   return requestPrefix === grantDirectory || requestPrefix.startsWith(`${grantDirectory}/`);
 }
 
+/**
+ * 把 `host:port` 拆成两半。
+ *
+ * IPv6 有两种写法：URL 里是带方括号的 `[::1]:443`，配置里常写成 `::1:443`。
+ * 用 lastIndexOf(':') 一刀切在带括号时侥幸正确，但两种写法互相比较时会因方括号
+ * 不一致而判成不匹配（fail-closed，授权永久不可用）。这里先剥掉方括号再比。
+ */
+function splitHostPortPair(value) {
+  const text = String(value);
+  if (text.startsWith('[')) {
+    const close = text.indexOf(']');
+    if (close > 0) {
+      return { host: text.slice(1, close), port: text.slice(close + 1).replace(/^:/, '') };
+    }
+    return { host: text.slice(1), port: '' };
+  }
+  const at = text.lastIndexOf(':');
+  if (at < 0) return { host: text, port: '' };
+  return { host: text.slice(0, at), port: text.slice(at + 1) };
+}
+
 function hostPatternCovers(granted, requested) {
-  const grantHost = granted.slice(0, granted.lastIndexOf(':'));
-  const grantPort = granted.slice(granted.lastIndexOf(':') + 1);
-  const requestHost = requested.slice(0, requested.lastIndexOf(':'));
-  const requestPort = requested.slice(requested.lastIndexOf(':') + 1);
-  if (grantPort !== requestPort) return false;
+  const grant = splitHostPortPair(granted);
+  const request = splitHostPortPair(requested);
+  const grantHost = grant.host;
+  const requestHost = request.host;
+  if (grant.port !== request.port) return false;
   if (grantHost === requestHost) return true;
   if (grantHost.startsWith('*.')) {
     const base = grantHost.slice(1);
