@@ -203,6 +203,24 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.4 恶意攻击面用例（12 例）
+
+新增 `test/attack-surface.test.js`：不是"证明防住了什么"，而是按四类降维打击跑真实宿主生命周期
+（`install → register → invoke → uninstall`），能防的钉死、防不住的写进 `knownGaps`。
+
+- **重入与原型链**：`toString` 求值期间的嵌套写入被拒（账本记 `not_declared` / `intercepted`），
+  `pwned.txt` 不落地；`Proxy` get 陷阱里的读取同样被拒；`Object.prototype` 上塞
+  `paths` / `capabilities` 不放大能力面。
+- **加载器逃逸**：`process.getBuiltinModule('fs')`、从非插件父模块 `require('fs')`、
+  删 `require.cache` 后重新 `require` —— 拿到的都是**同一个已被补丁的模块对象**，
+  读取仍被拒；handles 模式下不存在的 `readSync` 不会因清缓存复活。
+- **异步上下文**：`Worker`（eval）与 `execSync` 在未声明 `proc.spawn` 时创建即被拒；
+  `new Function('return process')()` 拿到的全局 `process` 不构成逃逸。
+- **实测缺口（已写入 `knownGaps`）**：
+  - 卸载后仍在事件队列里的定时器/回调——Bridge 已还原原生模块，写入**成功**；
+  - 已授权的 `worker_threads` / 子进程内部——独立 realm/进程，本进程 Hook 不可见。
+- 用例数 166 → 178，且在宿主自带 Node 24.21.0 上跑通。
+
 ## 1.10.3 修复（第三轮三视角审查）
 
 - **S0 重入窗口越权**：`patchMethod` 以前把「判定 + 原生调用」整段包在 `callDepth` 里，

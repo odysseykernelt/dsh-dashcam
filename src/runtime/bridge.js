@@ -35,6 +35,8 @@ const KNOWN_GAPS = Object.freeze([
   '未列入补丁表的入口：http2、WebSocket、dgram，以及 fs 的部分低层 API',
   'TOCTOU 残余窗口：fd 复核把窗口压到 open 返回之后，但无法证明路径在 IO 期间不变；目录级 rename 攻击仍需宿主侧文件系统隔离',
   '未声明且非敏感的环境变量读取（只有敏感命名或已声明前缀才进守卫链）',
+  '卸载（dispose）之后仍在事件队列里的定时器/回调：Bridge 已还原原生模块，这些调用不再经过守卫链',
+  '已授权的 worker_threads / 子进程内部：独立 realm 或独立进程，本进程的 Hook 对其不可见',
 ]);
 
 function safeDefine(target, prop, value, descriptor) {
