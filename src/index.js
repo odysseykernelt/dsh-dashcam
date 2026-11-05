@@ -91,9 +91,26 @@ function createPluginRuntime({
   const redirect = sandboxMode === 'handles'
     ? createModuleRedirect({ handles, pluginRoot: root })
     : null;
-  if (redirect) redirect.install();
-  if (autoSweep) seals.startAutoSweep(policy.oneSeal.sweepIntervalMs);
+  // 安装是带全局副作用的（Bridge 补丁、模块重定向、自动清扫定时器）：
+  // 半途失败必须逆序卸载已装项再抛错，否则残留的 Hook 会叠加在下一次
+  // 安装之上——后装的 Bridge 把残留包装器当成「原始函数」，判定被旧守卫
+  // 独吞，账本静默漏记（H5）。
+  try {
+    if (redirect) redirect.install();
+    if (autoSweep) seals.startAutoSweep(policy.oneSeal.sweepIntervalMs);
+  } catch (error) {
+    try {
+      if (redirect) redirect.uninstall();
+    } catch {
+      // 卸载自身的失败不掩盖原始错误。
+    }
+    if (bridge) bridge.uninstall();
+    throw error;
+  }
 
+  // dispose 幂等（H5）：重复释放不再重复 uninstall，也不会把别人的还原项
+  // 当成自己的再还原一遍。
+  let disposed = false;
   return {
     guard,
     bridge,
@@ -103,6 +120,8 @@ function createPluginRuntime({
     seal: seals,
     quarantine: isQuarantined(manifest),
     dispose() {
+      if (disposed) return;
+      disposed = true;
       if (redirect) redirect.uninstall();
       if (bridge) bridge.uninstall();
       seals.stop();
@@ -143,6 +162,18 @@ function activate(host = {}) {
   // 先占位再注册回调：回调抛错时 Hook 已经装好了，若此时计数还是 0，
   // 下一次 activate 会顺利通过互斥检查并把 Hook 叠上去——正是这条互斥要防的事。
   activeRuntimes += 1;
+  // dispose 与 deactivate 统一到同一 release 路径（H5）：此前直接调
+  // runtime.dispose() 不会递减计数，互斥检查从此把 activate 永久挡死。
+  // release 幂等：第一次调用真正释放并递减，之后的调用都是空操作。
+  const originalDispose = runtime.dispose;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    originalDispose();
+    activeRuntimes -= 1;
+  };
+  runtime.dispose = release;
   try {
     if (typeof host.registerPreExecute === 'function') {
       host.registerPreExecute(runtime.guard.check);
@@ -150,21 +181,13 @@ function activate(host = {}) {
       host.on('pre-execute', runtime.guard.check);
     }
   } catch (error) {
-    activeRuntimes -= 1;
-    runtime.dispose();
+    release();
     throw error;
   }
-  let released = false;
   return {
     id: PLUGIN_ID,
     runtime,
-    deactivate() {
-      runtime.dispose();
-      if (!released) {
-        released = true;
-        activeRuntimes -= 1;
-      }
-    },
+    deactivate: release,
   };
 }
 
@@ -205,4 +228,5 @@ module.exports = {
   ...require('./governance/rollout'),
   // 宿主
   ...require('./host/local-host'),
+  ...require('./host/child-host'),
 };

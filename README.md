@@ -72,6 +72,26 @@ plugin.deactivate();
 `activate` 会在守卫入口安装原生模块 Hook（看护进程内 `fs/net/child_process/env` 调用）并注册 pre-execute 判定函数。
 如果宿主只想要判定、不想打补丁，传 `patchBuiltins: false`。
 
+## 极速安装（DSH 桌面宿主）
+
+DSH 按 profile 装载插件：`~/.dsh/profiles/desktop/package.json` 的 `dependencies` 决定装什么、
+`dsh.profile.bundles` 决定启用谁；bundle 自带的 `cordis.patch.yml` 负责把插件插进宿主配置树。
+按这个机制把判定链挂进去只需四步：
+
+1. **挂载**：profile 的 `package.json` 加依赖 `"dsh-covenant-host": "link:<工作区>/dsh-covenant-host"`，
+   并把 `dsh-covenant-host` 追加进 `dsh.profile.bundles`。
+2. **安装**：在 profile 目录跑一次 `pnpm install`（用宿主自带运行时的 node/pnpm）。
+3. **重启** DeepSeek Harness；日志出现 `[dsh-covenant] 判定链已挂载` 即为成功
+   （日志在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs`）。
+4. **卸载**：摘掉依赖与 bundle、还原 `cordis.patch.yml`，再跑一次 `pnpm install`，重启生效。
+
+工作区根目录的 `install-to-host.ps1` / `uninstall-from-host.ps1` 把上述步骤连同时间戳备份/还原
+自动化；日常安装走脚本，手工四步只适合一次性验证。
+
+适配包默认 `patchBuiltins: false`：宿主是 Electron 主进程，Bridge 是进程级补丁，直接装上会接管
+应用自身的 fs/net，所以默认只注册 pre-execute 判定函数。需要真实拦截时在 cordis 配置里显式
+`patchBuiltins: true`（语义见上文「宿主集成」）。
+
 ## CLI
 
 ```bash
@@ -137,8 +157,11 @@ const report = bridge.coverage();
 - 静态扫描给出的是“扫描结果”，不是安全证明；画像卡固定展示 `未扫到 ≠ 安全`。
 - 完整性校验能发现“已包装函数被替换”，不能发现“从未包装的入口”。
 - **句柄准入即关口**：`open` 通过后 fd 级调用直通；因此不要以为“包了 readFileSync 就守住了读文件”。
-- **装载窗口只记账不阻断**：`require` 期间插件的顶层调用会被写进 Ledger（`intercepted=true`），但不会被打断。
-  这是为了不让 legacy 插件整批装不上；代价是“装的时候已经发生的读取收不回来”。
+- **装载窗口是残余风险，不是优点**：`require` 期间插件顶层代码的越界调用会被改写为放行并按 `deny` 记账
+  （`intercepted=true`），但不会被打断——这是为 legacy 插件保留的一次性信任让步，装的时候已经发生的读取收不回来；
+  未签名 consumer 默认放行的组合下，等于新插件的顶层代码有一次越权机会。可用
+  `policy.enforcement.observeLoadWindow = false` 关闭（装载期越界直接拒绝装载）；`strictPatch = true`
+  时窗口强制关闭且不可用配置重开；装载结束若有越界放行，会打 warning 告警（`stats.observed > 0`）。
 
 ## 能力句柄：把补丁换成小世界（1.2.0 实验）
 
@@ -202,6 +225,34 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 - [docs/ROLLOUT.md](docs/ROLLOUT.md)：六阶段上线、熔断阈值、三级回滚、双钥轮换、应急下架、月度度量、
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
+
+## 1.10.5 修复（三视角审查 v2）
+
+- **H1 重入窗口逃逸（已实证的 high）**：类实例与带自有可枚举 `__proto__` 属性的普通对象，能让插件 getter
+  在原生重入窗口（`callDepth > 0`）内执行，getter 里的越权 IO 被直通放行且账本零记录。fs 系方法对 options
+  参数改做**白名单提取**（`FS_OPTIONS` 表：每个方法只保留原生实际读取的键），提取的 [[Get]] 发生在
+  `callDepth === 0`——类实例/原型链上的 getter 在窗口外触发，其副作用照常撞守卫链并记账；回填用
+  `defineProperty` 写入 null 原型副本（不触发 `__proto__` setter，堵死 `Object.assign` 换原型机制）。
+  其余入口由 `stripArgTraps` 逐自有可枚举键浅拷兜底；Buffer/TypedArray/URL/AbortSignal 仍按引用保留。
+  回归：`attack-surface.test.js` 攻击 1.5（类实例）/ 1.6（自有 `__proto__` + 原型链组合）。
+- **H2 装载 observe 窗口 fail-open**：新增 `policy.enforcement.observeLoadWindow`（默认 `true`，
+  存量 legacy 插件不至于装载即死）；置 `false` 后装载期越界直接拒绝装载（fail-closed）；`strictPatch = true`
+  时强制关窗。装载结束若 `stats.observed > 0` 打 warning——放行让步必须可见。「安全边界（必读）」已把
+  装载窗口从优点改述为残余风险（1.4.0 小节保留历史记述）。
+- **H3 exec/execSync shell 元字符**：走 shell 的命令含 `;|&$\`>'` 换行等元字符时直接拒绝（ruleId
+  `shell_metachar`，先按 deny 记账再抛错），首词判定不再覆盖 shell 的重新解释；`spawn` 系的 `shell: true`
+  同判，自定义 `shell` 字符串与 fork 的非当前 Node `execPath` 一律拒绝。命令请改用 `execFile` 逐参数传递。
+- **H4 `fs.promises.cp` 漏补丁**：fsp 段补齐 `cp`（读写双面判定，口径同 `fs.cp`）以及 `readlink` / `statfs`
+  等漏项；新增「fs 与 fsp 方法覆盖对照」测试——凡 fs 已 patch 且 fsp 存在同名 API 的方法必须同样受控，
+  防再次漏项。
+- **H5 activate 半途失败 / dispose 泄漏 Hook**：`createPluginRuntime` 的安装步骤失败时逆序卸载已装项再抛错，
+  不再叠加 Hook 层；`dispose()` 与 `deactivate()` 收敛到同一幂等 release 路径（引用计数归零才真正拆
+  Hook）——直接 `dispose()` 之后可再次 `activate()`，重复释放为空操作。
+- **H6 账本半行恢复 + 多实例误报**：`_recover` 把崩溃残留的半行截到最后一个换行并 fsync 落盘，哈希链从
+  最后一条完整行无损续写；append 部分写入失败时截回写入起点，不再把残骸和新行焊成坏 JSON。同进程多实例
+  按账本路径共享 seq/lastHash/size 基准，准入/注册/运行时交替写入不再误报「并发写入」；Ledger 之外的
+  写入者（外部进程直写）仍被检测——append 持续报错，新实例构造时打 warning 告警。
+- 回归测试新增 `test/review4-fixes.test.js`（H2-H6 共 10 例）与攻击 1.5 / 1.6 等，用例数见下。
 
 ## 1.10.4 恶意攻击面用例（12 例）
 

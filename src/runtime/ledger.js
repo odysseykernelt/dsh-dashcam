@@ -17,6 +17,18 @@ const REAL_READ_FILE_SYNC = fs.readFileSync;
 const REAL_EXISTS_SYNC = fs.existsSync;
 const REAL_STAT_SYNC = fs.statSync;
 const REAL_FSTAT_SYNC = fs.fstatSync;
+const REAL_TRUNCATE_SYNC = fs.truncateSync;
+const REAL_FSYNC_SYNC = fs.fsyncSync;
+
+/**
+ * 进程内同一路径共享的账本状态（H6）。
+ * 准入、注册、运行时各自 new 一个 Ledger 是常态；若每个实例都自带
+ * size/seq/lastHash 基准，第二个实例 append 时磁盘已被第一个推进，
+ * 会被误判成「并发写入」而永久卡死。seq/lastHash/size 收进共享状态后，
+ * 进程内多实例天然一致；跨进程追加仍会被发现——本进程没写过的字节
+ * 必然让磁盘大于共享基准（构造时抛错，活跃实例 append 时抛错）。
+ */
+const SHARED_LEDGER_STATE = new Map();
 
 // v1 没有 intercepted。既然升到 v2，就必须让 v1 的历史账本继续可验证：
 // 哈希链的价值在于「昨天的记录今天还能重算」，不能一升级就把旧账判成损坏。
@@ -174,25 +186,71 @@ class Ledger {
     this.file = path.resolve(file);
     this.now = now;
     this.macKey = macKey || null;
-    this.seq = 0;
-    this.lastHash = 'GENESIS';
     REAL_MKDIR_SYNC(path.dirname(this.file), { recursive: true });
     // 单写者契约：账本用 seq 续号，跨进程并发追加会产生重复 seq，
     // 结果是「自己写的账本自己验不过」。用文件大小做低成本并发检测。
-    this.size = REAL_EXISTS_SYNC(this.file) ? REAL_STAT_SYNC(this.file).size : 0;
+    const diskSize = REAL_EXISTS_SYNC(this.file) ? REAL_STAT_SYNC(this.file).size : 0;
+    let state = SHARED_LEDGER_STATE.get(this.file);
+    if (!state) {
+      state = { seq: 0, lastHash: 'GENESIS', size: diskSize, written: false };
+      SHARED_LEDGER_STATE.set(this.file, state);
+    } else if (diskSize !== state.size) {
+      // 进程内共享基准不会落后于自己写过的字节：磁盘不一致说明有 Ledger
+      // 之外的写入者（外部进程追加，或文件被截断/重建）。构造即对齐到磁盘
+      // 现状——审计必须能打开账本跑 verify，不能在门口就被挡死；但外部
+      // 写入必须可见（macKey 缺席时哈希链可被重算，可见性是最后的线索）。
+      // 活跃实例（不重新构造）在 append 时仍会精确抛「并发写入」。
+      if (state.written && diskSize > state.size) {
+        console.warn(
+          `[dsh-covenant] 账本在 Ledger 实例之外被写入：期望 ${state.size} 字节，实际 ${diskSize} 字节（${this.file}）。verify() 可定位被动的行。`,
+        );
+      }
+      state = { seq: 0, lastHash: 'GENESIS', size: diskSize, written: false };
+      SHARED_LEDGER_STATE.set(this.file, state);
+    }
+    this.state = state;
     this._recover();
   }
 
+  /** 进程内共享基准的只读视图（兼容旧代码对实例属性的读取）。 */
+  get seq() { return this.state.seq; }
+
+  get lastHash() { return this.state.lastHash; }
+
+  get size() { return this.state.size; }
+
   _recover() {
     if (!REAL_EXISTS_SYNC(this.file)) return;
-    const lines = REAL_READ_FILE_SYNC(this.file, 'utf8').split(/\r?\n/).filter(Boolean);
+    // 必须带 'utf8' 读：Node 的 readFileSync 在 utf8 快路径走 C++ 直读，不经
+    // openSync；不带 encoding 的 Buffer 路径会经 fs.openSync 属性——bridge
+    // 在装时（如宿主进程内的 readLedger/新实例构造）会被自身守卫拦下。
+    let raw = REAL_READ_FILE_SYNC(this.file, 'utf8');
+    // 半行恢复（H6）：宿主崩溃会让最后一行只剩半截（没有换行结尾）。
+    // 直接续写会把残骸和新行焊成一段坏 JSON，seq 也对不上；截到最后一个
+    // 换行再落盘，哈希链从最后一条完整行无损续写。换行字节（0x0a）不会
+    // 出现在 UTF-8 多字节序列内部，文本级 lastIndexOf('\n') 即字节级截断点；
+    // truncate 的参数是字节数，用 Buffer.byteLength 从文本长度换算。
+    if (raw.length > 0 && raw.charCodeAt(raw.length - 1) !== 0x0a) {
+      const keepText = raw.slice(0, raw.lastIndexOf('\n') + 1);
+      const keep = Buffer.byteLength(keepText, 'utf8');
+      const fd = REAL_OPEN_SYNC(this.file, 'r+');
+      try {
+        REAL_TRUNCATE_SYNC(fd, keep);
+        REAL_FSYNC_SYNC(fd);
+      } finally {
+        REAL_CLOSE_SYNC(fd);
+      }
+      this.state.size = keep;
+      raw = keepText;
+    }
+    const lines = raw.split(/\r?\n/).filter(Boolean);
     if (lines.length === 0) return;
     for (const line of lines) {
       try {
         const parsed = JSON.parse(line);
-        if (Number.isInteger(parsed.seq) && parsed.seq > this.seq && typeof parsed.hash === 'string') {
-          this.seq = parsed.seq;
-          this.lastHash = parsed.hash;
+        if (Number.isInteger(parsed.seq) && parsed.seq > this.state.seq && typeof parsed.hash === 'string') {
+          this.state.seq = parsed.seq;
+          this.state.lastHash = parsed.hash;
         }
       } catch {
         // 损坏行不阻断追加；verify 会精确报告损坏位置。
@@ -204,45 +262,52 @@ class Ledger {
     if (!record || (record.decision !== 'allow' && record.decision !== 'deny')) {
       throw new Error('Ledger.append 需要 decision=allow|deny');
     }
-    const seq = this.seq + 1;
-    const entry = buildRecord(record, seq, this.lastHash, record.ts || this.now(), this.macKey);
+    const seq = this.state.seq + 1;
+    const entry = buildRecord(record, seq, this.state.lastHash, record.ts || this.now(), this.macKey);
     const payload = Buffer.from(`${stableStringify(entry)}\n`, 'utf8');
     const fd = REAL_OPEN_SYNC(this.file, 'a');
     let expected = null;
     let concurrent = false;
     try {
       const actual = REAL_FSTAT_SYNC(fd).size;
-      // this.size === null 表示「上一次写失败、真实大小未知」：以磁盘为准重新对齐，
+      // state.size === null 表示「上一次写失败、真实大小未知」：以磁盘为准重新对齐，
       // 而不是把磁盘故障当成并发写入报出去。
-      if (this.size !== null && actual !== this.size) {
+      if (this.state.size !== null && actual !== this.state.size) {
         concurrent = true;
         throw new Error(
-          `检测到并发写入：账本期望 ${this.size} 字节，实际 ${actual} 字节。Ledger 只支持单写者`,
+          `检测到并发写入：账本期望 ${this.state.size} 字节，实际 ${actual} 字节。Ledger 只支持单写者`,
         );
       }
-      this.size = actual;
+      this.state.size = actual;
       let offset = 0;
       while (offset < payload.length) {
         offset += REAL_WRITE_SYNC(fd, payload, offset, payload.length - offset);
       }
       expected = actual + payload.length;
     } catch (error) {
-      // 部分写入（磁盘满等）会让文件大小已经改变：把基准对齐到真实大小。
-      // 但"检测到并发"这条不能对齐——那等于接受别人写的字节，下一次 append 就会接在它后面。
+      // 部分写入（磁盘满等）会让文件尾部残留半行：直接把基准对齐到当前大小，
+      // 下一次 append 就会把残骸和新行焊成坏 JSON（H6）。写入起点是 state.size，
+      // 截回它即恢复到最后一条完整行的结尾——seq/lastHash 尚未推进，链可无损续写。
+      // "检测到并发"这条不能对齐——那等于接受别人写的字节，下一次 append 就会接在它后面。
       if (!concurrent) {
         try {
-          this.size = REAL_FSTAT_SYNC(fd).size;
+          const actualNow = REAL_FSTAT_SYNC(fd).size;
+          if (actualNow > this.state.size) {
+            REAL_TRUNCATE_SYNC(fd, this.state.size);
+            REAL_FSYNC_SYNC(fd);
+          }
         } catch {
-          this.size = null;
+          this.state.size = null;
         }
       }
       throw error;
     } finally {
       REAL_CLOSE_SYNC(fd);
     }
-    this.seq = seq;
-    this.lastHash = entry.hash;
-    this.size = expected;
+    this.state.seq = seq;
+    this.state.lastHash = entry.hash;
+    this.state.size = expected;
+    this.state.written = true;
     return entry;
   }
 

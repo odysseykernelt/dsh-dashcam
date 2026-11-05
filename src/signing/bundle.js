@@ -14,10 +14,19 @@ function walkFiles(directory, base = directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (entry.name === SIGNATURE_FILE || entry.name === '.git') continue;
     const absolute = path.join(directory, entry.name);
+    // F2：symlink 的 Dirent.isFile() 为 false——以前它既不进清单、也不报「未签名」，
+    // 而装载侧跟随符号链接，包内链接因此能指向包外任意文件而不被签名覆盖。
+    // 规则收紧为：插件包不允许包含符号链接，签署与验签一律以真实文件为准。
+    if (entry.isSymbolicLink()) {
+      throw new Error(`插件包不允许包含符号链接：${path.relative(base, absolute)}`);
+    }
     if (entry.isDirectory()) {
       results.push(...walkFiles(absolute, base));
     } else if (entry.isFile()) {
       results.push(absolute);
+    } else {
+      // fifo/socket/设备文件同样不是可签名的普通文件，静默跳过等于清单盲区。
+      throw new Error(`插件包包含无法签名的特殊文件：${path.relative(base, absolute)}`);
     }
   }
   return results;
@@ -160,7 +169,19 @@ function verifyBundle({ pluginDir, trust, requireReviewer = true }) {
     };
   }
 
-  const files = buildFileList(pluginDir);
+  let files;
+  try {
+    files = buildFileList(pluginDir);
+  } catch (error) {
+    // buildFileList 只在遇到符号链接/特殊文件时抛错（F2）：按整包拒装处理，
+    // 与「出现未签名文件」同一阶段，调用方不得继续契约校验。
+    return {
+      ok: false,
+      stage: 'manifest_rebuild',
+      errors: [signatureError('manifest_rebuild', 'invalid_bundle_entry', `重建文件清单失败：${error.message}`, {})],
+      files: [],
+    };
+  }
   const rebuildErrors = compareFileLists(signatures.files || [], files);
   if (rebuildErrors.length > 0) {
     return { ok: false, stage: 'manifest_rebuild', errors: rebuildErrors, files, signatures };

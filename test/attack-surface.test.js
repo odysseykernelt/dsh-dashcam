@@ -186,6 +186,187 @@ test('攻击 1.3：Object.prototype 污染——不放大能力面', async () =>
   assert.equal(result.write, 'COVENANT_DENIED', '原型污染不得让未声明写入通过');
 });
 
+test('攻击 1.4：options-Proxy 逃逸——原生读取 options 期间的嵌套写入被守卫拒绝', async () => {
+  // F1 回归：原生 fs 会在重入窗口（callDepth>0）里同步读 options.encoding，
+  // 未修复时陷阱内的 writeFileSync 会被当作原生重入直通放行。
+  const dir = tempDir('attack-');
+  const pluginDir = path.join(dir, 'plugin');
+  const pwn = path.join(dir, 'pwned.txt');
+  const code = [
+    "'use strict';",
+    'const fs = require("fs");',
+    'const path = require("path");',
+    `const PWN = ${JSON.stringify(pwn)};`,
+    "const ALLOWED = path.join(__dirname, 'data.txt');",
+    'module.exports = {',
+    '  activate() {},',
+    '  invoke() {',
+    '    const out = {};',
+    '    // 目标必须真持有 encoding 属性：剥离走 Object.assign，空目标不会触发 get 陷阱。',
+    '    const options = new Proxy({ encoding: "utf8" }, {',
+    '      get(target, key, receiver) {',
+    '        if (key === "encoding") {',
+    '          try { fs.writeFileSync(PWN, "pwned"); out.attack = "NOT-DENIED"; }',
+    '          catch (e) { out.attack = e.code || "error"; }',
+    '        }',
+    '        return Reflect.get(target, key, receiver);',
+    '      },',
+    '    });',
+    '    try { out.read = fs.readFileSync(ALLOWED, options).trim(); } catch (e) { out.read = e.code || "error"; }',
+    '    return out;',
+    '  },',
+    '  deactivate() {},',
+    '};',
+  ].join('\n');
+  createPlugin({
+    dir: pluginDir,
+    id: 'com.example.attack.optionsproxy',
+    requests: READ_SELF,
+    code,
+    files: { 'data.txt': 'cache\n' },
+  });
+  const host = new LocalHost({
+    ledgerPath: path.join(dir, 'ledger.jsonl'),
+    policy: { grants: GRANT_READ_SELF },
+  });
+  try {
+    await host.install(pluginDir);
+    await host.register('com.example.attack.optionsproxy');
+    const out = await host.invoke('com.example.attack.optionsproxy');
+    assert.equal(out.read, 'cache', 'options 剥离后，声明范围内的读取本身应当正常放行');
+    assert.equal(out.attack, 'COVENANT_DENIED', '陷阱内的嵌套写入必须撞上守卫链');
+    const records = readLedger(path.join(dir, 'ledger.jsonl'));
+    assert.ok(denied(records, 'fs.write'), '账本应记录陷阱写入的拒绝');
+  } finally {
+    try { await host.uninstall('com.example.attack.optionsproxy'); } catch { /* 已卸载 */ }
+    assert.equal(REAL_EXISTS(pwn), false, 'pwned.txt 不允许落地');
+    cleanup(dir);
+  }
+});
+
+test('攻击 1.5：类实例 getter 逃逸——options 提取期间的嵌套写入被守卫拒绝（H1 证据 A）', async () => {
+  // H1 回归：类实例（原型非 Object.prototype/null）曾按引用直通原生，原生在
+  // callDepth>0 的重入窗口里读 options.encoding 时执行插件 getter——getter 内
+  // 的 writeFileSync 被 guardedEntry 当作原生重入直通放行，越权写零记账。
+  const dir = tempDir('attack-');
+  const pluginDir = path.join(dir, 'plugin');
+  const pwn = path.join(dir, 'pwned.txt');
+  const code = [
+    "'use strict';",
+    'const fs = require("fs");',
+    'const path = require("path");',
+    `const PWN = ${JSON.stringify(pwn)};`,
+    "const ALLOWED = path.join(__dirname, 'data.txt');",
+    'module.exports = {',
+    '  activate() {},',
+    '  invoke() {',
+    '    const out = {};',
+    '    class Evil {',
+    '      get encoding() {',
+    '        try { fs.writeFileSync(PWN, "pwned"); out.attack = "NOT-DENIED"; }',
+    '        catch (e) { out.attack = e.code || "error"; }',
+    '        return "utf8";',
+    '      }',
+    '    }',
+    '    try { out.read = fs.readFileSync(ALLOWED, new Evil()).trim(); } catch (e) { out.read = e.code || "error"; }',
+    '    return out;',
+    '  },',
+    '  deactivate() {},',
+    '};',
+  ].join('\n');
+  createPlugin({
+    dir: pluginDir,
+    id: 'com.example.attack.classevil',
+    requests: READ_SELF,
+    code,
+    files: { 'data.txt': 'cache\n' },
+  });
+  const host = new LocalHost({
+    ledgerPath: path.join(dir, 'ledger.jsonl'),
+    policy: { grants: GRANT_READ_SELF },
+  });
+  try {
+    await host.install(pluginDir);
+    await host.register('com.example.attack.classevil');
+    const out = await host.invoke('com.example.attack.classevil');
+    assert.equal(out.read, 'cache', 'getter 返回 utf8，声明范围内的读取照常放行');
+    assert.equal(out.attack, 'COVENANT_DENIED', '类实例 getter 里的越权写入必须撞上守卫链');
+    const records = readLedger(path.join(dir, 'ledger.jsonl'));
+    assert.ok(denied(records, 'fs.write'), '账本应记录 getter 写入的拒绝');
+  } finally {
+    try { await host.uninstall('com.example.attack.classevil'); } catch { /* 已卸载 */ }
+    assert.equal(REAL_EXISTS(pwn), false, 'pwned.txt 不允许落地');
+    cleanup(dir);
+  }
+});
+
+test('攻击 1.6：自有 __proto__ 属性换原型——Object.assign 机制被 defineProperty 提取堵死（H1 证据 B）', async () => {
+  // H1 回归：普通对象带自有可枚举 __proto__ 数据属性时，旧实现的 Object.assign
+  // 复制会触发 Object.prototype.__proto__ setter 把副本原型换成攻击者对象——
+  // 纯普通对象也能把 getter 送进重入窗口。变体二再叠原型链 getter（组合形态）。
+  const dir = tempDir('attack-');
+  const pluginDir = path.join(dir, 'plugin');
+  const pwn = path.join(dir, 'pwned.txt');
+  const code = [
+    "'use strict';",
+    'const fs = require("fs");',
+    'const path = require("path");',
+    `const PWN = ${JSON.stringify(pwn)};`,
+    "const ALLOWED = path.join(__dirname, 'data.txt');",
+    'module.exports = {',
+    '  activate() {},',
+    '  invoke() {',
+    '    const out = {};',
+    '    const evil = {',
+    '      get encoding() {',
+    '        try { fs.writeFileSync(PWN, "pwned"); out.attack = "NOT-DENIED"; }',
+    '        catch (e) { out.attack = e.code || "error"; }',
+    '        return "utf8";',
+    '      },',
+    '    };',
+    // 变体一：自有可枚举 __proto__ 数据属性。Object.assign 的 [[Set]] 会命中
+    // Object.prototype.__proto__ setter 换掉副本原型；白名单提取只读固定键的
+    // [[Get]] 并 defineProperty 回填，__proto__ 键不可达，evil 不在访问路径上。
+    '    const src = {};',
+    '    Object.defineProperty(src, "__proto__", { value: evil, enumerable: true });',
+    '    try { out.isBuffer = Buffer.isBuffer(fs.readFileSync(ALLOWED, src)); } catch (e) { out.isBuffer = e.code || "error"; }',
+    // 变体二（组合形态）：原型链挂 evil getter + 自有 __proto__ 陷阱——
+    // 白名单提取 encoding 时 [[Get]] 走原型链触发 getter，此刻 callDepth===0。
+    '    const src2 = Object.create(evil);',
+    '    Object.defineProperty(src2, "__proto__", { value: evil, enumerable: true });',
+    '    try { out.read = fs.readFileSync(ALLOWED, src2).trim(); } catch (e) { out.read = e.code || "error"; }',
+    '    return out;',
+    '  },',
+    '  deactivate() {},',
+    '};',
+  ].join('\n');
+  createPlugin({
+    dir: pluginDir,
+    id: 'com.example.attack.protoescape',
+    requests: READ_SELF,
+    code,
+    files: { 'data.txt': 'cache\n' },
+  });
+  const host = new LocalHost({
+    ledgerPath: path.join(dir, 'ledger.jsonl'),
+    policy: { grants: GRANT_READ_SELF },
+  });
+  try {
+    await host.install(pluginDir);
+    await host.register('com.example.attack.protoescape');
+    const out = await host.invoke('com.example.attack.protoescape');
+    assert.equal(out.isBuffer, true, '变体一 encoding 应不可达（返回 Buffer），插件代码零执行');
+    assert.equal(out.read, 'cache', '变体二 getter 返回 utf8，读取照常放行');
+    assert.equal(out.attack, 'COVENANT_DENIED', '原型链 getter 里的越权写入必须撞上守卫链');
+    const records = readLedger(path.join(dir, 'ledger.jsonl'));
+    assert.ok(denied(records, 'fs.write'), '账本应记录 getter 写入的拒绝');
+  } finally {
+    try { await host.uninstall('com.example.attack.protoescape'); } catch { /* 已卸载 */ }
+    assert.equal(REAL_EXISTS(pwn), false, 'pwned.txt 不允许落地');
+    cleanup(dir);
+  }
+});
+
 // ── 第二类：加载器逃逸 ─────────────────────────────────────────────
 
 test('攻击 2.1：process.getBuiltinModule 拿到的是补丁后的同一模块，不是逃逸', async () => {

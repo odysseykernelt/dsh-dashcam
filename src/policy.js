@@ -53,6 +53,10 @@ const DEFAULT_POLICY = Object.freeze({
     allowLegacy: false,      // required 模式下放行 legacy 的显式逃生开关
     requireSignature: false, // 签名默认只输出 Untrusted 标签
     strictPatch: false,      // true = Hook 装不完整就拒绝装载（默认只记账 + 标 ReviewRequired）
+    // 装载 observe 窗口：register 期间把插件顶层代码的拒绝改写为放行（记账
+    // deny+observed），让 legacy 插件不至于装载即死。默认保持现状；宿主置
+    // false 可关闭——装载期越界将直接拒绝（fail-closed），装载结束会告警。
+    observeLoadWindow: true,
   }),
   limits: DEFAULT_LIMITS,
   // 能力注入：'handles' = require('fs') 返回封闭句柄；'global' = 原生 fs + Bridge 守卫。

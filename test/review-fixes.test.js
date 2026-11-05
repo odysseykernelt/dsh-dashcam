@@ -205,6 +205,14 @@ test('M5：并发追加被检测出来，而不是写出重复 seq', () => {
   };
   try {
     a.append(record);
+    // H6 之后同进程多实例共享 size 基准（那是修复目标，不是漏洞）：
+    // b 与 a 对同一磁盘的认知一致，交替写入不再误报。
+    b.append(record);
+    assert.equal(b.append(record).seq, 3);
+    // 真正的并发写入者要用 Ledger 之外的写入模拟（外部进程直写）：
+    // 共享基准发现磁盘漂移后，append 必须报错，而不是把别人的字节当基准续写。
+    fs.appendFileSync(file, '{"external":true}\n');
+    assert.throws(() => a.append(record), /并发写入/);
     assert.throws(() => b.append(record), /并发写入/);
   } finally {
     cleanup(dir);

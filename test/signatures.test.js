@@ -20,6 +20,53 @@ test('验签：重建清单、keyId、发布者、审核者四步全部通过', 
   cleanup(plugin.dir);
 });
 
+test('签署：含符号链接的包直接拒绝签署（F2）', (t) => {
+  const keys = makeKeys();
+  const plugin = createPlugin({ dir: tempDir('sign-symlink-'), requests: [] });
+  const stash = `${plugin.dir}-stash`;
+  fs.mkdirSync(stash, { recursive: true });
+  fs.writeFileSync(path.join(stash, 'secret.txt'), 'TOP-SECRET');
+  try {
+    try {
+      // junction：Windows 无需特权的目录链接；POSIX 上忽略类型参数，退化为普通符号链接。
+      fs.symlinkSync(stash, path.join(plugin.dir, 'stashed-link'), 'junction');
+    } catch (error) {
+      t.skip(`当前平台无法创建符号链接：${error.code || error.message}`);
+      return;
+    }
+    assert.throws(() => signPlugin(plugin, keys), /符号链接/, 'symlink 不再是清单盲区，签署必须失败');
+  } finally {
+    cleanup(plugin.dir);
+    cleanup(stash);
+  }
+});
+
+test('验签：签署后混入的符号链接在重建清单阶段整包拒装（F2）', (t) => {
+  const keys = makeKeys();
+  const trust = trustFor(keys);
+  const plugin = createPlugin({ dir: tempDir('sign-symlink2-'), requests: [] });
+  signPlugin(plugin, keys);
+  const stash = `${plugin.dir}-stash`;
+  fs.mkdirSync(stash, { recursive: true });
+  fs.writeFileSync(path.join(stash, 'secret.txt'), 'TOP-SECRET');
+  try {
+    try {
+      fs.symlinkSync(stash, path.join(plugin.dir, 'stashed-link'), 'junction');
+    } catch (error) {
+      t.skip(`当前平台无法创建符号链接：${error.code || error.message}`);
+      return;
+    }
+    const result = verifyBundle({ pluginDir: plugin.dir, trust });
+    assert.equal(result.ok, false);
+    assert.equal(result.stage, 'manifest_rebuild');
+    assert.ok(result.errors.some((error) => error.code === 'invalid_bundle_entry'),
+      '应报出明确的非法条目错误，而不是静默漏检');
+  } finally {
+    cleanup(plugin.dir);
+    cleanup(stash);
+  }
+});
+
 test('验签：文件被篡改在重建清单阶段失败并指到文件', () => {
   const keys = makeKeys();
   const trust = trustFor(keys);

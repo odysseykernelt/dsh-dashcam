@@ -138,6 +138,10 @@ test('L-1：并发检测仍然生效（重对齐的改动没有把它吞掉）',
   };
   try {
     a.append(record);
+    // H6 之后同进程多实例共享基准（误报消除），但 Ledger 之外的写入者
+    // （外部进程直写）仍然要被抓：磁盘漂移后 append 持续报错，
+    // 不能把别人写的字节当成自己的基准。
+    fs.appendFileSync(file, '{"external":true}\n');
     assert.throws(() => b.append(record), /并发写入/);
     // 并发检测之后再写一次，仍然要报并发（不能把别人的字节当成自己的基准）
     assert.throws(() => b.append(record), /并发写入/);

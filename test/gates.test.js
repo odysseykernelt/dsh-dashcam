@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { tempDir, createPlugin, signPlugin, makeKeys, trustFor, cleanup } = require('./helpers/fixtures');
 const { checkStructure } = require('../src/gates/structure');
@@ -33,6 +34,33 @@ test('结构门禁：patch 越界、reason 为空、安装脚本不在白名单'
   const outside = stage.errors.find((error) => error.code === 'patch_path_outside');
   assert.equal(outside.field, 'patches[0].path');
   assert.equal(outside.file, 'manifest.json');
+  cleanup(dir);
+});
+
+test('结构门禁：entry 经符号链接越出插件目录被拒（F2）', (t) => {
+  const dir = tempDir('gate-symlink-');
+  const outsideDir = path.join(dir, 'outside');
+  fs.mkdirSync(outsideDir, { recursive: true });
+  fs.writeFileSync(path.join(outsideDir, 'index.js'), 'module.exports = {};\n');
+  const pluginDir = path.join(dir, 'plugin');
+  createPlugin({ dir: pluginDir, requests: [] });
+  // entry 改到子目录，子目录本身是指向包外的链接：词法判定放行、真实路径越界。
+  const manifestFile = path.join(pluginDir, 'manifest.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+  manifest.entry = 'sub/index.js';
+  fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+  try {
+    // junction 只对目录生效；Windows 无需特权，POSIX 上忽略类型参数退化为普通符号链接。
+    fs.symlinkSync(outsideDir, path.join(pluginDir, 'sub'), 'junction');
+  } catch (error) {
+    t.skip(`当前平台无法创建符号链接：${error.code || error.message}`);
+    cleanup(dir);
+    return;
+  }
+  const { stage } = checkStructure(pluginDir, { policy: loadPolicy({}) });
+  const outside = stage.errors.find((error) => error.code === 'entry_outside_plugin');
+  assert.ok(outside, '经链接越界的 entry 必须被结构门禁拦下');
+  assert.equal(outside.field, 'entry');
   cleanup(dir);
 });
 

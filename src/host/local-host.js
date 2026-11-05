@@ -252,12 +252,26 @@ class LocalHost {
         redirect.install();
         redirect.enter();
       }
-      guard.beginObserve();
+      // 装载 observe 窗口受 policy 控制（H2）：默认保持现状（改写为放行 +
+      // 记账 deny+observed），存量 legacy 插件不至于装载即死；宿主置
+      // enforcement.observeLoadWindow=false 后不再开窗——装载期越界照常
+      // 抛出。strictPatch=true 是 fail-closed 模式（Hook 不完整即拒装），
+      // 保留装载放行窗口与其精神矛盾，此时强制关窗且不可用配置重开。
+      const observeLoadWindow = pluginPolicy.enforcement.observeLoadWindow !== false
+        && pluginPolicy.enforcement.strictPatch !== true;
+      if (observeLoadWindow) guard.beginObserve();
       try {
         module = compileEntry(resolvedEntry, entrySource);
       } finally {
-        guard.endObserve();
+        if (observeLoadWindow) guard.endObserve();
         if (redirect) redirect.exit();
+        if (guard.stats.observed > 0) {
+          // 装载窗口把拒绝改写为放行是一次明确的信任让步：它必须可见。
+          console.warn(
+            `[dsh-covenant] 装载窗口：插件 ${pluginId} 顶层代码有 ${guard.stats.observed}` +
+            ' 次越界调用被放行（已按 deny 记账）。该窗口可用 policy.enforcement.observeLoadWindow=false 关闭（越界将直接拒绝装载）。',
+          );
+        }
       }
     } catch (error) {
       if (redirect) redirect.uninstall();

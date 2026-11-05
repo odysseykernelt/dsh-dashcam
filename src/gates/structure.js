@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { gateError } = require('../errors');
 const { loadManifest } = require('../contract/manifest');
-const { isInside } = require('../util/paths');
+const { isInside, realpathSafe } = require('../util/paths');
 const { createStage, finishStage } = require('./report');
 
 const LIFECYCLE_SCRIPTS = ['preinstall', 'postinstall', 'prepare', 'prepublish', 'prepublishOnly'];
@@ -50,6 +50,13 @@ function checkStructure(pluginDir, { policy = {} } = {}) {
       field: 'entry',
       file: manifest.entry,
       line: 1,
+    }));
+  } else if (!isInside(realpathSafe(root), realpathSafe(entryPath))) {
+    // F2：词法 isInside 挡不住符号链接——entry 字面在包内、经链接落在包外时，
+    // 装载侧跟随链接，编译的就是未签名的包外代码。存在性确认后按真实路径复核。
+    stage.errors.push(gateError('structure', 'entry_outside_plugin', `entry 经符号链接越出插件目录：${manifest.entry}`, {
+      field: 'entry',
+      file: 'manifest.json',
     }));
   }
 
