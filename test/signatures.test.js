@@ -118,7 +118,7 @@ test('验签：发布者或审核者公钥不匹配时分别在对应阶段失�
   cleanup(plugin.dir);
 });
 
-test('验签：双公钥并行轮换，旧包在 retire 后仍可验证', () => {
+test('验签：双公钥并行轮换；retire 后旧包拒验、新包不受影响（M12）', () => {
   const keys = makeKeys();
   const plugin = createPlugin({ dir: tempDir('sign-rotate-'), requests: [] });
   signPlugin(plugin, keys);
@@ -126,6 +126,7 @@ test('验签：双公钥并行轮换，旧包在 retire 后仍可验证', () => 
   const trust = trustFor(keys);
   rotateKey(trust, { keyId: keys.alternatePublisher.keyId, role: 'publisher', publicKey: keys.alternatePublisher.publicKey });
   rotateKey(trust, { keyId: keys.alternateReviewer.keyId, role: 'reviewer', publicKey: keys.alternateReviewer.publicKey });
+  // 轮换窗口内新旧双钥并行（都是 active）：两代包都能过。
   assert.equal(verifyBundle({ pluginDir: plugin.dir, trust }).ok, true);
 
   const next = createPlugin({ dir: tempDir('sign-next-'), requests: [] });
@@ -138,9 +139,18 @@ test('验签：双公钥并行轮换，旧包在 retire 后仍可验证', () => 
   });
   assert.equal(verifyBundle({ pluginDir: next.dir, trust }).ok, true);
 
+  // retire 即失验（M12）：旧钥签的包必须拒验，而不是继续被信任表放行。
   retireKey(trust, keys.publisher.keyId);
   retireKey(trust, keys.reviewer.keyId);
-  assert.equal(verifyBundle({ pluginDir: plugin.dir, trust }).ok, true);
+  const retiredResult = verifyBundle({ pluginDir: plugin.dir, trust });
+  assert.equal(retiredResult.ok, false, 'retired 密钥不得继续验签');
+  assert.equal(retiredResult.stage, 'keyid');
+  assert.ok(
+    retiredResult.errors.some((error) => error.code === 'publisher_key_unknown' || error.code === 'reviewer_key_unknown'),
+    '应在 keyId 阶段报出密钥不可用',
+  );
+  // 新钥签的包不受旧钥 retire 影响。
+  assert.equal(verifyBundle({ pluginDir: next.dir, trust }).ok, true);
 
   revokeKey(trust, keys.alternatePublisher.keyId);
   assert.equal(verifyBundle({ pluginDir: next.dir, trust }).ok, false);

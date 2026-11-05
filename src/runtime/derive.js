@@ -5,11 +5,22 @@ const { normalizeScope, credentialCapabilityForPath, credentialCapabilityForKey 
 const { expandPath, normalizePath, realpathSafe } = require('../util/paths');
 const { CovenantDenied } = require('../errors');
 
+/**
+ * 路径参数只接受 string / Buffer / URL（M2）。此前对其它类型做 String(value)
+ * 兜底：数字 0 会被判成词法路径 "<root>/0"（可被 $PLUGIN/** 放行），而 OS
+ * 实际执行的是 readFileSync(0)——读宿主 stdin。判定对象必须与执行对象一致，
+ * 认不出的类型直接拒绝；fd 语义必须显式走单独的能力面，不允许在路径判定里
+ * 蒙混过关。
+ */
 function toPathString(value) {
+  if (typeof value === 'string') return value;
   if (value instanceof URL) return fileURLToPath(value);
   if (Buffer.isBuffer(value)) return value.toString('utf8');
   if (value && typeof value === 'object' && typeof value.href === 'string') return fileURLToPath(value.href);
-  return String(value);
+  throw new CovenantDenied(
+    `路径参数类型非法：${Object.prototype.toString.call(value)}（只接受 string/Buffer/URL）`,
+    { ruleId: 'invalid_path_type' },
+  );
 }
 
 function defaultPortFor(protocol) {

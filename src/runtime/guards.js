@@ -84,11 +84,17 @@ function createGuardChain({
       derived = deriveOperation(operation, payload, ctx);
     } catch (error) {
       stats.denied += 1;
+      // derive 主动抛出的 CovenantDenied 若带精确 ruleId（如 invalid_path_type，
+      // M2：数字 path 判定对象 ≠ 执行对象），原样保留到拒绝结果与账本——
+      // 比「derive 失败」这个笼统标签可审计得多。derive 自己的通用拒绝
+      // （ruleId 'derive'）与非 CovenantDenied 异常维持原有口径。
+      const precise = error instanceof CovenantDenied
+        && error.ruleId && error.ruleId !== 'two-key' && error.ruleId !== 'derive';
       const denial = {
         allowed: false,
-        code: 'derive_failed',
+        code: precise ? error.ruleId : 'derive_failed',
         reason: error.message,
-        capability: 'unknown',
+        capability: precise && error.capability ? error.capability : 'unknown',
         scope: null,
         action: operation,
       };
@@ -99,7 +105,7 @@ function createGuardChain({
         action: denial.action,
         scope: denial.scope,
         decision: 'deny',
-        ruleId: 'derive',
+        ruleId: precise ? error.ruleId : 'derive',
         reason: denial.reason,
         intercepted: true,
       })?.seq || null) : null;

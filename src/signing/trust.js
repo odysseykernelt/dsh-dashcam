@@ -18,10 +18,13 @@ function createTrust(keys = []) {
 
 function findKey(trust, keyId, role, now = Date.now()) {
   if (!trust || !Array.isArray(trust.keys)) return null;
+  // 只接受 active（M12）：此前仅排除 revoked，retireKey 置为 retired 的密钥
+  // 仍可验签——「轮换完成」就名存实亡。轮换窗口内新旧双钥并行（双 active）
+  // 语义不变，retire 之后旧钥签的包必须拒验。
   return trust.keys.find((key) => (
     key.keyId === keyId
     && key.roles.includes(role)
-    && key.status !== 'revoked'
+    && key.status === 'active'
     && (key.notAfter === null || key.notAfter === undefined || key.notAfter > now)
   )) || null;
 }
@@ -36,8 +39,8 @@ function upsertKey(trust, entry) {
 }
 
 /**
- * 密钥轮换：新钥加入后旧钥保持可用（双公钥并行），
- * 直到显式 retire。验证逻辑接受 active / next / retired。
+ * 密钥轮换：新钥加入后旧钥保持可用（双公钥并行，两者都是 active），
+ * 直到显式 retire。验证逻辑只接受 active：retire 即失验（M12）。
  */
 function rotateKey(trust, entry) {
   return upsertKey(trust, { ...entry, status: entry.status || 'active' });

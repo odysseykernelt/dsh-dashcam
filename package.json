@@ -1,6 +1,6 @@
 {
   "name": "dsh-covenant",
-  "version": "1.10.5",
+  "version": "1.10.6",
   "description": "DeepSeek Harness 插件契约、运行时守卫、门禁、签名、画像卡与离线诊断",
   "main": "src/index.js",
   "type": "commonjs",
@@ -8,7 +8,7 @@
     "dsh-covenant": "bin/dsh-covenant.js"
   },
   "scripts": {
-    "test": "node --test test/contract.test.js test/runtime.test.js test/bypass.test.js test/gates.test.js test/signatures.test.js test/portrait.test.js test/autopsy.test.js test/governance.test.js test/audit.test.js test/mandate.test.js test/handle.test.js test/observe.test.js test/sandbox.test.js test/net-proc-handle.test.js test/symlink.test.js test/portrait-labels.test.js test/ledger-mac.test.js test/metrics-batch.test.js test/invariants.test.js test/batch-guard.test.js test/glob.test.js test/worker.test.js test/mac-custody.test.js test/review-fixes.test.js test/options.test.js test/review2-fixes.test.js test/review3-fixes.test.js test/attack-surface.test.js test/review4-fixes.test.js"
+    "test": "node --test test/contract.test.js test/runtime.test.js test/bypass.test.js test/gates.test.js test/signatures.test.js test/portrait.test.js test/autopsy.test.js test/governance.test.js test/audit.test.js test/mandate.test.js test/handle.test.js test/observe.test.js test/sandbox.test.js test/net-proc-handle.test.js test/symlink.test.js test/portrait-labels.test.js test/ledger-mac.test.js test/metrics-batch.test.js test/invariants.test.js test/batch-guard.test.js test/glob.test.js test/worker.test.js test/mac-custody.test.js test/review-fixes.test.js test/options.test.js test/review2-fixes.test.js test/review3-fixes.test.js test/attack-surface.test.js test/review4-fixes.test.js test/child-host.test.js test/child.test.js test/protocol.test.js test/quick-wins.test.js"
   },
   "engines": {
     "node": ">=20"

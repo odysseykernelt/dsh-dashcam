@@ -135,11 +135,20 @@ function realpathSafe(input) {
   return lexical;
 }
 
-/** 判断某个绝对路径是否属于凭证类敏感位置。 */
+/**
+ * 判断某个绝对路径是否属于凭证类敏感位置。
+ *
+ * 注意：`~/.dsh`（宿主自身的账本/配置目录）暂不列入——其中既有敏感的 ledger /
+ * 密钥文件，也有非敏感的运行产物，整目录一刀切会误伤；待口径确定后再补。
+ */
 function isCredentialPath(input) {
   const value = String(input).replace(/\\/g, '/').toLowerCase();
   if (/(^|\/)(\.ssh|\.aws|\.gnupg|\.docker|\.kube|\.config\/gcloud)(\/|$)/.test(value)) return true;
-  if (/(^|\/)(id_rsa|id_ed25519|\.netrc|\.npmrc|credentials)(\/|$)/.test(value)) return true;
+  // .git-credentials（M13）：git 的明文 PAT/密码存储，授予家目录读即可拿走
+  // GitHub 凭证，必须触发 cred.read，不能混在普通 fs.read 里。
+  if (/(^|\/)(id_rsa|id_ed25519|\.netrc|\.npmrc|credentials|\.git-credentials)(\/|$)/.test(value)) return true;
+  // gh CLI 的 hosts.yml（M13）：GitHub CLI 把 OAuth token 明文存在这里。
+  if (/(^|\/)\.config\/gh\/hosts\.yml$/.test(value)) return true;
   if (/(^|\/)\.env(\.[^/]+)?$/.test(value)) return true;
   if (/\.(pem|key|p12|pfx)$/.test(value)) return true;
   return false;

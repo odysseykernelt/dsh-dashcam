@@ -226,6 +226,36 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.6 修复（安全审查快赢批）
+
+2026-11-05 安全审查报告的 5 条 medium「快赢」项，逐条对应报告 M 编号：
+
+- **M12 retired 密钥仍可验签**：`findKey` 此前只排除 `revoked`，`retireKey` 置为 `retired`
+  的密钥照样通过发布者/审核者验签——「轮换完成」名存实亡。改为只接受
+  `status === 'active'`：轮换窗口内新旧双钥并行（双 active）语义不变，retire 即失验。
+  回归：`test/signatures.test.js` 轮换用例改写（retire 后旧包在 keyId 阶段拒验、新包不受
+  影响）；`test/quick-wins.test.js` M12 直测 `findKey` 状态白名单。
+- **M2 数字 path 判定对象 ≠ 执行对象**：`payload.path = 0` 时守卫按字符串 `"0"` 判定
+  （`<root>/0` 可被 `$PLUGIN/**` 放行），OS 却 `readFileSync(0)` 读宿主 stdin。路径参数
+  现在只接受 string/Buffer/URL，其余类型在判定层直接拒绝（ruleId `invalid_path_type`，
+  不再 `String(value)` 兜底）；derive 主动抛出的精确 ruleId 透传到拒绝结果与账本，
+  ChildHost 的 fs 入口在任何真实 IO 之前被拒。攻击 1.1 的 toString 重入与 review3 S0 的
+  参数强转场景随之在类型门更早关死（相关用例已同步改写，断言新口径）。
+- **M6 uninstall 回收链半途失败**：`redirect.uninstall()` 抛错会跳过 `bridge.uninstall()` /
+  `seal.stop()` / `active` 清理，旧 Hook 继续判下一个插件。回收链改为逐段 try/finally 且
+  `active` 先清零：任何一步失败都不允许跳过其余清理，首个错误照常抛给调用方（回收失败
+  必须可见）。回归：注入 redirect 抛错，断言 bridge 仍被卸载、seal 仍停止、宿主可重新注册。
+- **M13 凭证黑名单缺项**：`~/.git-credentials`（git 明文 PAT/密码）与
+  `~/.config/gh/hosts.yml`（gh CLI 明文 token）不在凭证路径正则里，授予家目录读即可拿走
+  GitHub 凭证而不触发 `cred.read`。已补入两条匹配（`~/.dsh` 拿不准，仅在 `paths.js`
+  注释说明、不加）。回归：读这两类路径升级为 `cred.read` 判定并在账本留痕。
+- **M14 npm test 脚本漏文件**：显式列表漏 `test/child-host.test.js`、`test/child.test.js`、
+  `test/protocol.test.js`——多进程运行时与 IPC 协议整段没被跑。已补入并新增
+  `test/quick-wins.test.js`；新增自检用例强制「脚本覆盖数 = 磁盘 `test/*.test.js` 文件数」
+  （当前 33 = 33），防止再次漏项。
+- 全量 `npm test`：用例数 215 → 221（217 通过 / 4 例符号链接 EPERM skip 照旧 / 0 fail），
+  其中快赢批新增 6 例、改写既有用例 3 例（signatures 轮换 / 攻击 1.1 / review3 S0）。
+
 ## 1.10.5 修复（三视角审查 v2）
 
 - **H1 重入窗口逃逸（已实证的 high）**：类实例与带自有可枚举 `__proto__` 属性的普通对象，能让插件 getter

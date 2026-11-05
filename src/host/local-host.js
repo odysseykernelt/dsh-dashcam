@@ -340,10 +340,21 @@ class LocalHost {
       }
     }
     if (this.active && this.active.pluginId === pluginId) {
-      if (this.active.redirect) this.active.redirect.uninstall();
-      this.active.bridge.uninstall();
-      this.active.seal.stop();
+      const { redirect, bridge, seal } = this.active;
+      // active 先清零，再逐段回收（M6）：此前三行连续调用无 try，redirect.uninstall()
+      // 一抛错就会跳过 bridge.uninstall() / seal.stop() / active 清理——旧 Hook
+      // 继续判下一个插件。现在任何一步失败都不允许跳过其余清理；首个错误照常
+      // 向调用方抛出（回收失败必须可见），但回收链一定走完。
       this.active = null;
+      try {
+        try {
+          if (redirect) redirect.uninstall();
+        } finally {
+          bridge.uninstall();
+        }
+      } finally {
+        seal.stop();
+      }
     }
     this.modules.delete(pluginId);
     const record = this.installed.get(pluginId);

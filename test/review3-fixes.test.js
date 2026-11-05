@@ -71,7 +71,9 @@ test('S0：判定期间的参数强转不能再借重入窗口越权（且必须
     let stolen = null;
     let error = null;
     try {
-      // 守卫判定会把参数强转成路径；toString 里跑的是插件代码。
+      // M2 之前：守卫判定把对象参数 String() 强转成路径，toString 里跑的是插件代码；
+      // M2 之后：非 string/Buffer/URL 的路径参数在判定层直接拒绝（invalid_path_type），
+      // 强转根本不发生，toString 里的越权读取连执行的机会都没有。
       fs.existsSync({
         toString() {
           stolen = fs.readFileSync(ctx.outside, 'utf8');
@@ -83,11 +85,14 @@ test('S0：判定期间的参数强转不能再借重入窗口越权（且必须
     }
     assert.equal(stolen, null, '强转里发起的越权读取必须被守卫挡住');
     assert.ok(error, '拒绝必须以异常暴露，而不是静默放行');
-    // 内层拒绝会被外层 derive 包装成 derive_failed（判定期间的一次拒绝），
-    // 两种码都说明「没有静默放行」。
-    assert.match(String(error.ruleId || error.message), /derive_failed|not_declared|未声明|拒绝|denied/i);
+    // 类型门拒绝（M2）或旧的判定期拒绝（derive_failed）都说明「没有静默放行」。
+    assert.match(String(error.ruleId || error.message), /invalid_path_type|derive_failed|not_declared|未声明|拒绝|denied/i);
     const records = REAL_READ(ctx.ledgerPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
-    assert.equal(records.some((r) => JSON.stringify(r.scope).includes('secret.txt')), true, '越权尝试必须留痕');
+    assert.equal(
+      records.some((r) => r.decision === 'deny' && r.ruleId === 'invalid_path_type'),
+      true,
+      '类型门拒绝必须留痕',
+    );
   } finally {
     runtime.dispose();
     cleanup(ctx.dir);

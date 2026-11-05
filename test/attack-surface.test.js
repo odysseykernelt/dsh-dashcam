@@ -51,7 +51,7 @@ async function withHost({ id, requests = [], code, files = {}, grants = [], sand
 
 // ── 第一类：重入与原型链 ─────────────────────────────────────────────
 
-test('攻击 1.1：toString 重入——判定期间触发的嵌套写入被守卫拒绝', async () => {
+test('攻击 1.1：toString 重入——非路径类型在判定层直接拒绝（M2），强转副作用无从触发', async () => {
   const dir = tempDir('attack-');
   const pluginDir = path.join(dir, 'plugin');
   const outside = path.join(dir, 'outside.txt');
@@ -72,7 +72,7 @@ test('攻击 1.1：toString 重入——判定期间触发的嵌套写入被守�
     '    try {',
     '      fs.readFileSync({ toString() { fs.writeFileSync(PWN, "pwned"); return OUTSIDE; } }, "utf8");',
     '      out.attack = "NOT-DENIED";',
-    '    } catch (e) { out.attack = e.code || "error"; }',
+    '    } catch (e) { out.attack = e.code || "error"; out.rule = e.ruleId; }',
     '    return out;',
     '  },',
     '  deactivate() {},',
@@ -94,9 +94,16 @@ test('攻击 1.1：toString 重入——判定期间触发的嵌套写入被守�
     await host.register('com.example.attack.tostring');
     const out = await host.invoke('com.example.attack.tostring');
     assert.equal(out.normalRead, 'cache', '声明范围内的读取应当放行');
-    assert.equal(out.attack, 'COVENANT_DENIED', '重入窗口必须拦住嵌套写入');
+    // M2 之前：路径参数被 String() 强转，toString 里的嵌套写入要靠重入守卫拦；
+    // 现在非 string/Buffer/URL 的路径在判定层直接拒绝（invalid_path_type），
+    // toString 根本不会被调用——攻击面在更早的位置关死。
+    assert.equal(out.attack, 'COVENANT_DENIED', '非路径类型的参数必须被拒绝');
+    assert.equal(out.rule, 'invalid_path_type', '应给出精确的拒绝规则号');
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
-    assert.ok(denied(records, 'fs.write'), '账本应记录一次未声明写入的拒绝');
+    assert.ok(
+      records.some((record) => record.decision === 'deny' && record.ruleId === 'invalid_path_type'),
+      '账本应按 invalid_path_type 记账',
+    );
   } finally {
     try { await host.uninstall('com.example.attack.tostring'); } catch { /* 已卸载 */ }
     assert.equal(REAL_EXISTS(pwn), false, 'pwned.txt 不允许落地');

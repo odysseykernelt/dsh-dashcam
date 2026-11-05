@@ -86,6 +86,9 @@ class ChildHost {
 
   _fsRead(payload) {
     const target = payload && payload.path;
+    // 路径参数只接受 string/Buffer/URL（M2）：数字是 fd 语义（readFileSync(0)
+    // 读宿主 stdin），判定层会按 invalid_path_type 直接拒绝——这里不做
+    // String() 兜底，也不允许任何绕过守卫直达 readFileSync 的路径。
     this.guard.enforce('fs.read', { path: target });
     return fs.readFileSync(target, 'utf8');
   }
