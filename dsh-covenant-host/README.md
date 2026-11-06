@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | `enforce` | `false` | `true` 时判定不允许即拦截；授权见「Two-Key」 |
 | `enforceUnmapped` | `false` | F6：enforce 默认只覆盖映射表；开此键后未映射工具**每次调用**都按 fail-closed 拒绝（1.10.13 复核 P1：拦截不受遥测去重影响）。computer-use / workflow / subagent / MCP 均在映射表外，需靠它兜底 |
-| `unmappedAllowlist` | `[]` | L6（1.10.13）：enforceUnmapped 的豁免清单，支持全名与前缀通配（`mcp__demo__*` / `memory_*`）。**开 enforceUnmapped 前必须先配**——否则 `compress` / `workflow` / `subagent` / `send_meme` / `present` / `memory_*` / `mcp__*` 这些宿主/MCP 工具会被全部打死 |
+| `unmappedAllowlist` | `[]` | L6（1.10.13）：enforceUnmapped 的豁免清单，支持全名与前缀通配（`mcp__demo__*` / `memory_*`）。**开 enforceUnmapped 前必须先配**——否则 `compress` / `workflow` / `subagent` / `send_meme` / `present` / `memory_*` / `mcp__*` 这些宿主/MCP 工具会被全部打死。**非数组（如误写成逗号分隔字符串）fail-fast 拒绝挂载**（R3，1.10.14），不会静默按空数组拦掉全部 |
 | `commandlineArchive` | `'hash'` | F4：`'hash'`（默认）只存整条命令的 SHA-256 + 长度，不含明文；`'full'` 落打码后文本（Bearer / `sk-` / `ghp_` / `password=` 等替换为 `***`，best-effort）。per-挂载生效（L2），多挂载不互串 |
 | `ledgerPath` | `~/.dsh/dsh-covenant/ledger.jsonl` | 账本文件路径；测试 profile 必须独立（如 `ledger-covenant-test.jsonl`） |
 | `ledgerMacKey` / `ledgerMacKeyFile` / `ledgerMacKeyEnv` | 空 | F1/1.10.11 D4：账本 HMAC 密钥（≥32 字节）。**启用前必读下节** |
@@ -38,7 +38,7 @@
 | `batch` | `operations[]` 逐条展开（同 copy/move/remove 口径，上限 512）；缺 operations 落 `unjudgeable` |
 | `web_fetch` / `fetch` | `net.outbound`（host:port） |
 | `discover_tools` / `result` | 不映射不遥测（无副作用） |
-| 其余 | 放行 + `telemetry/unmapped-tool`（遥测同名只记一次）；`enforceUnmapped` 下**每次调用**拒绝，`unmappedAllowlist` 命中的豁免放行 |
+| 其余 | 放行 + `telemetry/unmapped-tool`（console 点名与 allow 遥测同名只记一次）；`enforceUnmapped` 下**每次调用**拒绝且**每次都落 deny 账**（R2，1.10.14：审计不去重），`unmappedAllowlist` 命中的豁免放行 |
 
 无法判定的调用（batch 缺 operations、glob 缺 path、copy/move 缺 to）：
 advisory 落 `telemetry/unjudgeable-tool`（allow）放行；enforce 落 deny 账后拒绝（F2：审计先于执行）。
@@ -84,17 +84,19 @@ stdout 也能事后查）；`ledgerMacKeyEnv` 指向的环境变量未设置时�
 - `replace` 以基目录为审计粒度，glob 命中的实际文件不逐个展开。
 - `dir/**` 授权不含 `dir` 本身是 SPEC 契约（docs/SPEC.md 77）；宿主对**只读/子树写**
   语义转 `dir/**` 对齐，**破坏性删除保持节点判定**（M1）。
-- **L4（TOCTOU）**：目录探测带 30s TTL 缓存，判定与工具执行之间存在竞态窗口
-  （判定时是文件、执行时已被换成目录等）；入口门不承诺原子性，真拦截靠 Bridge。
+- **L4（TOCTOU）**：目录探测**正结果**带 30s TTL 缓存、**负结果不缓存**（R1，1.10.14：
+  负缓存会让「文件→目录」30s 窗口内的删除跳过子树判定绕过 M1，属 fail-open，已修；
+  正缓存方向相反——目录被换成文件后仍多判一条子树，是 fail-closed，可接受）。
+  判定与工具执行之间仍存在竞态窗口，入口门不承诺原子性，真拦截靠 Bridge。
 - `patchBuiltins: true` 与宿主入口门叠加时，目录探测会产生额外 fs 记录；建议二选一。
 
 ## 验证
 
 ```powershell
-npm run smoke   # 91 项断言，全过
+npm run smoke   # 96 项断言，全过
 # 主仓库回归：cd ..; npm test   # 241 例，0 fail
 ```
 
 部署确认（F8）：重启 DSH 桌面后，账本新 mount 记录应为
-`pluginVersion: "1.10.13"`、`scope.mode` 与配置一致；**部署侧暂保持 advisory 观察，
+`pluginVersion: "1.10.14"`、`scope.mode` 与配置一致；**部署侧暂保持 advisory 观察，
 勿急着开 enforce / enforceUnmapped**（开 enforceUnmapped 前先按上表配 unmappedAllowlist）。

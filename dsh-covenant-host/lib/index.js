@@ -42,7 +42,7 @@ const covenant = require('../../src/index.js');
 export const name = 'dsh-covenant-host';
 export const inject = [];
 
-const PLUGIN_VERSION = '1.10.13';
+const PLUGIN_VERSION = '1.10.14';
 
 const MANIFEST = {
   id: 'dsh-covenant-host',
@@ -105,23 +105,29 @@ const COMMANDLINE_ARCHIVE_LIMIT = 1024;
  * L4：目录探测的进程级缓存（带 TTL）。fsScopePath/判断目录需要同步 stat，
  * 每次工具调用都探测会在主线程做 IO（网络盘会阻塞）；缓存把重复探测压到
  * 每 path 每 TTL 一次。判定与执行之间的 TOCTOU 依然存在（已知边界，README 有注）。
+ *
+ * R1（1.10.13 复核）：**只缓存正结果（isDir=true）**。负缓存（file→dir）会在
+ * 「先删文件、30s 内换成目录再删」的窗口里让 deleteRequests 跳过子树判定，
+ * 绕过 M1——那是 fail-open。正缓存方向相反：目录被换成文件后仍多判一条
+ * 子树，是 fail-closed，可接受。负结果每次 fresh 探测。
  */
 const DIRECTORY_PROBE_TTL_MS = 30_000;
 const directoryProbeCache = new Map();
 
-/** L4：探测某路径当前是否为目录（30s TTL 缓存；异常一律按「非目录」处理）。 */
+/** L4：探测某路径当前是否为目录（正结果 30s TTL 缓存；异常一律按「非目录」处理且不缓存）。 */
 function pathIsDirectory(pathValue) {
   const key = String(pathValue);
   const now = Date.now();
   const cached = directoryProbeCache.get(key);
-  if (cached && now - cached.at < DIRECTORY_PROBE_TTL_MS) return cached.isDir;
+  if (cached && now - cached.at < DIRECTORY_PROBE_TTL_MS) return true; // 正结果才有缓存
   let isDir = false;
   try {
     isDir = existsSync(key) && statSync(key).isDirectory();
   } catch {
     isDir = false; // 探测失败（权限/竞态删除）按非目录处理：保留原路径，fail-closed
   }
-  directoryProbeCache.set(key, { at: now, isDir });
+  if (isDir) directoryProbeCache.set(key, { at: now, isDir: true });
+  else directoryProbeCache.delete(key); // 负结果不缓存：R1，防 30s 窗口绕过 M1
   return isDir;
 }
 
@@ -476,6 +482,17 @@ export function apply(ctx, config = {}) {
   // 同进程多次挂载（测试/多 profile）不会互相串。
   const commandlineArchiveMode = config.commandlineArchive === 'full' ? 'full' : 'hash';
   // L6：enforceUnmapped 的豁免清单（全名或前缀通配，如 mcp__* / memory_*）。
+  // R3（1.10.13 复核）：非数组 fail-fast——静默按空数组会把本想豁免的
+  // compress/present 等全拦掉且无告警（写成逗号分隔字符串是人之常情）。
+  if (config.unmappedAllowlist !== undefined
+      && config.unmappedAllowlist !== null
+      && !Array.isArray(config.unmappedAllowlist)) {
+    console.error(
+      '[dsh-covenant] 配置错误：unmappedAllowlist 必须是数组（如 ["mcp__demo__*", "memory_*"]），'
+      + `当前是 ${typeof config.unmappedAllowlist}——fail-closed 不挂载，防止静默拦掉全部未映射工具`,
+    );
+    return;
+  }
   const unmappedAllowlist = Array.isArray(config.unmappedAllowlist)
     ? config.unmappedAllowlist.map((entry) => String(entry))
     : [];
@@ -642,27 +659,38 @@ export function apply(ctx, config = {}) {
           const allowlisted = matchesAllowlist(exec.name, unmappedAllowlist);
           const denyUnmapped = enforce && enforceUnmapped && !allowlisted;
           if (!seenUnmapped.has(lowered)) {
-            // 去重只作用于日志与遥测；拦截判定每次都做（P1）。
+            // 去重只作用于日志与 allow 遥测；拦截判定每次都做（P1）。
             seenUnmapped.add(lowered);
             console.info(
               `[dsh-covenant] 未映射工具（${denyUnmapped ? 'enforceUnmapped 拒绝' : allowlisted ? 'allowlist 豁免放行' : '放行，不记账'}）：`
               + `${exec.name}——如需纳管请补充映射表`,
             );
+            if (!denyUnmapped) {
+              appendAuxRecord({
+                capability: 'telemetry',
+                action: 'unmapped-tool',
+                scope: { tool: exec.name, allowlisted },
+                decision: 'allow',
+                intercepted: false,
+                ruleId: 'unmapped',
+                reason: allowlisted
+                  ? '未映射工具命中 unmappedAllowlist 豁免放行（不产生能力判定）'
+                  : '未映射工具放行（不产生能力判定），如需纳管请补充映射表',
+              });
+            }
+          }
+          if (denyUnmapped) {
+            // R2（1.10.13 复核）：拒绝**每次**都落账——「拒绝必落账」不因遥测去重而缩水；
+            // console 点名仍只一次。telemetryDenies 因此逐次可见。
             appendAuxRecord({
               capability: 'telemetry',
               action: 'unmapped-tool',
               scope: { tool: exec.name, allowlisted },
-              decision: denyUnmapped ? 'deny' : 'allow',
-              intercepted: denyUnmapped,
+              decision: 'deny',
+              intercepted: true,
               ruleId: 'unmapped',
-              reason: denyUnmapped
-                ? 'enforceUnmapped 开启：未映射工具按 fail-closed 拒绝（不在映射表内且不在 allowlist）'
-                : allowlisted
-                  ? '未映射工具命中 unmappedAllowlist 豁免放行（不产生能力判定）'
-                  : '未映射工具放行（不产生能力判定），如需纳管请补充映射表',
+              reason: 'enforceUnmapped 开启：未映射工具按 fail-closed 拒绝（不在映射表内且不在 allowlist）',
             });
-          }
-          if (denyUnmapped) {
             return {
               kind: 'deny',
               reason: `[dsh-covenant] 未映射工具（enforceUnmapped）：${exec.name} 不在映射表内，按 fail-closed 拒绝`,

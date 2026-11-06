@@ -242,6 +242,24 @@ unmapped-tool / unjudgeable-tool / `proc.commandline` 存档，capability 固定
 宿主适配层 `dsh-covenant-host` 亦自本版起以 git subtree 并入本仓库（历史完整保留，见
 [dsh-covenant-host/](dsh-covenant-host/README.md)），不再依赖工作区的兄弟目录路径。
 
+## 1.10.13 修复（1.10.13 复核 R1–R3 批：目录探测负缓存 / 拒绝落账 / allowlist fail-fast）
+
+来自 `handoff/dsh-covenant-review-1.10.13-2026-11-06.md` 的残余项（只动宿主子目录，核心
+src/ 无改动，宿主 PLUGIN_VERSION → 1.10.14）：
+
+- **R1（fail-open → 修正）**：L4 目录探测缓存原本正负结果都缓存——「先删文件、30s 内
+  换成目录再删」会让 `deleteRequests` 只判节点、跳过子树判定，仅授节点删除权即可删整棵
+  树（绕过 M1）。现在**只缓存正结果（isDir=true）**：负结果每次 fresh 探测，正缓存方向
+  是 fail-closed（目录被换成文件后仍多判一条子树），可接受。
+- **R2（审计不去重）**：`enforceUnmapped` 的拒绝此前遥测去重只落一条账——3 次拦截账上
+  只有 1 条，`telemetryDenies` 少计。现在拒绝**每次**都追加 unmapped-tool deny 记录，
+  console 点名与 allow 遥测仍同名只记一次。
+- **R3（fail-fast）**：`unmappedAllowlist` 误写成逗号分隔字符串时原静默按空数组处理，
+  开了 `enforceUnmapped` 会把本想豁免的工具全拦掉且无告警。现在非数组直接拒绝挂载并
+  指明数组写法。
+- 冒烟 91 → **96 项全过**（R1/R2/R3 各补用例，`file→dir` 替换场景实测子树判定仍在）。
+- R4（部署）：桌面 profile 的宿主 link 同批切换到仓内副本（见 HANDOFF）。
+
 ## 1.10.11 修复（1.10.10 两份复核报告 P1–P9 批）
 
 来自 `handoff/dsh-covenant-review-1.10.10-2026-11-06.md` 与

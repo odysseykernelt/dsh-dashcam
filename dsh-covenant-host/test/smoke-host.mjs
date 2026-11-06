@@ -469,8 +469,10 @@ function check(name, cond, detail = '') {
   check('F6/L5: 第 2 次仍拒绝（不被去重短路）', d2 && d2.kind === 'deny', JSON.stringify(d2));
   check('F6/L5: 第 3 次仍拒绝', d3 && d3.kind === 'deny', JSON.stringify(d3));
   const tele = readLedger(ledgerPath).filter((r) => r.action === 'unmapped-tool');
-  check('F6/L5: 遥测同名只记 1 条（拒绝每次执行）', tele.length === 1
-    && tele[0].decision === 'deny' && tele[0].intercepted === true, JSON.stringify(tele));
+  check('R2: 拒绝逐次落账（3 次 = 3 条 deny+intercepted）', tele.length === 3
+    && tele.every((r) => r.decision === 'deny' && r.intercepted === true), JSON.stringify(tele));
+  const unmappedLogs = log.filter(([l, m]) => l === 'info' && /未映射工具/.test(m) && /send_meme/.test(m));
+  check('R2: console 点名仍只 1 次', unmappedLogs.length === 1, JSON.stringify(unmappedLogs));
   deactivate(ctx);
   // L6：allowlist 豁免（前缀通配）——MCP 工具不打死，表外其它仍拦
   freshLog();
@@ -498,6 +500,43 @@ function check(name, cond, detail = '') {
   const allow = await ctx2.handlers['tools/pre-execute']({ name: 'send_meme', arguments: {} }, () => 'NEXT');
   check('F6: 默认 enforce 未映射仍放行（边界见 README）', allow === 'NEXT', String(allow));
   deactivate(ctx2);
+  // R3：unmappedAllowlist 非数组 fail-fast——不挂载防静默拦掉全部未映射工具
+  freshLog();
+  const ctxR3 = makeCtx();
+  apply(ctxR3, {
+    ledgerPath: `${RESULTS}/smoke-r3.jsonl`,
+    enforce: true,
+    enforceUnmapped: true,
+    unmappedAllowlist: 'mcp__demo__*,memory_*', // 字符串写法（人之常情的错）
+  });
+  check('R3: allowlist 非数组不挂载', !mounted(ctxR3) && ctxR3.effects.length === 0);
+  const errR3 = log.find(([l, m]) => l === 'error' && /unmappedAllowlist 必须是数组/.test(m));
+  check('R3: 报错指明数组写法', !!errR3 && /fail-closed/.test(errR3[1]), JSON.stringify(log.filter(([l]) => l === 'error')));
+}
+
+// 14c) R1：目录探测负结果不缓存——文件换成目录后，删除仍判节点+子树（不绕 M1）
+{
+  freshLog();
+  const swap = path.join(RESULTS, 'sandbox-r1', 'node').replace(/\\/g, '/');
+  fs.mkdirSync(path.dirname(swap), { recursive: true });
+  fs.writeFileSync(swap, 'x'); // 文件形态
+  const ctx = makeCtx();
+  const ledgerPath = `${RESULTS}/smoke-r1.jsonl`;
+  apply(ctx, { ledgerPath });
+  const handler = ctx.handlers['tools/pre-execute'];
+  // 第一次 remove（文件）：探测 isDir=false，负结果不缓存（R1 修后）
+  await handler({ name: 'ops_remove', arguments: { path: swap, expectedRevision: 'r' } }, () => 'NEXT');
+  // 30s 窗口内把它换成目录（含子文件），再删
+  fs.rmSync(swap);
+  fs.mkdirSync(swap, { recursive: true });
+  fs.writeFileSync(path.join(swap, 'child.txt'), 'y');
+  await handler({ name: 'ops_remove', arguments: { path: swap, expectedRevision: 'r' } }, () => 'NEXT');
+  const dels = judgments(ledgerPath).filter((r) => r.action === 'fs.delete');
+  check('R1: 第二次删除仍判子树（负缓存不生效）', dels.some(
+    (r) => r.scope && r.scope.paths && r.scope.paths[0] === `${swap}/**`,
+  ), JSON.stringify(dels));
+  check('R1: 账上共 3 条 fs.delete（文件 1 条 + 目录节点+子树 2 条）', dels.length === 3, JSON.stringify(dels));
+  deactivate(ctx);
 }
 
 // 14b) M1：remove/move 目录节点不被子树授权放大（节点 + 子树两条都判）
