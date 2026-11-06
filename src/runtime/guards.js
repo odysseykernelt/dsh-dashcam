@@ -64,11 +64,18 @@ function createGuardChain({
   }
 
   /**
-   * @param {{record?: boolean}} options record=false 时只判定、不写账本，
-   *   供 enforceBatch 把成百上千个目标压成一条记录（判定仍然逐个做）。
+   * @param {{record?: boolean, advisory?: boolean}} options
+   *   record=false 时只判定、不写账本，供 enforceBatch 把成百上千个目标压成一条
+   *   记录（判定仍然逐个做）。
+   *   advisory=true 时：账本仍如实落 decision=deny（审计事实保留），但
+   *   intercepted 一律写 false——表示「would-deny，但宿主决定放行」；同时
+   *   deny.intercepted 也反映 false，供宿主层做二次决策与 metrics 区分。
+   *   宿主（如 dsh-covenant-host）advisory 模式下会自行忽略 deny 结果；
+   *   进程内 Bridge 直接 pass-through 时不用这个选项。
    */
   function check(operation, payload = {}, options = {}) {
     const record = options.record !== false;
+    const advisory = options.advisory === true;
     stats.requests += 1;
     if (effectiveIntegrityEvery > 0 && hooks && ++integrityTicks >= effectiveIntegrityEvery) {
       integrityTicks = 0;
@@ -98,6 +105,8 @@ function createGuardChain({
         scope: null,
         action: operation,
       };
+      // derive 失败：一律视为拦截类 code（derive_failed）；advisory 仍落 deny 但 intercepted=false。
+      const denyFlags = computeDenyFlags(advisory, 'derive_failed');
       denial.ledgerSeq = record ? (recordLedger(ledger, {
         plugin: manifest && manifest.id,
         pluginVersion: manifest && manifest.version,
@@ -107,7 +116,7 @@ function createGuardChain({
         decision: 'deny',
         ruleId: precise ? error.ruleId : 'derive',
         reason: denial.reason,
-        intercepted: true,
+        intercepted: denyFlags.intercepted,
       })?.seq || null) : null;
       emit({ type: 'deny', ...denial });
       return denial;
@@ -172,8 +181,8 @@ function createGuardChain({
 
     if (denial) {
       statisticsIncrement(stats, 'denied');
-      const intercepted = isInterceptionCode(denial.code);
-      if (intercepted) stats.intercepted += 1;
+      const denyFlags = computeDenyFlags(advisory, denial.code);
+      if (denyFlags.wasInterception) stats.intercepted += 1;
       const entry = record ? recordLedger(ledger, {
         plugin: manifest && manifest.id,
         pluginVersion: manifest && manifest.version,
@@ -183,10 +192,10 @@ function createGuardChain({
         decision: 'deny',
         ruleId: denial.code,
         reason: denial.reason,
-        intercepted,
+        intercepted: denyFlags.intercepted,
       }) : null;
       denial.ledgerSeq = entry ? entry.seq : null;
-      denial.intercepted = intercepted;
+      denial.intercepted = denyFlags.intercepted;
       if (observeDepth > 0) {
         stats.observed += 1;
         const observed = {
@@ -231,6 +240,7 @@ function createGuardChain({
       allowed: true,
       ...base,
       ledgerSeq: entry ? entry.seq : null,
+      intercepted: false,
     };
     emit({ type: 'allow', ...result });
     return result;
@@ -459,6 +469,19 @@ function createGuardChain({
 
 function isInterceptionCode(code) {
   return code === 'not_declared' || code === 'legacy' || code === 'derive_failed';
+}
+
+/**
+ * advisory 语义下：
+ *  - wasInterception：原本（非 advisory 时）是否算一次拦截——统计要算，
+ *    不然 advisory 跑多了会让 metrics/画像里的「真正被宿主看到的拒绝数」偏低。
+ *  - intercepted：账本/denial.intercepted 字段——advisory 时一律 false，
+ *    表示「would-deny，但宿主决定放行」；否则与 wasInterception 同值。
+ * 宿主可以靠 decision=deny + intercepted=false 直接区分「would-deny 放行」。
+ */
+function computeDenyFlags(advisory, code) {
+  const wasInterception = isInterceptionCode(code);
+  return { wasInterception, intercepted: advisory ? false : wasInterception };
 }
 
 function statisticsIncrement(stats, key) {

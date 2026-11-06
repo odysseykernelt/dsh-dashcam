@@ -226,6 +226,27 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.8 修复（实跑测试暴露出的两条宿主-本体口径差）
+
+来自 `handoff/dsh-covenant-test-1.10.7-2026-11-06.md` 的实跑问题：
+
+- **宿主 `config.requests` 写成字符串会静默失效（问题 1，中）**：`requests: [fs.read]`
+  这种错语法不是报配置错误，而是等到运行时判成 `未声明的能力或范围：fs.read (...)`，
+  把「配置语法问题」伪装成「能力未声明」。根因：`covenant.activate()` 直接吃 manifest，
+  不走 `parseManifest` 里的 `normalizeRequest`——宿主 mount 前自己不校验。修复：
+  `dsh-covenant-host` mount 时用 `covenant.normalizeRequest` + `normalizeGrant`
+  提前校验，非法直接打印完整报错（含正确 YAML 示例）并 return，fail-fast。
+- **advisory 下 deny 被账本记 `intercepted=true`（问题 2，中低）**：advisory 模式
+  宿主会自行放行 `guard.check()` 返回的 deny 结果，但 guard 无从知道，于是账本里
+  出现大量 `decision=deny / intercepted=true / 实际放行` 的矛盾记录。`Ledger.interceptions()`
+  会把这些也算进「真正被拦截的次数」，抬高 metrics/画像。修复：`guard.check` 新增
+  `options.advisory: boolean`——传入后 deny 账本 `decision` 仍记 deny（审计事实保留），
+  但 `intercepted` 一律写 false；宿主 advisory 模式调用时显式传 `{ advisory: true }`。
+  allow 路径补 `intercepted: false`（原账本有但 denial 对象没带，口径不一致）。
+- 新增 `test/review5-fixes.test.js::R5-5` 覆盖 advisory 账本语义；全量 226 例
+  （+1）/ 222 通过 / 0 fail / 4 symlink skip。宿主冒烟 10/10 PASS（fail-fast、
+  advisory intercepted=false、enforce deny intercepted=true、interceptions() 过滤）。
+
 ## 1.10.7 修复（1.10.6 复核残余批）
 
 1.10.6 复核报告（2026-11-06）确认已修项扎实、无回归，同时点名两条未关口子，本版逐条关闭：

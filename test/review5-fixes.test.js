@@ -8,6 +8,12 @@
 //  - 残余 2（P2）：cp 的 filter 回调 / createReadStream 的自定义 fs 实现对象
 //    按引用保留，在原生重入窗口内执行且账本零痕迹（复核实测越权写成功）。
 //    修复后函数型 options 一律拒绝（ruleId function_options），拒绝先记账再抛。
+//
+// 1.10.8 追加：
+//  - 问题 1（中）：config.requests 字符串数组静默失效（normalizeRequest fail-fast）
+//    改在宿主层，本体不直接暴露；本体侧测试 check({ advisory: true }) 的账本语义。
+//  - 问题 2（中低）：advisory 下放行的 deny 被账本记 intercepted=true——
+//    现在 decision 保留 deny（审计事实），intercepted 写 false（would-deny 放行）。
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -239,4 +245,57 @@ test('R5-4：createReadStream 的自定义 fs 实现对象拒绝；AbortSignal �
   } finally {
     cleanup(dir);
   }
+});
+
+// ── 1.10.8：advisory 账本语义 + 宿主 fail-fast ──────────────────
+
+test('R5-5：guard.check({ advisory:true }) 时账本 decision=deny 但 intercepted=false；非 advisory 维持 intercepted=true', () => {
+  const dir = tempDir('r5-advisory-');
+  const ledgerPath = path.join(dir, 'ledger.jsonl');
+  const selfFile = path.join(dir, 'self.txt');
+  const { createGuardChain } = require('../src/runtime/guards');
+  const guard = createGuardChain({
+    manifest: {
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
+      covenant: {
+        spec: 'dsh-covenant/1',
+        content: null,
+        requests: [{ capability: 'fs.read', scope: { paths: [path.join(dir, '**')] }, reason: '读取自身文件' }],
+      },
+    },
+    grants: [{ id: 'g1', capability: 'fs.read', scope: { paths: [path.join(dir, '**')] } }],
+    ledger: new Ledger(ledgerPath),
+    pluginRoot: dir,
+  });
+
+  // 非 advisory：原口径不变，intercepted=true
+  const enforceDeny = guard.check('net.outbound', { host: 'evil.example', port: 443 });
+  assert.equal(enforceDeny.allowed, false);
+  assert.equal(enforceDeny.code, 'not_declared');
+  assert.equal(enforceDeny.intercepted, true, '非 advisory 下 denied.intercepted 必须 true');
+
+  // advisory 下：decision 仍 deny，但 intercepted=false——账本如实记录 would-deny 放行
+  const advisoryDeny = guard.check('net.outbound', { host: 'evil.example', port: 443 }, { advisory: true });
+  assert.equal(advisoryDeny.allowed, false);
+  assert.equal(advisoryDeny.code, 'not_declared');
+  assert.equal(advisoryDeny.intercepted, false, 'advisory 下 denied.intercepted 必须 false');
+
+  const records = new Ledger(ledgerPath).records();
+  assert.equal(records.length, 2, '两次调用都应落账本');
+  assert.equal(records[0].decision, 'deny');
+  assert.equal(records[0].intercepted, true);
+  assert.equal(records[1].decision, 'deny');
+  assert.equal(records[1].intercepted, false, 'advisory 账本记录 intercepted 必须 false');
+
+  // Ledger.interceptions() 只算真正拦截——advisory 那条不应出现在里面
+  const ledger = new Ledger(ledgerPath);
+  assert.equal(ledger.interceptions().length, 1, 'interceptions() 应只统计非 advisory 的 1 条');
+
+  // allow 路径不受 advisory 影响：本来 intercepted 就是 false，advisory 不变
+  const allow = guard.check('fs.read', { path: selfFile }, { advisory: true });
+  assert.equal(allow.allowed, true, `授权范围内应放行；实际 ${JSON.stringify(allow)}`);
+  assert.equal(allow.intercepted, false);
+  assert.equal(new Ledger(ledgerPath).records().length, 3);
+
+  try { cleanup(dir); } catch {}
 });
