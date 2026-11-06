@@ -226,6 +226,50 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.11 修复（1.10.10 两份复核报告 P1–P9 批）
+
+来自 `handoff/dsh-covenant-review-1.10.10-2026-11-06.md` 与
+`handoff/dsh-covenant-host-ops-mapping-1.10.10-2026-11-06.md`。
+本版**只改宿主适配层**（`dsh-covenant-host`），核心 `src/` 无改动，234 例回归不受影响。
+
+- **P1/P8 copy/move 双端判定**：此前 `ops_copy` / `ops_move` 只按源路径记 `fs.write`，
+  目标端完全不判——enforce 下「源在域内、目标在域外」可把数据搬出授权域。现在
+  copy = `fs.read`(源) + `fs.write`(目标)，move = `fs.read` + `fs.delete`(源) + `fs.write`(目标)，
+  `ops_remove` 改记 `fs.delete`（破坏性动作不再伪装成写）。
+- **P2 核心工具 `edit` 未映射**：`WRITE_TOOLS` 补 `edit`，插件改文件不再漏账。
+- **P3 `ops_batch` 整块隐身**：一次可 plan/resume/run 512 条 copy/move/remove。现在按
+  `operations[]` 逐条展开判定，enforce 整批按最严处置；缺 `operations[]`（resume/plan）或
+  超限时无法判定子操作——advisory 落 `unjudgeable` 遥测，enforce fail-closed 拒绝。
+- **P4 `ops_read_files` 只记首个 path**：`files[]` 逐 path 判定记账，`files[1..]` 的越界读
+  （如 `.ssh/id_rsa`，自动升级 `cred.read`）不再静默通过。
+- **P5 `glob`/`grep` 缺 path**：DSH 默认走 session cwd，宿主拿不到，不猜路径写假账；
+  改落 `unjudgeable` 遥测（advisory 放行 / enforce 拒绝），缺口可见。
+- **P6 命令判定只认首词**：`cd X && rm -f …` 在账上只剩 `cd`。新增
+  `proc.commandline` 审计记录（长 1024 截断 + `sha256` 整串），判定口径仍为首词。
+- **P7 未映射遥测只在 stdout**：桌面版看不到 stdout，覆盖缺口等于不存在。未映射工具
+  与挂载事件（`telemetry/mount`）一并落账本，同名仍只记一次。
+- **P9 `dryRun` 被记成实写**：`write_file` / `edit_file` / `replace` 带 `dryRun: true`
+  时降级为 `fs.read`，账本不再高估副作用。
+- **D4 账本 MAC 密钥透传**：`config.ledgerMacKey` / `ledgerMacKeyFile` / `ledgerMacKeyEnv`
+  直通 covenant（v3 账本 HMAC），密钥过短则 activate 失败不挂载。
+- **测试 profile 账本隔离**：`covenant-test` profile 的 `ledgerPath` 指向
+  `ledger-covenant-test.jsonl`，测试期 deny 记录不再混入生产底账。
+- 回归：宿主冒烟 28 项 → 57 项全过（copy/move 越界拦截、batch 展开与整批拒绝、
+  逐 path、命令行存档、dryRun、MAC 均有用例）。
+- 已知边界（未变）：`replace` 以基目录为审计粒度，glob 命中的实际文件不逐个展开；
+  `ops_bash` 里 `bash -c "…"` 套娃只判首词；Bridge 仍默认 `patchBuiltins: false`。
+
+## 1.10.10 修复（宿主映射补齐 ops_ 前缀）
+
+- **`ops_*` 前缀导致映射全空**：dsh-ops 把工具公开名统一加前缀（`ops_bash` /
+  `ops_read_files` / `ops_write_file` / `ops_copy` / `ops_move` / `ops_remove` …），
+  旧映射按裸名匹配，一条都命中不了——shell 主力通道从未进账本。现在先剥 `ops_`
+  再按裸名匹配，前缀组合不再逐个枚举。
+- **未映射工具遥测**：未列入映射表的工具放行但点名（`console.info`，同名去重），
+  让覆盖缺口可见、可补，而不是静默绕过。
+- 回归：宿主冒烟扩至 28 项（`ops_bash` 的 command/script_path 两形态、`files` 数组、
+  glob/grep/stat/diff 只读口径、copy/move/remove 记账）。
+
 ## 1.10.9 修复（1.10.8 复核 P1 清单批）
 
 1.10.8 复核报告（2026-11-06）确认修复有效，同时点名 P1 清单一项未动，本版逐条关闭：
