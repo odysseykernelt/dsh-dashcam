@@ -239,6 +239,8 @@ unmapped-tool / unjudgeable-tool / `proc.commandline` 存档，capability 固定
 `telemetryRecords` / `telemetryDenies`（可见性不丢）；`records()` / `verify()` 等
 离线审计仍看全量行。没有 telemetry 记录的旧账本读数完全不变（新增 7 项口径护栏
 用例证明，总回归 241 例 0 fail）。口径文档见 [docs/ROLLOUT.md](docs/ROLLOUT.md) 第 6 节。
+宿主适配层 `dsh-covenant-host` 亦自本版起以 git subtree 并入本仓库（历史完整保留，见
+[dsh-covenant-host/](dsh-covenant-host/README.md)），不再依赖工作区的兄弟目录路径。
 
 ## 1.10.11 修复（1.10.10 两份复核报告 P1–P9 批）
 

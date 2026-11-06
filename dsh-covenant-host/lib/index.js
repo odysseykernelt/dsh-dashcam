@@ -37,7 +37,7 @@ import { join, dirname } from 'node:path';
 import { readFileSync, statSync, existsSync, appendFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
-const covenant = require('../../dsh-covenant/src/index.js');
+const covenant = require('../../src/index.js');
 
 export const name = 'dsh-covenant-host';
 export const inject = [];

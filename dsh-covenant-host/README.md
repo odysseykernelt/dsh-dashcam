@@ -1,6 +1,6 @@
 # dsh-covenant-host
 
-把 [dsh-covenant](../dsh-covenant) 的判定链接入 DeepSeek Harness（cordos 宿主）。
+把 [dsh-covenant](../README.md) 的判定链接入 DeepSeek Harness（cordos 宿主）。本目录自 1.10.12 起并入主仓库（git subtree，历史完整保留）。
 
 - 入口：DSH 核心的 `tools/pre-execute` waterfall（`(exec, next)` 签名；放行必须 `return next()`）。
 - 默认 **advisory**：映射到的调用逐条走 `guard.check` 记账（含 deny 明细）但放行；
@@ -92,7 +92,7 @@ stdout 也能事后查）；`ledgerMacKeyEnv` 指向的环境变量未设置时�
 
 ```powershell
 npm run smoke   # 91 项断言，全过
-# 主仓库回归：cd ../dsh-covenant; npm test   # 234 例，0 fail
+# 主仓库回归：cd ..; npm test   # 241 例，0 fail
 ```
 
 部署确认（F8）：重启 DSH 桌面后，账本新 mount 记录应为
