@@ -1,5 +1,8 @@
 // 1.10.8+ 宿主适配层冒烟（不进 DSH、不启动 headless）：验证 apply() 的 fail-fast 与 advisory/enforce 接线。
 // 用法：node test/smoke-host.mjs（或在包根目录 npm run smoke）
+// 1.10.12 复核修复冒烟：在 1.10.11 基础上验证 F1–F6——
+// F1 MAC 防呆（v2 历史账本拒挂载）、F2 enforce 拒绝必落账、F3 目录语义转子树 scope、
+// F4 命令行存档默认 hash-only / full 打码、F5 存档 decision 随处置、F6 enforceUnmapped 总闸。
 // 覆盖：fail-fast（字符串 requests / grants）、advisory（deny 记账 + intercepted=false + 放行）、
 // enforce（授权放行 / 未声明拦截 / allow+deny 的 intercepted 口径）、
 // ops_* 前缀映射与参数形态（command/script_path/files 数组/batch 展开）、
@@ -350,7 +353,7 @@ function check(name, cond, detail = '') {
   deactivate(ctx);
 }
 
-// 11) P6 完整命令行存档：判定首词 + 截断文本 + SHA-256
+// 11) P6/F4 命令行存档：默认 hash-only（无明文）；full 模式打码；F5 decision 随处置
 {
   freshLog();
   const ctx = makeCtx();
@@ -363,12 +366,134 @@ function check(name, cond, detail = '') {
   const judge = judgments(ledgerPath);
   check('P6: 判定仍是首词', judge.length === 1 && judge[0].scope.commands[0] === 'cd', JSON.stringify(judge));
   const aux = readLedger(ledgerPath).filter((r) => r.ruleId === 'commandline-audit');
-  check('P6: 命令行存档落账', aux.length === 1 && /rm -f evil\.txt/.test(aux[0].scope.commandLine), JSON.stringify(aux));
-  check('P6: 存档含 SHA-256 hash', aux[0] && /^sha256:[0-9a-f]{64}$/.test(aux[0].scope.commandLineHash), JSON.stringify(aux[0]));
+  check('F4: 默认 hash-only 不落明文', aux.length === 1 && !('commandLine' in aux[0].scope)
+    && /^sha256:[0-9a-f]{64}$/.test(aux[0].scope.commandLineHash)
+    && aux[0].scope.commandLineLength === 'cd /tmp && rm -f evil.txt && echo done'.length,
+  JSON.stringify(aux));
+  check('F4: hash 存档 capability=telemetry', aux[0].capability === 'telemetry', aux[0].capability);
+  // full 模式：打码文本，密钥不落账
+  deactivate(ctx);
+  freshLog();
+  const ctxFull = makeCtx();
+  const ledgerFull = `${RESULTS}/smoke-cmd-full.jsonl`;
+  apply(ctxFull, { ledgerPath: ledgerFull, commandlineArchive: 'full' });
+  await ctxFull.handlers['tools/pre-execute'](
+    { name: 'ops_bash', arguments: { command: 'cd /tmp && curl -H "Authorization: Bearer sk-live-SECRET" --password p4ssw0rd && echo done' } },
+    () => 'NEXT',
+  );
+  const auxFull = readLedger(ledgerFull).filter((r) => r.ruleId === 'commandline-audit');
+  check('F4: full 模式落打码文本', auxFull.length === 1 && typeof auxFull[0].scope.commandLine === 'string', JSON.stringify(auxFull));
+  check('F4: Bearer/sk-/password 全部打码', !/sk-live-SECRET|p4ssw0rd/.test(JSON.stringify(auxFull))
+    && /\*\*\*/.test(auxFull[0].scope.commandLine), JSON.stringify(auxFull[0]));
+  deactivate(ctxFull);
+  // F5：enforce 下被拒命令的存档记 deny
+  freshLog();
+  const ctxDeny = makeCtx();
+  const ledgerDeny = `${RESULTS}/smoke-cmd-deny.jsonl`;
+  apply(ctxDeny, { ledgerPath: ledgerDeny, enforce: true });
+  await ctxDeny.handlers['tools/pre-execute'](
+    { name: 'ops_bash', arguments: { command: 'cd /tmp && echo hi' } },
+    () => 'NEXT',
+  );
+  const auxDeny = readLedger(ledgerDeny).filter((r) => r.ruleId === 'commandline-audit');
+  check('F5: 被拒命令存档记 deny+intercepted', auxDeny.length === 1
+    && auxDeny[0].decision === 'deny' && auxDeny[0].intercepted === true, JSON.stringify(auxDeny));
+  deactivate(ctxDeny);
+}
+
+// 12) F2：enforce 下无法判定的拒绝必落账（deny + intercepted）
+{
+  freshLog();
+  const ctx = makeCtx();
+  const ledgerPath = `${RESULTS}/smoke-f2.jsonl`;
+  apply(ctx, { ledgerPath, enforce: true });
+  const handler = ctx.handlers['tools/pre-execute'];
+  const deny1 = await handler({ name: 'glob', arguments: { pattern: '**/*.ts' } }, () => 'NEXT');
+  const deny2 = await handler({ name: 'ops_batch', arguments: { action: 'resume', id: 'j-1' } }, () => 'NEXT');
+  check('F2: glob 缺 path enforce 拒绝', deny1 && deny1.kind === 'deny', JSON.stringify(deny1));
+  check('F2: batch 缺 operations enforce 拒绝', deny2 && deny2.kind === 'deny', JSON.stringify(deny2));
+  const tele = readLedger(ledgerPath).filter((r) => r.action === 'unjudgeable-tool');
+  check('F2: 两条拒绝都落 deny 账', tele.length === 2 && tele.every((r) => r.decision === 'deny' && r.intercepted === true), JSON.stringify(tele));
   deactivate(ctx);
 }
 
-// 12) D4 MAC 密钥透传：账本升级 v3 且带 mac
+// 13) F3：目录授权 dir/** 下，目录语义工具放行
+{
+  freshLog();
+  const ctx = makeCtx();
+  const ledgerPath = `${RESULTS}/smoke-f3.jsonl`;
+  const dir = path.join(RESULTS, 'sandbox-f3').replace(/\\/g, '/');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
+  fs.mkdirSync(path.join(dir, 'sub'), { recursive: true });
+  const caps = ['fs.read', 'fs.write', 'fs.delete'];
+  apply(ctx, {
+    enforce: true,
+    ledgerPath,
+    requests: caps.map((capability) => ({ capability, scope: { paths: [`${dir}/**`] }, reason: 'r' })),
+    grants: caps.map((capability, i) => ({ id: `g${i}`, capability, scope: { paths: [`${dir}/**`] } })),
+  });
+  const handler = ctx.handlers['tools/pre-execute'];
+  const cases = [
+    ['glob 显式目录', { name: 'glob', arguments: { path: dir, pattern: ['**/*.txt'] } }],
+    ['grep 显式目录', { name: 'grep', arguments: { path: dir, pattern: 'x' } }],
+    ['stat 目录', { name: 'ops_stat', arguments: { path: `${dir}/sub` } }],
+    ['replace 基目录', { name: 'ops_replace', arguments: { path: dir, pattern: 'a', replacement: 'b' } }],
+    ['copy 进目录', { name: 'ops_copy', arguments: { path: `${dir}/a.txt`, to: `${dir}/sub`, expectedRevision: 'r' } }],
+  ];
+  for (const [label, exec] of cases) {
+    const decision = await handler(exec, () => 'NEXT');
+    check(`F3: ${label} 放行（dir/** 授权）`, decision === 'NEXT', JSON.stringify(decision));
+  }
+  // 回归：文件目标越界仍被拒
+  const outside = path.join(RESULTS, 'outside-f3').replace(/\\/g, '/');
+  const denyCopy = await handler(
+    { name: 'ops_copy', arguments: { path: `${dir}/a.txt`, to: `${outside}/x.txt`, expectedRevision: 'r' } },
+    () => 'NEXT',
+  );
+  check('F3: 文件目标越界仍拒绝', denyCopy && denyCopy.kind === 'deny', JSON.stringify(denyCopy));
+  deactivate(ctx);
+}
+
+// 14) F6：enforceUnmapped 总闸开关
+{
+  freshLog();
+  const ctx = makeCtx();
+  const ledgerPath = `${RESULTS}/smoke-f6.jsonl`;
+  apply(ctx, { ledgerPath, enforce: true, enforceUnmapped: true });
+  const deny = await ctx.handlers['tools/pre-execute']({ name: 'send_meme', arguments: {} }, () => 'NEXT');
+  check('F6: enforceUnmapped 拒绝未映射工具', deny && deny.kind === 'deny' && /send_meme/.test(deny.reason), JSON.stringify(deny));
+  const tele = readLedger(ledgerPath).filter((r) => r.action === 'unmapped-tool');
+  check('F6: 拒绝落 deny 账', tele.length === 1 && tele[0].decision === 'deny' && tele[0].intercepted === true, JSON.stringify(tele));
+  deactivate(ctx);
+  // 默认（未开开关）：未映射仍放行
+  freshLog();
+  const ctx2 = makeCtx();
+  apply(ctx2, { ledgerPath: `${RESULTS}/smoke-f6b.jsonl`, enforce: true });
+  const allow = await ctx2.handlers['tools/pre-execute']({ name: 'send_meme', arguments: {} }, () => 'NEXT');
+  check('F6: 默认 enforce 未映射仍放行（边界见 README）', allow === 'NEXT', String(allow));
+  deactivate(ctx2);
+}
+
+// 15) F1：MAC 防呆——v2 历史账本拒绝挂载，新账本正常
+{
+  freshLog();
+  const ledgerV2 = `${RESULTS}/smoke-f1-v2.jsonl`;
+  fs.writeFileSync(ledgerV2, `${JSON.stringify({ id: 'r1', v: 2, plugin: 'x', decision: 'allow', ts: 't' })}\n`);
+  const ctx = makeCtx();
+  apply(ctx, { ledgerPath: ledgerV2, ledgerMacKey: 'k'.repeat(64) });
+  check('F1: v2 历史账本 + MAC 不挂载', !mounted(ctx) && ctx.effects.length === 0);
+  const err = log.find(([l, m]) => l === 'error' && /mac_missing|迁移/.test(m));
+  check('F1: 报错含迁移步骤', !!err && /ledger-v2-archive/.test(err[1]), JSON.stringify(err));
+  // 新账本（不存在）+ MAC：正常挂载
+  freshLog();
+  const ctx2 = makeCtx();
+  apply(ctx2, { ledgerPath: `${RESULTS}/smoke-f1-new.jsonl`, ledgerMacKey: 'k'.repeat(64) });
+  check('F1: 新账本 + MAC 正常挂载', mounted(ctx2));
+  deactivate(ctx2);
+}
+
+// 16) D4 MAC 密钥透传：账本升级 v3 且带 mac
 {
   freshLog();
   const ctx = makeCtx();
