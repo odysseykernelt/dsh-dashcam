@@ -38,7 +38,6 @@ const KNOWN_GAPS = Object.freeze([
   '卸载（dispose）之后仍在事件队列里的定时器/回调：Bridge 已还原原生模块，这些调用不再经过守卫链',
   '已授权的 worker_threads / 子进程内部：独立 realm 或独立进程，本进程的 Hook 对其不可见',
   'fs options 白名单（FS_OPTIONS）之外的键会被丢弃：Node 新版本给 fs 方法新增 options 键而白名单未同步时，该键静默失效（丢功能不丢安全），升级 Node 后需要对照核补',
-  'options 里的回调与实现对象按引用保留（cp 的 filter、createReadStream 的自定义 fs 等）：回调在原生重入窗口内执行，其内部的越权调用会被直通——宿主不得让插件传入自带逻辑的回调',
   'options 的深层嵌套值（第二层及以下的对象/存取器）按引用保留：白名单只做第一层提取，深层的 getter 仍可能在原生窗口内执行',
 ]);
 
@@ -72,6 +71,23 @@ function firstCommand(args) {
   const trimmed = raw.trim();
   const quoted = trimmed.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))/);
   return quoted ? (quoted[1] || quoted[2] || quoted[3]) : trimmed;
+}
+
+/**
+ * shell:true 时命令行 = 首词 + 参数逐段拼接后整体交给 shell 解释（H3 残余，
+ * 1.10.7：只扫 args[0] 会漏掉 args[1..] 的注入面——如
+ * execFile('git', ['status & echo pwned > PWN'], { shell: true })），
+ * 所以把全部字符串/数组参数拼成完整命令行再统一扫元字符。
+ * options 对象与回调不是命令行的一部分，跳过。
+ */
+function shellCommandLine(args) {
+  const parts = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (typeof arg === 'string') parts.push(arg);
+    else if (Array.isArray(arg)) parts.push(arg.map(String).join(' '));
+  }
+  return parts.join(' ');
 }
 
 /**
@@ -158,10 +174,10 @@ const FS_OPTIONS = {
 
 /**
  * options 白名单提取：参数确为对象（排除回调函数与数组）且不是刻意保留的
- * 原生类型时才进行。提取值里的函数（如 cp 的 filter）按引用保留，
- * 其残余风险见 KNOWN_GAPS。
+ * 原生类型时才进行。提取出的函数型值（如 cp 的 filter）一律拒绝（P2），
+ * 见 assertNoFunctionOptions。
  */
-function extractOptionsArg(args, spec) {
+function extractOptionsArg(args, spec, capability, denyHook) {
   if (!spec) return args;
   const candidate = args[spec.index];
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return args;
@@ -174,9 +190,41 @@ function extractOptionsArg(args, spec) {
     // undefined」做严格类型校验（ERR_INVALID_ARG_TYPE），缺省键必须保持缺省。
     if (value !== undefined) extracted[key] = value;
   }
+  assertNoFunctionOptions(capability, extracted, denyHook);
   const next = args.slice();
   next[spec.index] = extracted;
   return next;
+}
+
+/**
+ * 函数型 options 一律拒绝（P2，1.10.7）：cp 的 filter 回调、createReadStream 的
+ * 自定义 fs 实现对象都会在原生重入窗口（callDepth > 0）内执行插件代码，其内部的
+ * 越权调用会被直通放行且账本零痕迹（复核已实证可越权写文件）。回调是能力走私的
+ * 天然通道，而「把回调切回判定层」在原生同步调用下不可行——合法用途罕见，报错
+ * 引导替代写法。拒绝先经 denyHook 记账再抛（fail-closed：审计先于拒绝）。
+ * 扫描两层：函数值本身，以及实现对象第一层的函数属性（如自定义 fs.readFile）；
+ * AbortSignal 等原生类型语义依赖内部槽位，跳过。
+ */
+function assertNoFunctionOptions(capability, extracted, denyHook) {
+  const offenders = [];
+  for (const key of Object.keys(extracted)) {
+    const value = extracted[key];
+    if (typeof value === 'function') {
+      offenders.push(key);
+      continue;
+    }
+    if (value && typeof value === 'object' && !isNativeObject(value) && !Array.isArray(value)) {
+      for (const inner of Object.keys(value)) {
+        if (typeof value[inner] === 'function') offenders.push(`${key}.${inner}`);
+      }
+    }
+  }
+  if (offenders.length === 0) return;
+  if (denyHook) denyHook(capability, offenders);
+  throw new CovenantDenied(
+    `options 不接受函数型值（${offenders.join(', ')}）：回调会在原生重入窗口内执行，其中的越权调用无法判定，请改用无回调写法`,
+    { capability, scope: { options: offenders }, ruleId: 'function_options' },
+  );
 }
 
 /**
@@ -505,7 +553,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
       for (const index of paths) guardPath(action, args[index]);
       // H1：options 交给原生前做白名单提取，类实例/继承 getter 在提取时
       // （callDepth === 0）被守卫拦截并记账，原生重入窗口里只剩纯数据。
-      const callArgs = extractOptionsArg(args, method ? FS_OPTIONS[method] : null);
+      const callArgs = extractOptionsArg(args, method ? FS_OPTIONS[method] : null, `fs.${action}`, recordOptionsDeny);
       if (promises) return original.apply(this, callArgs);
       return original.apply(this, callArgs);
     };
@@ -590,12 +638,12 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     patchMethod(fs, 'cp', (original) => function wrappedCp(...args) {
       guardPath('read', args[0]);
       guardPath('write', args[1]);
-      return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cp));
+      return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cp, 'fs.write', recordOptionsDeny));
     });
     patchMethod(fs, 'cpSync', (original) => function wrappedCpSync(...args) {
       guardPath('read', args[0]);
       guardPath('write', args[1]);
-      return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cpSync));
+      return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cpSync, 'fs.write', recordOptionsDeny));
     });
     patchMethod(fs, 'rename', (original) => function wrappedRename(...args) {
       guardPath('read', args[0]);
@@ -630,7 +678,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
       patchMethod(fsp, 'cp', (original) => function wrappedCp(...args) {
         guardPath('read', args[0]);
         guardPath('write', args[1]);
-        return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cp));
+        return original.apply(this, extractOptionsArg(args, FS_OPTIONS.cp, 'fs.write', recordOptionsDeny));
       }, 'fsp.cp');
       patchMethod(fsp, 'rename', (original) => function wrappedRename(...args) {
         guardPath('read', args[0]);
@@ -794,6 +842,30 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     }
   }
 
+  /**
+   * 函数型 options 的拒绝记账（P2）：与 denyShellMetachar 同口径——先写 deny
+   * 账本再抛，审计先于拒绝。记账失败不改变拒绝结论。
+   */
+  function recordOptionsDeny(capability, offenders) {
+    if (ledger && typeof ledger.append === 'function') {
+      try {
+        ledger.append({
+          plugin: pluginInfo.id,
+          pluginVersion: pluginInfo.version,
+          capability,
+          action: capability,
+          scope: { options: offenders.slice(0, 10) },
+          decision: 'deny',
+          ruleId: 'function_options',
+          reason: '函数型 options 会在原生重入窗口内执行插件代码，其中的越权调用无法判定',
+          intercepted: true,
+        });
+      } catch {
+        // 记账失败不改变拒绝结论。
+      }
+    }
+  }
+
   /** shell 元字符：; | & $ ` > < 换行等——出现即代表命令会被 shell 重新解释。 */
   const SHELL_METACHARS = /[;|&$`<>\n\r]/;
 
@@ -845,7 +917,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
               { capability: 'proc.spawn', scope: { command: String(args[0]).slice(0, 200) }, ruleId: 'shell_custom' },
             );
           }
-          if (options.shell === true) denyShellMetachar(args[0]);
+          if (options.shell === true) denyShellMetachar(shellCommandLine(args));
           if (method === 'fork' && typeof options.execPath === 'string' && options.execPath !== process.execPath) {
             throw new CovenantDenied(
               `fork 的 execPath（${options.execPath}）不是当前 Node：判定的 modulePath 与实际执行的程序错位`,

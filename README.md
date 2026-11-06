@@ -226,6 +226,27 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.7 修复（1.10.6 复核残余批）
+
+1.10.6 复核报告（2026-11-06）确认已修项扎实、无回归，同时点名两条未关口子，本版逐条关闭：
+
+- **spawn 系 `shell:true` 的 args 注入（复核残余 1，P1）**：`shell:true` 时整条命令行
+  （首词 + 全部参数）都会被 shell 重新解释，此前只对 `args[0]` 扫元字符——
+  `execFile('git', ['status & echo pwned > PWN'], { shell: true })` 判定层放行（复核实测）。
+  现在把首词与全部字符串/数组参数拼成完整命令行后统一扫元字符（ruleId `shell_metachar`，
+  先记账再拒绝）；参数干净时不误伤，照常落到既有首词判定。
+  回归：`test/review5-fixes.test.js` R5-1 / R5-2。
+- **函数型 options 一律拒绝（复核残余 2，P2）**：`cp` 的 `filter` 回调、
+  `createReadStream` 的自定义 `fs` 实现对象按引用保留，会在原生重入窗口内执行插件代码，
+  其内部的越权调用被直通放行且账本零痕迹（复核实测可越权写文件）。回调是能力走私的
+  天然通道，而「把回调切回判定层」在原生同步调用下不可行——因此函数型 options
+  （含实现对象第一层的函数属性）直接拒绝（ruleId `function_options`，拒绝先记账再抛），
+  报错引导改用无回调写法；`AbortSignal` 等按引用保留的原生类型不受影响。
+  回归：`test/review5-fixes.test.js` R5-3 / R5-4。
+- `knownGaps` 同步收敛：原「options 里的回调与实现对象按引用保留」一条随上述修复移除，
+  余下条目不变。全量 `npm test`：用例数 221 → 225（新增 4 例，0 fail，4 例符号链接
+  EPERM skip 照旧）。
+
 ## 1.10.6 修复（安全审查快赢批）
 
 2026-11-05 安全审查报告的 5 条 medium「快赢」项，逐条对应报告 M 编号：
