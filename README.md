@@ -74,8 +74,12 @@ stdout 也能事后查）；`ledgerMacKeyEnv` 指向的环境变量未设置时�
 
 ## 已知边界
 
-- **F5（口径）**：telemetry 附加记录计入 metrics 的 allow/deny 口径（metrics 在核心侧，
-  未排除 aux 记录）——下轮核心改动时统一处理；本版只保证被拒调用的存档记 deny。
+- **F5（口径，已闭合）**：telemetry 附加记录不再计入 metrics 的判定口径——核心
+  dsh-covenant 1.10.12 起 `computeMetrics` / `monthlyMetrics` 只收
+  `capability !== 'telemetry'` 的记录，telemetry 数量另列 `telemetryRecords` /
+  `telemetryDenies` 并列读数（见核心 docs/ROLLOUT.md 第 6 节）。本宿主附加记录
+  （mount / unmapped-tool / unjudgeable-tool / commandline-audit）的 capability
+  固定为 `telemetry`，勿改。
 - 命令判定口径 = 首词；`bash -c "…"` 套娃内部副作用不在入口门覆盖范围。
 - `replace` 以基目录为审计粒度，glob 命中的实际文件不逐个展开。
 - `dir/**` 授权不含 `dir` 本身是 SPEC 契约（docs/SPEC.md 77）；宿主对**只读/子树写**
