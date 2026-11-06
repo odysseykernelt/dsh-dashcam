@@ -746,14 +746,30 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     });
 
     function guardSocket(args) {
+      // M1（1.10.9）：Unix socket / 具名管道走 options.path 或字符串路径形态，
+      // 无法用 host:port 判定——句柄层（handles/net.js socketTarget）直接拒绝，
+      // 这里此前却把它折算成 { host:'localhost', port:0 } 落到 Two-Key 判定，
+      // 形成「句柄层拒、Bridge 层放行」的双轨。统一为拒绝（先记账再抛）。
+      const first = args[0];
+      if (typeof first === 'string' || (first && typeof first === 'object' && first.path !== undefined)) {
+        const pathValue = typeof first === 'string' ? first : String(first.path);
+        const scope = { path: pathValue.slice(0, 200) };
+        recordBridgeDeny('net.outbound', 'socket_path',
+          'net 出站仅支持 TCP（host:port）：Unix socket / 具名管道无法按 host:port 判定，与句柄层同口径拒绝',
+          scope);
+        throw new CovenantDenied(
+          'net 出站仅支持 TCP（host:port）：Unix socket / 具名管道无法判定，已拒绝',
+          { capability: 'net.outbound', scope, ruleId: 'socket_path' },
+        );
+      }
       let host;
       let port;
-      if (typeof args[0] === 'number') {
-        port = args[0];
+      if (typeof first === 'number') {
+        port = first;
         host = typeof args[1] === 'string' ? args[1] : 'localhost';
-      } else if (args[0] && typeof args[0] === 'object') {
-        host = args[0].host || args[0].hostname || 'localhost';
-        port = args[0].port;
+      } else if (first && typeof first === 'object') {
+        host = first.host || first.hostname || 'localhost';
+        port = first.port;
       }
       guard.enforce('net.outbound', { host, port: port || 0 });
     }
@@ -843,10 +859,10 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
   }
 
   /**
-   * 函数型 options 的拒绝记账（P2）：与 denyShellMetachar 同口径——先写 deny
-   * 账本再抛，审计先于拒绝。记账失败不改变拒绝结论。
+   * 通用 Bridge 拒绝记账：先写 deny 账本再抛（fail-closed：审计先于拒绝），
+   * 记账失败不改变拒绝结论。recordOptionsDeny 是它的特例。
    */
-  function recordOptionsDeny(capability, offenders) {
+  function recordBridgeDeny(capability, ruleId, reason, scope) {
     if (ledger && typeof ledger.append === 'function') {
       try {
         ledger.append({
@@ -854,16 +870,26 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
           pluginVersion: pluginInfo.version,
           capability,
           action: capability,
-          scope: { options: offenders.slice(0, 10) },
+          scope,
           decision: 'deny',
-          ruleId: 'function_options',
-          reason: '函数型 options 会在原生重入窗口内执行插件代码，其中的越权调用无法判定',
+          ruleId,
+          reason,
           intercepted: true,
         });
       } catch {
         // 记账失败不改变拒绝结论。
       }
     }
+  }
+
+  /**
+   * 函数型 options 的拒绝记账（P2）：与 denyShellMetachar 同口径——先写 deny
+   * 账本再抛，审计先于拒绝。记账失败不改变拒绝结论。
+   */
+  function recordOptionsDeny(capability, offenders) {
+    recordBridgeDeny(capability, 'function_options',
+      '函数型 options 会在原生重入窗口内执行插件代码，其中的越权调用无法判定',
+      { options: offenders.slice(0, 10) });
   }
 
   /** shell 元字符：; | & $ ` > < 换行等——出现即代表命令会被 shell 重新解释。 */

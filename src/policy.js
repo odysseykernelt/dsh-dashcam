@@ -18,6 +18,10 @@ const DEFAULT_LIMITS = Object.freeze({
   integrityEvery: 64,
   /** mac 密钥的最小字节数。下界与默认值一致，拒绝配小绕过。 */
   minMacKeyBytes: 32,
+  /** 单条 IPC 消息的字节上限（M4，ChildHost 双向都查）；0/非法值回落默认。 */
+  maxMessageBytes: 1_048_576,
+  /** IPC invoke 超时（M5，ChildHost）；0 = 不限时。 */
+  ipcTimeoutMs: 5_000,
 });
 
 /** 每个 limit 的合法下界，用于拒绝"看起来配了、其实让保护失效"的值。 */
@@ -28,6 +32,10 @@ const LIMIT_MINIMUMS = Object.freeze({
   integrityEvery: 0,
   // 32 是 HMAC-SHA256 的安全长度；允许配更小等于允许把保护关掉，不接受。
   minMacKeyBytes: 32,
+  // M4：1 KiB 以下的消息上限没有意义（连协议头都装不下）。
+  maxMessageBytes: 1024,
+  // M5：0 = 不限时是显式逃生开关；配负数按非法处理。
+  ipcTimeoutMs: 0,
 });
 
 const DEFAULT_POLICY = Object.freeze({

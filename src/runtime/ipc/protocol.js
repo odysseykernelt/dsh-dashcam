@@ -104,6 +104,18 @@ function isValidResponse(msg) {
   }
 }
 
+/**
+ * 估算消息字节数（M4）。结构化克隆消息用 JSON 序列化近似估大小；
+ * 序列化失败（循环引用等）返回 Infinity——宁可误杀也不放超大消息进来。
+ */
+function messageSizeBytes(msg) {
+  try {
+    return Buffer.byteLength(JSON.stringify(msg));
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
 module.exports = {
   OPS,
   CONTROL_OPS,
@@ -111,4 +123,5 @@ module.exports = {
   makeResponse,
   isValidRequest,
   isValidResponse,
+  messageSizeBytes,
 };

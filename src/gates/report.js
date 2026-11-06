@@ -45,9 +45,16 @@ function buildReport({ plugin = null, channel = 'consumer', stages = [], errors 
     for (const error of stage.errors) allErrors.push({ gate: stage.name, ...error });
     for (const label of stage.labels || []) allLabels.push({ ...label });
   }
+  // M11（1.10.9）：safety 错误现在保留在 stage.errors 里（证据不丢、strict 的
+  // blockedSoFar 能看到），但 ok/blocked 的语义不变——安全门禁按设计「只打标签
+  // 不阻断」（见 gates/index.js 的 safety 段注释），硬阻断只来自 blacklist /
+  // structure / signature / sieve 等门禁。否则 advisory 下一条 undeclared_capability
+  // 就会把安装拦死，等于借 M11 悄悄收紧语义。strict 模式的阻断走
+  // runInstallPipeline 里的 blockedSoFar（直接看 stage.errors），不经过这里。
+  const hardErrors = allErrors.filter((error) => error.gate !== 'safety');
   return {
-    ok: allErrors.length === 0,
-    blocked: allErrors.length > 0,
+    ok: hardErrors.length === 0,
+    blocked: hardErrors.length > 0,
     plugin,
     channel,
     stages: stages.map((stage) => ({

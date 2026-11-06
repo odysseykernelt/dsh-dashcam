@@ -67,6 +67,12 @@ function deriveFsCapability(action, pathValue, ctx) {
   const rawPath = toPathString(pathValue);
   const lexical = normalizePath(expandPath(rawPath, ctx));
   const absolute = realpathSafe(lexical);
+  // M15：realpath 非 ENOENT 失败（EACCES/ELOOP/ENAMETOOLONG…）返回 null——
+  // 拿不到真实路径就按词法判等于给符号链接后门留 ELOOP 掩护，fail-closed。
+  // 这里抛出的错误由 deriveOperation 的 catch 折算成 derive_failed 拒绝。
+  if (absolute === null) {
+    throw new Error(`realpath 解析失败（非 ENOENT），fail-closed 拒绝判定：${lexical}`);
+  }
   const base = action === 'read' ? 'fs.read' : (action === 'delete' ? 'fs.delete' : 'fs.write');
   const capability = credentialCapabilityForPath(absolute, base);
   if (capability.startsWith('cred.')) {

@@ -88,6 +88,19 @@ function createPluginRuntime({
   // Hook 挂在守卫入口：任何进入守卫链的调用都先经过原生模块 Hook 翻译，
   // 再由同一个 check() 做 Two-Key 判定并写 Ledger。
   const bridge = patchBuiltins ? guard.installNativeHooks() : null;
+  // M8（1.10.9）：strictPatch 语义补全——此前只有 LocalHost 装载路径检查 coverage，
+  // createPluginRuntime/activate 直连路径装了 Hook 却从不校验，strictPatch 形同虚设。
+  // 语义与 local-host.js 同口径：Hook 不完整 → 卸载 Hook → 拒绝（fail-closed）。
+  if (bridge && policy.enforcement.strictPatch === true) {
+    const coverage = guard.coverage();
+    if (coverage.complete === false) {
+      // 用 guard.uninstallNativeHooks() 而不是 bridge.uninstall()：
+      // 前者会把 guard.hooks 置空，coverage() 才不会继续指向一个已卸载的 Bridge。
+      guard.uninstallNativeHooks();
+      const detail = (coverage.unpatched || []).map((item) => `${item.prop}(${item.reason})`).join(', ');
+      throw new Error(`沙箱补丁不完整，按 strictPatch 拒绝装载：${detail || '未知入口'}`);
+    }
+  }
   const redirect = sandboxMode === 'handles'
     ? createModuleRedirect({ handles, pluginRoot: root })
     : null;

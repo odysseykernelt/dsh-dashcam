@@ -226,6 +226,40 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.9 修复（1.10.8 复核 P1 清单批）
+
+1.10.8 复核报告（2026-11-06）确认修复有效，同时点名 P1 清单一项未动，本版逐条关闭：
+
+- **M1 socketPath 双轨统一**：`net.connect({ path })` / `net.connect('path')`
+  （Unix socket / 具名管道）此前在句柄层被拒、Bridge 层却折算成
+  `{ host:'localhost', port:0 }` 落 Two-Key 判定（可能被 host 授予放行）。
+  现在 Bridge 层直接拒绝（ruleId `socket_path`，先记账再抛），与句柄层同口径。
+- **M4 maxMessageBytes**：`ChildHost` 双向消息上限落地（默认 1 MiB，
+  `policy.limits.maxMessageBytes`，下限 1024）。入向超限丢弃；出向响应超限降级为
+  小体积 `response_too_large` 错误响应（避免子进程永久挂起）；invoke 请求超限
+  发送前即抛（code `message_too_large`）。`messageSizeBytes` 对循环引用返回
+  Infinity（fail-closed）。
+- **M5 ipcTimeoutMs**：`ChildHost` 接受 `ipcTimeoutMs`（0 = 不限时，负数回落默认
+  5000ms），旧参数名 `invokeTimeoutMs` 保持兼容；`policy.limits.ipcTimeoutMs` 为
+  正式配置入口。
+- **M8 strictPatch 接入 createPluginRuntime/activate**：此前只有 LocalHost 装载
+  路径检查 Hook coverage，直连路径装了 Hook 却从不校验。现在
+  `policy.enforcement.strictPatch === true` 时 coverage 不完整 → 卸载 Hook →
+  拒绝装载（`沙箱补丁不完整，按 strictPatch 拒绝装载：…`），与 LocalHost 同语义。
+- **M11 safetyStage.errors 不再清空**：错误转完标签就抹掉导致证据丢失、strict 模式
+  的 blockedSoFar 看不到安全门禁阻断项。现在错误保留在 `stage.errors` 与
+  `report.errors`；strict 模式下据此跳过 loadability。`report.ok/blocked` 语义不变
+  （safety 按设计「只打标签不阻断」，硬阻断只统计非 safety 门禁）。
+- **M15 realpathSafe fail-closed**：非 ENOENT 失败（EACCES/ELOOP/ENAMETOOLONG…）
+  一律返回 `null`，不再退回词法路径（fail-open 等于给符号链接后门留 ELOOP 掩护）。
+  调用方 fail-closed：derive 折算 `derive_failed` 拒绝、结构门禁记
+  `entry_realpath_failed`、`expandPath` 配置期直接抛、`resolvePath` 抛。
+  ENOENT（纯不存在）场景保留词法退化（写/新建文件合法）。
+- 回归：`test/review6-fixes.test.js` 8 例（含平台条件断言：长路径/符号链接环在
+  本机产生非 ENOENT 时才断言 fail-closed）。全量 234 例 / 230 通过 / 0 fail /
+  4 symlink skip。宿主冒烟 13 项脚本收进 `dsh-covenant-host/test/smoke-host.mjs`
+  （`npm run smoke`），宿主包自此建 git 仓库（首次入库）。
+
 ## 1.10.8 修复（实跑测试暴露出的两条宿主-本体口径差）
 
 来自 `handoff/dsh-covenant-test-1.10.7-2026-11-06.md` 的实跑问题：

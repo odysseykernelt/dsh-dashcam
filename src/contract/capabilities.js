@@ -425,5 +425,13 @@ module.exports = {
   credentialCapabilityForKey,
   // 与 derive 同口径：判定用真实路径，导出给宿主的也必须是真实路径，
   // 否则宿主拿去做二次判断，会和守卫链得出不同结论。
-  resolvePath: (value, ctx) => realpathSafe(expandPath(value, ctx)),
+  // M15：resolvePath 是授权范围的解析基准；realpath 非 ENOENT 失败（null）
+  // 时按配置错误抛——授权范围建立在词法猜测上等于没有范围。
+  resolvePath: (value, ctx) => {
+    const resolved = realpathSafe(expandPath(value, ctx));
+    if (resolved === null) {
+      throw new Error(`授权范围路径无法解析真实路径（fail-closed）：${value}`);
+    }
+    return resolved;
+  },
 };

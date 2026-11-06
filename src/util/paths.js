@@ -27,8 +27,16 @@ function expandPath(input, { pluginRoot = process.cwd(), home = os.homedir() } =
   // 根必须先规范化成真实路径。判定改用真实路径之后，如果 pluginRoot 本身是符号链接
   // （macOS 的 /var → /private/var 就是），授权按词法根展开、请求按真实根判定，
   // 两边永远对不上——等于把所有 $PLUGIN 授予一次性作废。这里把口径统一。
+  // M15：root/home 解析不出真实路径（非 ENOENT）时按配置错误抛——授权基准
+  // 建立在词法猜测上等于没有基准，宁可 mount 失败也不 fail-open。
   const root = realpathSafe(pluginRoot);
   const homeDir = realpathSafe(home);
+  if (root === null) {
+    throw new Error(`pluginRoot 无法解析真实路径（fail-closed）：${pluginRoot}`);
+  }
+  if (homeDir === null) {
+    throw new Error(`home 无法解析真实路径（fail-closed）：${home}`);
+  }
   let value = String(input);
   value = value.replace(/^\$\{?PLUGIN\}?/, () => root);
   value = value.replace(/^\$\{?HOME\}?/, () => homeDir);
@@ -83,12 +91,12 @@ function toPosixRelative(from, to) {
   return path.relative(from, to).replace(/\\/g, '/');
 }
 
-/** 用捕获到的原生 realpath 解析；任何失败都返回 null，由调用方决定退化方式。 */
+/** 用捕获到的原生 realpath 解析；返回 { ok, value, code }，由调用方决定退化方式。 */
 function tryRealpath(target) {
   try {
-    return NATIVE_REALPATH_SYNC(target);
-  } catch {
-    return null;
+    return { ok: true, value: NATIVE_REALPATH_SYNC(target), code: null };
+  } catch (error) {
+    return { ok: false, value: null, code: error && error.code ? error.code : String(error) };
   }
 }
 
@@ -99,14 +107,17 @@ function tryRealpath(target) {
  * 文件时，词法路径仍然落在 `$PLUGIN/**` 之内、判定通过，但真正被读写的是范围外的目标。
  * 判定对象必须是 OS 最终落到的那个路径，否则符号链接就是一道后门。
  *
- * 语义：
+ * 语义（M15 修订，1.10.9）：
  *   1. 先用 fs.realpathSync.native 尝试解析；
- *   2. 路径还不存在（写/新建场景的 ENOENT）时，退化为「对父目录做 realpath，再拼上
+ *   2. 目标不存在（写/新建场景的 ENOENT）时，退化为「对父目录做 realpath，再拼上
  *      basename」；父目录也可能不存在，因此向上递归，直到找到第一个存在的祖先；
- *   3. 一律失败就退回规范化后的原始路径。
+ *   3. **非 ENOENT 失败（EACCES / ELOOP / ENAMETOOLONG…）一律返回 null**——
+ *      拿不到真实路径时按词法路径继续判就是 fail-open（符号链接后门
+ *      在 ELOOP/EACCES 掩护下复活），判定层必须 fail-closed：derive 折算成
+ *      derive_failed 拒绝，结构门禁记错误，配置解析直接抛。
+ *      只有「整个祖先链全是 ENOENT」这种纯粹的不存在场景才保留词法退化。
  *
- * 本函数不抛异常：判定阶段拿不到真实路径时，让它按词法路径继续判（由既有规则兜底），
- * 也比让工具函数把整条守卫链炸掉要好。
+ * 本函数不抛异常；返回 null 表示「无法证明安全」，调用方自行 fail-closed。
  */
 function realpathSafe(input) {
   let lexical;
@@ -118,10 +129,11 @@ function realpathSafe(input) {
   }
 
   const direct = tryRealpath(lexical);
-  if (direct) return normalizePath(direct);
+  if (direct.ok) return normalizePath(direct.value);
+  if (direct.code !== 'ENOENT') return null; // M15：非 ENOENT 不再退回词法路径
 
   // 路径不存在：从最深一级往上找第一个能被 realpath 解析的祖先，
-  // 再把中间缺失的各级名字原样拼回去。
+  // 再把中间缺失的各级名字原样拼回去。爬升途中遇到非 ENOENT 同样 fail-closed。
   let current = lexical;
   const missingParts = [];
   for (let depth = 0; depth < MAX_REALPATH_ASCENT; depth += 1) {
@@ -129,7 +141,8 @@ function realpathSafe(input) {
     if (parent === current) break; // 已到根，没有可解析的祖先
     missingParts.unshift(path.basename(current));
     const resolvedParent = tryRealpath(parent);
-    if (resolvedParent) return normalizePath(path.join(resolvedParent, ...missingParts));
+    if (resolvedParent.ok) return normalizePath(path.join(resolvedParent.value, ...missingParts));
+    if (resolvedParent.code !== 'ENOENT') return null; // M15
     current = parent;
   }
   return lexical;

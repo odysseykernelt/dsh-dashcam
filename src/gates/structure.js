@@ -51,13 +51,24 @@ function checkStructure(pluginDir, { policy = {} } = {}) {
       file: manifest.entry,
       line: 1,
     }));
-  } else if (!isInside(realpathSafe(root), realpathSafe(entryPath))) {
+  } else {
     // F2：词法 isInside 挡不住符号链接——entry 字面在包内、经链接落在包外时，
     // 装载侧跟随链接，编译的就是未签名的包外代码。存在性确认后按真实路径复核。
-    stage.errors.push(gateError('structure', 'entry_outside_plugin', `entry 经符号链接越出插件目录：${manifest.entry}`, {
-      field: 'entry',
-      file: 'manifest.json',
-    }));
+    // M15：realpath 非 ENOENT 失败（返回 null）时按无法核验处理，fail-closed
+    // 记错误——不能因为「解析不了」就按词法放行。
+    const realRoot = realpathSafe(root);
+    const realEntry = realpathSafe(entryPath);
+    if (realRoot === null || realEntry === null) {
+      stage.errors.push(gateError('structure', 'entry_realpath_failed', `entry 真实路径无法解析（fail-closed）：${manifest.entry}`, {
+        field: 'entry',
+        file: 'manifest.json',
+      }));
+    } else if (!isInside(realRoot, realEntry)) {
+      stage.errors.push(gateError('structure', 'entry_outside_plugin', `entry 经符号链接越出插件目录：${manifest.entry}`, {
+        field: 'entry',
+        file: 'manifest.json',
+      }));
+    }
   }
 
   const extensions = policy.patchExtensions || ['.js', '.json', '.patch', '.diff'];

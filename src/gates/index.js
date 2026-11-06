@@ -220,7 +220,11 @@ async function runInstallPipeline({
       reason: '扫描发现需要人工复核的能力面',
     });
   }
-  safetyStage.errors = [];
+  // M11（1.10.9）：不再清空 safetyStage.errors——此前错误转完标签就抹掉，
+  // 报告里 stage.errors 空空如也（证据丢失），strict 模式的 blockedSoFar 也因此
+  // 看不到安全门禁的阻断项。现在保留错误：报告可追溯，strict 模式下安全门禁
+  // 有错即跳过 loadability（不执行未过审的插件代码）；advisory 模式行为不变
+  // （只打标签不阻断，标签逻辑在上方循环里已经完成）。
   stages.push(finishStage(safetyStage));
 
   let phases = null;

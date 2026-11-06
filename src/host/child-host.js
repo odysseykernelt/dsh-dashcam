@@ -2,7 +2,11 @@
 
 const { fork } = require('node:child_process');
 const fs = require('node:fs');
-const { makeRequest, makeResponse, isValidRequest, isValidResponse } = require('../runtime/ipc/protocol');
+const { makeRequest, makeResponse, isValidRequest, isValidResponse, messageSizeBytes } = require('../runtime/ipc/protocol');
+
+/** maxMessageBytes / ipcTimeoutMs 非法时的回落值（与 policy.js DEFAULT_LIMITS 一致）。 */
+const DEFAULT_MAX_MESSAGE_BYTES = 1_048_576;
+const DEFAULT_IPC_TIMEOUT_MS = 5_000;
 
 /**
  * ChildHost：多进程运行时的宿主侧。把插件关进子进程，宿主替它做 IO。
@@ -15,12 +19,26 @@ const { makeRequest, makeResponse, isValidRequest, isValidResponse } = require('
  * 授权（guard.enforce）与真实 IO 在宿主同一处完成，二者之间没有 TOCTOU 窗口。
  */
 class ChildHost {
-  constructor({ guard, childEntry, invokeTimeoutMs = 5000 }) {
+  /**
+   * @param {object} options
+   * @param {number} [options.ipcTimeoutMs] invoke 超时（M5，policy.limits.ipcTimeoutMs
+   *   的正式入口）；0 = 不限时。旧参数名 invokeTimeoutMs 仍被接受，ipcTimeoutMs 优先。
+   * @param {number} [options.maxMessageBytes] 单条 IPC 消息字节上限（M4），
+   *   入向超限丢弃、出向超限降级为小体积错误响应（见 _reply/_onMessage）。
+   */
+  constructor({ guard, childEntry, invokeTimeoutMs = DEFAULT_IPC_TIMEOUT_MS, ipcTimeoutMs, maxMessageBytes = DEFAULT_MAX_MESSAGE_BYTES }) {
     if (!guard || typeof guard.enforce !== 'function') throw new Error('ChildHost 需要 guard');
     if (!childEntry) throw new Error('ChildHost 需要 childEntry（子进程引导脚本绝对路径）');
     this.guard = guard;
     this.childEntry = childEntry;
-    this.invokeTimeoutMs = invokeTimeoutMs;
+    // M5：ipcTimeoutMs 是 policy.limits 的正式名字；invokeTimeoutMs 是旧参数名，
+    // 保持兼容。0 = 不限时；负数/非法回落默认——fail-closed 的默认是「有限时」。
+    const timeout = Number.isFinite(ipcTimeoutMs) ? ipcTimeoutMs : invokeTimeoutMs;
+    this.ipcTimeoutMs = Number.isFinite(timeout) && timeout >= 0 ? timeout : DEFAULT_IPC_TIMEOUT_MS;
+    // M4：消息上限非法（非正数/非有限）回落默认，不接受「配坏了就取消上限」。
+    this.maxMessageBytes = Number.isFinite(maxMessageBytes) && maxMessageBytes >= 1
+      ? Math.floor(maxMessageBytes)
+      : DEFAULT_MAX_MESSAGE_BYTES;
     this.child = null;
     this.pending = new Map();
     this.nextId = 1;
@@ -47,6 +65,13 @@ class ChildHost {
   }
 
   _onMessage(msg) {
+    // M4：入向消息超限直接丢弃（fail-closed，与畸形消息同口径）——IPC 是不可信
+    // 输入，超大消息可能被用来让宿主分配大量内存。
+    const size = messageSizeBytes(msg);
+    if (size > this.maxMessageBytes) {
+      console.warn(`[dsh-covenant] 丢弃超大 IPC 消息（${size} > ${this.maxMessageBytes} 字节）`);
+      return;
+    }
     if (isValidRequest(msg)) this._handleRequest(msg);
     else if (isValidResponse(msg)) this._settle(msg.id, msg.ok, msg.value, msg.error);
     // 其它（含畸形）静默忽略：IPC 是不可信输入，不能因一条坏消息崩掉宿主。
@@ -113,7 +138,17 @@ class ChildHost {
 
   _reply(id, ok, value, error) {
     if (this.child && this.child.connected) {
-      this.child.send(makeResponse(id, ok, value, error));
+      const response = makeResponse(id, ok, value, error);
+      // M4：出向响应超限不能整条丢弃——子进程会永久挂起等这条响应。
+      // 降级为一条小体积错误响应，让等待方立刻失败。
+      if (messageSizeBytes(response) > this.maxMessageBytes) {
+        this.child.send(makeResponse(id, false, null, {
+          code: 'response_too_large',
+          message: `响应超过 maxMessageBytes（${this.maxMessageBytes} 字节）`,
+        }));
+        return;
+      }
+      this.child.send(response);
     }
   }
 
@@ -139,13 +174,22 @@ class ChildHost {
     await this._ready;
     if (!this.child || !this.child.connected) throw new Error('子进程不可用');
     const id = String(this.nextId++);
+    const request = makeRequest(id, 'invoke', payload);
+    // M4：请求超限在发送前就失败，不进入 pending——否则要等超时才暴露。
+    if (messageSizeBytes(request) > this.maxMessageBytes) {
+      throw Object.assign(
+        new Error(`invoke 载荷超过 maxMessageBytes（${this.maxMessageBytes} 字节）`),
+        { code: 'message_too_large' },
+      );
+    }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      // M5：ipcTimeoutMs 0 = 不限时（显式逃生开关，默认 5000ms）。
+      const timer = this.ipcTimeoutMs > 0 ? setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`invoke 超时（${this.invokeTimeoutMs}ms）`));
-      }, this.invokeTimeoutMs);
+        reject(new Error(`invoke 超时（${this.ipcTimeoutMs}ms）`));
+      }, this.ipcTimeoutMs) : null;
       this.pending.set(id, { resolve, reject, timer });
-      this.child.send(makeRequest(id, 'invoke', payload));
+      this.child.send(request);
     });
   }
 
