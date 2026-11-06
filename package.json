@@ -1,8 +1,8 @@
 {
   "name": "dsh-covenant-host",
-  "version": "1.10.12",
+  "version": "1.10.13",
   "private": true,
-  "description": "把 dsh-covenant 判定链接入 DeepSeek Harness 宿主（tools/pre-execute waterfall + tool→capability 映射层，默认 advisory 只记账；1.10.12 复核修复：enforce 拒绝必落账、目录语义转子树 scope、命令行存档默认 hash-only/full 打码、存档 decision 随处置、enforceUnmapped 开关、MAC v2 历史账本防呆）",
+  "description": "把 dsh-covenant 判定链接入 DeepSeek Harness 宿主（tools/pre-execute waterfall + tool→capability 映射层，默认 advisory 只记账；1.10.13 复核修复：enforceUnmapped 每次调用都拦截+allowlist 豁免、remove/move 目录节点+子树双判定防子树授权放大、MAC 防呆区分 env 未设置且拒绝写 side 日志、目录探测 30s TTL 缓存、存档模式 per-挂载）",
   "type": "module",
   "main": "lib/index.js",
   "scripts": {

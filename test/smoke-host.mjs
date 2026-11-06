@@ -455,23 +455,117 @@ function check(name, cond, detail = '') {
   deactivate(ctx);
 }
 
-// 14) F6：enforceUnmapped 总闸开关
+// 14) F6/L5/L6：enforceUnmapped 总闸——每次调用都拦（P1 复核）、allowlist 豁免
 {
   freshLog();
   const ctx = makeCtx();
   const ledgerPath = `${RESULTS}/smoke-f6.jsonl`;
   apply(ctx, { ledgerPath, enforce: true, enforceUnmapped: true });
-  const deny = await ctx.handlers['tools/pre-execute']({ name: 'send_meme', arguments: {} }, () => 'NEXT');
-  check('F6: enforceUnmapped 拒绝未映射工具', deny && deny.kind === 'deny' && /send_meme/.test(deny.reason), JSON.stringify(deny));
+  const handler = ctx.handlers['tools/pre-execute'];
+  const d1 = await handler({ name: 'send_meme', arguments: {} }, () => 'NEXT');
+  const d2 = await handler({ name: 'send_meme', arguments: {} }, () => 'NEXT');
+  const d3 = await handler({ name: 'send_meme', arguments: {} }, () => 'NEXT');
+  check('F6/L5: 第 1 次拒绝', d1 && d1.kind === 'deny', JSON.stringify(d1));
+  check('F6/L5: 第 2 次仍拒绝（不被去重短路）', d2 && d2.kind === 'deny', JSON.stringify(d2));
+  check('F6/L5: 第 3 次仍拒绝', d3 && d3.kind === 'deny', JSON.stringify(d3));
   const tele = readLedger(ledgerPath).filter((r) => r.action === 'unmapped-tool');
-  check('F6: 拒绝落 deny 账', tele.length === 1 && tele[0].decision === 'deny' && tele[0].intercepted === true, JSON.stringify(tele));
+  check('F6/L5: 遥测同名只记 1 条（拒绝每次执行）', tele.length === 1
+    && tele[0].decision === 'deny' && tele[0].intercepted === true, JSON.stringify(tele));
   deactivate(ctx);
+  // L6：allowlist 豁免（前缀通配）——MCP 工具不打死，表外其它仍拦
+  freshLog();
+  const ctxA = makeCtx();
+  const ledgerA = `${RESULTS}/smoke-f6-allow.jsonl`;
+  apply(ctxA, {
+    ledgerPath: ledgerA,
+    enforce: true,
+    enforceUnmapped: true,
+    unmappedAllowlist: ['mcp__demo__*'],
+  });
+  const mA = await ctxA.handlers['tools/pre-execute']({ name: 'mcp__demo__query', arguments: {} }, () => 'NEXT');
+  check('L6: allowlist 前缀豁免放行', mA === 'NEXT', String(mA));
+  const xA = await ctxA.handlers['tools/pre-execute']({ name: 'compress', arguments: {} }, () => 'NEXT');
+  check('L6: 表外且不在 allowlist 仍拒绝', xA && xA.kind === 'deny', JSON.stringify(xA));
+  const teleA = readLedger(ledgerA).filter((r) => r.action === 'unmapped-tool');
+  check('L6: 豁免遥测记 allowlisted', teleA.length === 2
+    && teleA.find((r) => r.scope.tool === 'mcp__demo__query').scope.allowlisted === true,
+  JSON.stringify(teleA));
+  deactivate(ctxA);
   // 默认（未开开关）：未映射仍放行
   freshLog();
   const ctx2 = makeCtx();
   apply(ctx2, { ledgerPath: `${RESULTS}/smoke-f6b.jsonl`, enforce: true });
   const allow = await ctx2.handlers['tools/pre-execute']({ name: 'send_meme', arguments: {} }, () => 'NEXT');
   check('F6: 默认 enforce 未映射仍放行（边界见 README）', allow === 'NEXT', String(allow));
+  deactivate(ctx2);
+}
+
+// 14b) M1：remove/move 目录节点不被子树授权放大（节点 + 子树两条都判）
+{
+  freshLog();
+  const victim = path.join(RESULTS, 'sandbox-m1', 'victim').replace(/\\/g, '/');
+  fs.mkdirSync(victim, { recursive: true });
+  fs.writeFileSync(path.join(victim, 'a.txt'), 'x');
+  const caps = ['fs.read', 'fs.write', 'fs.delete'];
+  const subtreeOnly = {
+    enforce: true,
+    requests: caps.map((capability) => ({ capability, scope: { paths: [`${victim}/**`] }, reason: 'r' })),
+    grants: caps.map((capability, i) => ({ id: `g${i}`, capability, scope: { paths: [`${victim}/**`] } })),
+  };
+  // 仅授 victim/**：remove(目录) 必须被拒（删的是节点本身，子树授权不覆盖节点）
+  const ctx1 = makeCtx();
+  apply(ctx1, { ...subtreeOnly, ledgerPath: `${RESULTS}/smoke-m1-sub.jsonl` });
+  const denyRemove = await ctx1.handlers['tools/pre-execute'](
+    { name: 'ops_remove', arguments: { path: victim, expectedRevision: 'r' } },
+    () => 'NEXT',
+  );
+  check('M1: 仅授 victim/** 时 remove(目录) 被拒', denyRemove && denyRemove.kind === 'deny', JSON.stringify(denyRemove));
+  const denyMove = await ctx1.handlers['tools/pre-execute'](
+    { name: 'ops_move', arguments: { path: victim, to: `${victim}-moved`, expectedRevision: 'r' } },
+    () => 'NEXT',
+  );
+  check('M1: 仅授 victim/** 时 move(目录) 被拒', denyMove && denyMove.kind === 'deny', JSON.stringify(denyMove));
+  const denyBatch = await ctx1.handlers['tools/pre-execute']({
+    name: 'ops_batch',
+    arguments: { action: 'run', operations: [{ op: 'remove', path: victim }] },
+  }, () => 'NEXT');
+  check('M1: 仅授 victim/** 时 batch remove(目录) 被拒', denyBatch && denyBatch.kind === 'deny', JSON.stringify(denyBatch));
+  // 账上节点判定可见：fs.delete{victim}（deny，节点无授权）与 fs.delete{victim/**}（allow）各一条
+  const delRecs = judgments(`${RESULTS}/smoke-m1-sub.jsonl`).filter((r) => r.action === 'fs.delete');
+  check('M1: 节点与子树两条 fs.delete 都落账', delRecs.length >= 2
+    && delRecs.some((r) => r.decision === 'deny' && !JSON.stringify(r.scope).includes('*'))
+    && delRecs.some((r) => JSON.stringify(r.scope).includes('victim/**')),
+  JSON.stringify(delRecs));
+  deactivate(ctx1);
+  // 再授裸目录（节点）+ move 目标 → remove/move 放行，且 delete 均 allow
+  const ctx2 = makeCtx();
+  const movedTo = `${victim}-moved`;
+  apply(ctx2, {
+    enforce: true,
+    ledgerPath: `${RESULTS}/smoke-m1-both.jsonl`,
+    requests: [
+      { capability: 'fs.read', scope: { paths: [victim, `${victim}/**`] }, reason: 'r' },
+      { capability: 'fs.write', scope: { paths: [victim, `${victim}/**`, movedTo] }, reason: 'r' },
+      { capability: 'fs.delete', scope: { paths: [victim, `${victim}/**`] }, reason: 'r' },
+    ],
+    grants: [
+      { id: 'gra', capability: 'fs.read', scope: { paths: [victim, `${victim}/**`] } },
+      { id: 'gwa', capability: 'fs.write', scope: { paths: [victim, `${victim}/**`, movedTo] } },
+      { id: 'gda', capability: 'fs.delete', scope: { paths: [victim, `${victim}/**`] } },
+    ],
+  });
+  const okRemove = await ctx2.handlers['tools/pre-execute'](
+    { name: 'ops_remove', arguments: { path: victim, expectedRevision: 'r' } },
+    () => 'NEXT',
+  );
+  check('M1: 授节点+子树后 remove(目录) 放行', okRemove === 'NEXT', JSON.stringify(okRemove));
+  const okMove = await ctx2.handlers['tools/pre-execute'](
+    { name: 'ops_move', arguments: { path: victim, to: movedTo, expectedRevision: 'r' } },
+    () => 'NEXT',
+  );
+  check('M1: 授节点+子树后 move(目录) 放行', okMove === 'NEXT', JSON.stringify(okMove));
+  const delRecs2 = judgments(`${RESULTS}/smoke-m1-both.jsonl`).filter((r) => r.action === 'fs.delete');
+  check('M1: 两条 fs.delete 均 allow', delRecs2.length >= 4 && delRecs2.every((r) => r.decision === 'allow'), JSON.stringify(delRecs2));
   deactivate(ctx2);
 }
 
@@ -485,6 +579,21 @@ function check(name, cond, detail = '') {
   check('F1: v2 历史账本 + MAC 不挂载', !mounted(ctx) && ctx.effects.length === 0);
   const err = log.find(([l, m]) => l === 'error' && /mac_missing|迁移/.test(m));
   check('F1: 报错含迁移步骤', !!err && /ledger-v2-archive/.test(err[1]), JSON.stringify(err));
+  // L3：拒绝留痕——side 日志 <ledgerPath>.guard.log 存在且写明 stage=mac-v2-history
+  const guardLogPath = `${ledgerV2}.guard.log`;
+  check('L3: 防呆拒绝写 side 日志', fs.existsSync(guardLogPath)
+    && /stage=mac-v2-history/.test(fs.readFileSync(guardLogPath, 'utf8')), guardLogPath);
+  // L1：env 变量名配了但没设值 → 独立报错（不冒充「不能原地启用」）
+  freshLog();
+  const ctxEnv = makeCtx();
+  const ledgerEnv = `${RESULTS}/smoke-f1-env.jsonl`;
+  apply(ctxEnv, { ledgerPath: ledgerEnv, ledgerMacKeyEnv: 'DSH_COVENANT_SMOKE_UNSET' });
+  check('L1: env 未设置不挂载', !mounted(ctxEnv));
+  const envErr = log.find(([l, m]) => l === 'error' && /未设置/.test(m));
+  check('L1: 报错区分 env 未设置（非 v2 迁移文案）', !!envErr
+    && /DSH_COVENANT_SMOKE_UNSET/.test(envErr[1]) && !/mac_missing/.test(envErr[1]), JSON.stringify(envErr));
+  check('L1: env 未设置也写 side 日志', fs.existsSync(`${ledgerEnv}.guard.log`)
+    && /stage=mac-env-missing/.test(fs.readFileSync(`${ledgerEnv}.guard.log`, 'utf8')));
   // 新账本（不存在）+ MAC：正常挂载
   freshLog();
   const ctx2 = makeCtx();
