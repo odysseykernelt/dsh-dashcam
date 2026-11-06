@@ -1,7 +1,8 @@
 // 1.10.8+ 宿主适配层冒烟（不进 DSH、不启动 headless）：验证 apply() 的 fail-fast 与 advisory/enforce 接线。
 // 用法：node test/smoke-host.mjs（或在包根目录 npm run smoke）
-// 覆盖 11 项断言：fail-fast（字符串 requests / grants）、advisory（deny 记账 + intercepted=false + 放行）、
-// enforce（授权放行 / 未声明拦截 / allow+deny 的 intercepted 口径）。
+// 覆盖：fail-fast（字符串 requests / grants）、advisory（deny 记账 + intercepted=false + 放行）、
+// enforce（授权放行 / 未声明拦截 / allow+deny 的 intercepted 口径）、
+// 1.10.10 ops_* 前缀映射与参数形态（command/script_path/files 数组）、未映射工具遥测。
 import { apply } from '../lib/index.js';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -123,6 +124,61 @@ function check(name, cond, detail = '') {
   const recs = fs.readFileSync(ledgerPath, 'utf8').trim().split(/\r?\n/).map((l) => JSON.parse(l));
   check('enforce: allow intercepted=false', recs[0].decision === 'allow' && recs[0].intercepted === false);
   check('enforce: deny intercepted=true', recs[1].decision === 'deny' && recs[1].intercepted === true, JSON.stringify(recs[1]));
+  deactivate(ctx);
+}
+
+// 5) ops_* 映射（1.10.10）：dsh-ops 前缀剥离 + 参数形态覆盖，全部按 advisory 记账放行
+{
+  freshLog();
+  const ctx = makeCtx();
+  const ledgerPath = `${RESULTS}/smoke-ops.jsonl`;
+  try { fs.unlinkSync(ledgerPath); } catch {}
+  apply(ctx, { ledgerPath });
+  check('ops: 已挂载', mounted(ctx));
+  const handler = ctx.handlers['tools/pre-execute'];
+  const cases = [
+    ['ops_bash（command）', { name: 'ops_bash', arguments: { command: 'git status', description: 'd' } }, 'proc.spawn'],
+    ['ops_bash（script_path）', { name: 'ops_bash', arguments: { script_path: 'C:/tmp/build.sh', description: 'd' } }, 'proc.spawn'],
+    ['ops_read_files（files 数组）', { name: 'ops_read_files', arguments: { files: [{ path: 'src/a.ts' }, { path: 'src/b.ts' }] } }, 'fs.read'],
+    ['ops_glob', { name: 'ops_glob', arguments: { path: 'C:/repo', pattern: ['**/*.md'] } }, 'fs.read'],
+    ['ops_grep', { name: 'ops_grep', arguments: { path: 'C:/repo', pattern: 'todo' } }, 'fs.read'],
+    ['ops_write_file', { name: 'ops_write_file', arguments: { path: 'C:/repo/out.txt', content: 'x' } }, 'fs.write'],
+    ['ops_copy', { name: 'ops_copy', arguments: { path: 'C:/repo/a.txt', to: 'C:/repo/b.txt', expectedRevision: 'r' } }, 'fs.write'],
+    ['ops_remove', { name: 'ops_remove', arguments: { path: 'C:/repo/a.txt', expectedRevision: 'r' } }, 'fs.write'],
+  ];
+  for (const [label, exec] of cases) {
+    const decision = await handler(exec, () => 'NEXT');
+    if (decision !== 'NEXT') { check(`ops: ${label} 放行`, false, String(decision)); continue; }
+    const recs = fs.readFileSync(ledgerPath, 'utf8').trim().split(/\r?\n/).map((l) => JSON.parse(l));
+    const last = recs[recs.length - 1];
+    const expected = cases.find(([l]) => l === label)[2];
+    check(`ops: ${label} 记账 ${expected}`, recs.length >= 1 && last.capability === expected, JSON.stringify(last));
+  }
+  // 首词口径与形态细节
+  const all = fs.readFileSync(ledgerPath, 'utf8').trim().split(/\r?\n/).map((l) => JSON.parse(l));
+  check('ops: bash 首词口径', all[0].scope && all[0].scope.commands && all[0].scope.commands[0] === 'git', JSON.stringify(all[0]));
+  check('ops: script_path 整串记账', all[1].scope && all[1].scope.commands && all[1].scope.commands[0] === 'C:/tmp/build.sh', JSON.stringify(all[1]));
+  check('ops: read_files 记首个 path', all[2].scope && all[2].scope.paths && all[2].scope.paths[0].endsWith('src/a.ts'), JSON.stringify(all[2]));
+  deactivate(ctx);
+}
+
+// 6) 未映射遥测（1.10.10）：放行但点名一次；noop 工具不打扰
+{
+  freshLog();
+  const ctx = makeCtx();
+  apply(ctx, { ledgerPath: `${RESULTS}/smoke-tele.jsonl` });
+  const handler = ctx.handlers['tools/pre-execute'];
+  let n1 = 0;
+  await handler({ name: 'mcp__demo__query', arguments: {} }, () => { n1 += 1; return 'NEXT'; });
+  await handler({ name: 'mcp__demo__query', arguments: {} }, () => { n1 += 1; return 'NEXT'; });
+  const unmappedLogs = log.filter(([l, m]) => l === 'info' && /未映射工具/.test(m) && /mcp__demo__query/.test(m));
+  check('遥测: 未映射工具放行', n1 === 2);
+  check('遥测: 同名只报一次', unmappedLogs.length === 1, JSON.stringify(unmappedLogs));
+  const before = log.filter(([l, m]) => l === 'info' && /未映射工具/.test(m)).length;
+  await handler({ name: 'ops_discover_tools', arguments: {} }, () => 'NEXT');
+  await handler({ name: 'ops_result', arguments: { reference: 'r' } }, () => 'NEXT');
+  const after = log.filter(([l, m]) => l === 'info' && /未映射工具/.test(m)).length;
+  check('遥测: noop 工具不报', after === before, `${before} -> ${after}`);
   deactivate(ctx);
 }
 

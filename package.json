@@ -1,8 +1,8 @@
 {
   "name": "dsh-covenant-host",
-  "version": "1.10.9",
+  "version": "1.10.10",
   "private": true,
-  "description": "把 dsh-covenant 判定链接入 DeepSeek Harness 宿主（tools/pre-execute waterfall + tool→capability 映射层，默认 advisory 只记账；mount 时 normalizeRequest/normalizeGrant fail-fast 校验配置）",
+  "description": "把 dsh-covenant 判定链接入 DeepSeek Harness 宿主（tools/pre-execute waterfall + tool→capability 映射层，默认 advisory 只记账；ops_* 前缀剥离映射，未映射工具遥测；mount 时 normalizeRequest/normalizeGrant fail-fast 校验配置）",
   "type": "module",
   "main": "lib/index.js",
   "scripts": {
