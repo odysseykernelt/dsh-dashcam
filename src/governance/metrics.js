@@ -61,6 +61,31 @@ function isBatchScope(record) {
 }
 
 /**
+ * 宿主附加记录（aux telemetry）识别。
+ *
+ * 宿主适配层（如 dsh-covenant-host）会把**非判定**的附加审计记录直接
+ * `ledger.append` 进账本：mount 挂载事件、unmapped-tool / unjudgeable-tool
+ * 遥测、proc.commandline 命令行存档，capability 固定为 'telemetry'。
+ * 它们不是 Two-Key 判定——一条 mount 记录不代表任何目标经过判定，一条
+ * commandline 存档 allow 也不代表放行过什么。混进 allow/deny 口径会同时
+ * 污染三个读数：
+ *   - requests / interceptionRate：一次 shell 调用产生 1 条 proc.spawn 判定
+ *     + 1 条 commandline 存档，拦截率被凭空稀释一半；
+ *   - undeclaredInterceptions：enforceUnmapped 下 unmapped-tool 遥测记
+ *     deny + intercepted=true，会被误算成「未声明越权拦截」；
+ *   - grantDenialRate 的分母（denies 被遥测 deny 抬高）。
+ *
+ * 口径因此定为：**判定读数只收能力判定记录**；telemetry 另列并列读数
+ * `telemetryRecords` / `telemetryDenies`（与批量双口径同哲学：可见性不丢，
+ * 取舍留给宿主），records() / verify() 等离线审计仍看全量行，不受影响。
+ */
+const TELEMETRY_CAPABILITY = 'telemetry';
+
+function isTelemetryRecord(record) {
+  return Boolean(record) && record.capability === TELEMETRY_CAPABILITY;
+}
+
+/**
  * 月度度量：拦截率、误杀率、静默失效率、放弃率、元数据覆盖率。
  * 输入全部来自 Ledger 与安装事件，可离线重算。
  */
@@ -71,7 +96,10 @@ function computeMetrics({
   overrides = 0,
   manifests = [],
 } = {}) {
-  const decisions = ledgerRecords.filter((record) => record && (record.decision === 'allow' || record.decision === 'deny'));
+  const allDecisions = ledgerRecords.filter((record) => record && (record.decision === 'allow' || record.decision === 'deny'));
+  const telemetry = allDecisions.filter(isTelemetryRecord);
+  const telemetryDenies = telemetry.filter((record) => record.decision === 'deny').length;
+  const decisions = allDecisions.filter((record) => !isTelemetryRecord(record));
   const denies = decisions.filter((record) => record.decision === 'deny').length;
   const allows = decisions.filter((record) => record.decision === 'allow').length;
 
@@ -123,13 +151,20 @@ function computeMetrics({
     && (record.ruleId === 'not_granted' || record.ruleId === 'scope_mismatch')).length;
 
   return {
-    // 记录口径（保持原语义，一个字段都没少）：requests = 账本决策行数。
+    // 记录口径（保持原语义，一个字段都没少）：requests = 能力判定行数
+    // （1.10.12 起 capability='telemetry' 的宿主附加记录不再计入，见 isTelemetryRecord）。
     requests: decisions.length,
     allows,
     denies,
     // 记录口径拦截率：多少条「判定记录」被拒。批量 allow 只算 1 条，这是刻意的，
     // 既有熔断阈值与历史曲线都按这个口径校准过，不能在这里偷偷换成目标数。
     interceptionRate: ratio(denies, decisions.length),
+
+    // telemetry 并列读数（加法字段）：宿主附加审计记录不进判定口径，但数量
+    // 与其中 deny 的条数仍可观测——「未映射工具被拒了多少次」在 telemetryDenies，
+    // 不在 denies。没有 telemetry 记录时两者恒为 0，旧账本读数不变。
+    telemetryRecords: telemetry.length,
+    telemetryDenies,
 
     // 批量口径（新增）：记录数 ↔ 目标数的换算依据，以及按目标加权的并列读数。
     batchRecords,

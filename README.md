@@ -226,6 +226,20 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+## 1.10.12 修复（1.10.12 复核 F5 后半：metrics 口径排除 telemetry 附加记录）
+
+来自 `handoff/dsh-covenant-review-1.10.12-2026-11-06.md` 的遗留项（核心侧）。此前宿主
+适配层（dsh-covenant-host）直接 `ledger.append` 的 telemetry 附加记录（mount /
+unmapped-tool / unjudgeable-tool / `proc.commandline` 存档，capability 固定为
+`telemetry`）被计入 metrics 的 allow/deny 口径——它们不是 Two-Key 判定，会同时污染
+三个读数：拦截率被 commandline 存档凭空稀释一半；`enforceUnmapped` 下 unmapped-tool
+遥测的 `deny + intercepted=true` 被误算成「未声明越权拦截」；`grantDenialRate` 分母被
+遥测 deny 抬高。现在 `computeMetrics` / `monthlyMetrics` 的判定读数只收
+`capability !== 'telemetry'` 的记录，telemetry 数量与其中 deny 条数另列并列读数
+`telemetryRecords` / `telemetryDenies`（可见性不丢）；`records()` / `verify()` 等
+离线审计仍看全量行。没有 telemetry 记录的旧账本读数完全不变（新增 7 项口径护栏
+用例证明，总回归 241 例 0 fail）。口径文档见 [docs/ROLLOUT.md](docs/ROLLOUT.md) 第 6 节。
+
 ## 1.10.11 修复（1.10.10 两份复核报告 P1–P9 批）
 
 来自 `handoff/dsh-covenant-review-1.10.10-2026-11-06.md` 与

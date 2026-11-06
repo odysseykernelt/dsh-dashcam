@@ -85,6 +85,13 @@
 | 放弃率 `abandonmentRate` | `abort / (attempt + abort)` | `attempt` 只记未被中止的安装，分母需含 `abort` |
 | 元数据覆盖率 `metadataCoverage` | `present / required` | 10 个必填元数据字段 × manifest 数 |
 
+**telemetry 附加记录排除（1.10.12）**：宿主适配层（dsh-covenant-host）会把非判定的附加
+审计记录直接 append 进账本（mount / unmapped-tool / unjudgeable-tool / proc.commandline
+存档），capability 固定为 `telemetry`。它们不是 Two-Key 判定：判定读数（上表全部
+allow/deny 口径指标）只收 `capability !== 'telemetry'` 的记录；telemetry 数量与其中
+deny 条数另列并列读数 `telemetryRecords` / `telemetryDenies`，可见性不丢。
+`records()` / `verify()` 等离线审计仍看全量行，不受口径影响。
+
 `monthlyMetrics` 按 `ts` / `at` 的 `YYYY-MM` 分组，输出每月完整指标。
 
 ## 7. 执行点在宿主
