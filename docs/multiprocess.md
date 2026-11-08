@@ -1,4 +1,4 @@
-# dsh-covenant 多进程运行时原型 · 设计文档
+# dsh-dashcam 多进程运行时原型 · 设计文档
 
 > 状态：**设计稿（未实现）**，作为后续实现依据。
 > 对齐口径：`docs/SPEC.md`（下文简称 SPEC，引用其章节号）。术语以 SPEC 为唯一口径，冲突时以 SPEC 为准。
@@ -144,7 +144,7 @@
 
 ### 4.3 错误码
 
-复用 `CovenantDenied.ruleId` 现有码（SPEC §5/§6）：`not_declared`、`legacy`、`derive_failed`、`scope_mismatch`、`not_granted`、`one_seal_exhausted`、`integrity_compromised`、`blacklisted`、`ledger`、`fd_recheck`、`batch_too_large`。
+复用 `DashcamDenied.ruleId` 现有码（SPEC §5/§6）：`not_declared`、`legacy`、`derive_failed`、`scope_mismatch`、`not_granted`、`one_seal_exhausted`、`integrity_compromised`、`blacklisted`、`ledger`、`fd_recheck`、`batch_too_large`。
 
 新增 IPC 层错误码（与「能力判定失败」区分开，判定失败用原 ruleId，通道失败用 `ipc_*`）：
 
@@ -180,7 +180,7 @@
 1. **schema 校验**：op 在白名单、payload 满足 schema、消息 ≤ 上限、id 合法。任一不过 → 直接回 `error`，不进入守卫链。
 2. **`guard.enforce(op, payload)`**：走 `derive → 黑名单/完整性 → Two-Key → One-Seal`，并**在 `enforce` 内部写 Ledger**（allow 或 deny 都记账）。
 3. **执行**：`enforce` 通过（`allowed:true`）后，执行器才调用对应原生 API（`fs.readFile` / `net.connect` / `spawn` …）。
-4. **回传**：把原生结果降级为纯数据，塞进 `response.value`；执行器抛错（含 `CovenantDenied`）时把错误码+原文塞进 `response.error`，`ok:false`。
+4. **回传**：把原生结果降级为纯数据，塞进 `response.value`；执行器抛错（含 `DashcamDenied`）时把错误码+原文塞进 `response.error`，`ok:false`。
 
 关键点：**判定与执行之间没有插件可插入的窗口**（§6 表格详述），审计写发生在执行前（SPEC §1.4 不变式保持）。
 
@@ -232,7 +232,7 @@
 三阶段过渡：
 
 1. **`child` 作为显式 opt-in**（与现在 `handles` 一样非默认）：宿主显式传 `sandbox:{mode:'child'}` 才 fork。`global`/`handles` 行为不变，零回归。
-2. **按插件属性分派默认值**：新插件（有 `covenant` 字段、`kind=covenant`）默认 `child`；legacy / 已验证 / 性能敏感的插件仍回落 `global`。`activate()` 与 `LocalHost` 默认保持一致（避免 SPEC §6.4 强调的「门禁阶段与运行时行为分叉」）。
+2. **按插件属性分派默认值**：新插件（有 `dashcam` 字段、`kind=dashcam`）默认 `child`；legacy / 已验证 / 性能敏感的插件仍回落 `global`。`activate()` 与 `LocalHost` 默认保持一致（避免 SPEC §6.4 强调的「门禁阶段与运行时行为分叉」）。
 3. **长期默认 `child`**：`global` 仅保留给「已被签名信任 + 性能敏感 + 用户显式豁免」的插件，作为快路径。
 
 **兼容性语义**：

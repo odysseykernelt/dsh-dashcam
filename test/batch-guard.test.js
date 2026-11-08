@@ -13,8 +13,8 @@ function guardFor(dir, requests, grants) {
     name: 'Batch',
     version: '1.0.0',
     entry: 'index.js',
-    kind: 'covenant',
-    covenant: { spec: 'dsh-covenant/1', content: null, requests },
+    kind: 'dashcam',
+    dashcam: { spec: 'dsh-dashcam/1', content: null, requests },
   };
   const ledger = new Ledger(path.join(dir, 'ledger.jsonl'));
   return {

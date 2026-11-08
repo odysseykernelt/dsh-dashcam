@@ -1,6 +1,6 @@
-# dsh-covenant-host
+# dsh-dashcam-host
 
-把 [dsh-covenant](../README.md) 的判定链接入 DeepSeek Harness（cordos 宿主）。本目录自 1.10.12 起并入主仓库（git subtree，历史完整保留）。
+把 [dsh-dashcam](../README.md) 的判定链接入 DeepSeek Harness（cordos 宿主）。本目录自 1.10.12 起并入主仓库（git subtree，历史完整保留）。
 
 - 入口：DSH 核心的 `tools/pre-execute` waterfall（`(exec, next)` 签名；放行必须 `return next()`）。
 - 默认 **advisory**：映射到的调用逐条走 `guard.check` 记账（含 deny 明细）但放行；
@@ -16,7 +16,7 @@
 | `enforceUnmapped` | `false` | F6：enforce 默认只覆盖映射表；开此键后未映射工具**每次调用**都按 fail-closed 拒绝（1.10.13 复核 P1：拦截不受遥测去重影响）。computer-use / workflow / subagent / MCP 均在映射表外，需靠它兜底 |
 | `unmappedAllowlist` | `[]` | L6（1.10.13）：enforceUnmapped 的豁免清单，支持全名与前缀通配（`mcp__demo__*` / `memory_*`）。**开 enforceUnmapped 前必须先配**——否则 `compress` / `workflow` / `subagent` / `send_meme` / `present` / `memory_*` / `mcp__*` 这些宿主/MCP 工具会被全部打死。**非数组（如误写成逗号分隔字符串）fail-fast 拒绝挂载**（R3，1.10.14），不会静默按空数组拦掉全部 |
 | `commandlineArchive` | `'hash'` | F4：`'hash'`（默认）只存整条命令的 SHA-256 + 长度，不含明文；`'full'` 落打码后文本（Bearer / `sk-` / `ghp_` / `password=` 等替换为 `***`，best-effort）。per-挂载生效（L2），多挂载不互串 |
-| `ledgerPath` | `~/.dsh/dsh-covenant/ledger.jsonl` | 账本文件路径；测试 profile 必须独立（如 `ledger-covenant-test.jsonl`） |
+| `ledgerPath` | `~/.dsh/dsh-dashcam/ledger.jsonl` | 账本文件路径；测试 profile 必须独立（如 `ledger-dashcam-test.jsonl`） |
 | `ledgerMacKey` / `ledgerMacKeyFile` / `ledgerMacKeyEnv` | 空 | F1/1.10.11 D4：账本 HMAC 密钥（≥32 字节）。**启用前必读下节** |
 | `patchBuiltins` | `false` | 进程内 Bridge 补丁；Electron 主进程开启会接管应用自身 fs/net，慎开 |
 | `requests` / `grants` | `[]` | Two-Key：能力声明（对象数组，写成字符串会在 mount 时 fail-fast） |
@@ -52,7 +52,7 @@ advisory 落 `telemetry/unjudgeable-tool`（allow）放行；enforce 落 deny �
 
 **不要在既有 v2 账本上原地开 MAC。** 生产账本（190 行）全是 v2 无 mac 记录，
 开启后 `Ledger.verify()` 会把全部历史判成 `mac_missing`、`ok=false`，
-而 covenant 的 metrics 先校验后统计，直接非零退出。宿主已加防呆：
+而 dashcam 的 metrics 先校验后统计，直接非零退出。宿主已加防呆：
 配置了 MAC 密钥且账本存在无 mac 历史行 → **拒绝挂载**并打印迁移步骤。
 拒绝挂载会在账本旁留 side 日志 `<ledgerPath>.guard.log`（L3，桌面版看不到
 stdout 也能事后查）；`ledgerMacKeyEnv` 指向的环境变量未设置时报
@@ -60,14 +60,14 @@ stdout 也能事后查）；`ledgerMacKeyEnv` 指向的环境变量未设置时�
 
 迁移步骤（换新账本 + 归档，不要原地开关）：
 
-1. 归档旧账：`mv ~/.dsh/dsh-covenant/ledger.jsonl ~/.dsh/dsh-covenant/ledger-v2-archive.jsonl`
+1. 归档旧账：`mv ~/.dsh/dsh-dashcam/ledger.jsonl ~/.dsh/dsh-dashcam/ledger-v2-archive.jsonl`
    （文件名标注 v2-无-mac，勿再追加）。
 2. 保持 `ledgerMacKey`（或 `ledgerMacKeyFile` / `ledgerMacKeyEnv`）配置，重启 DSH——
    判定链会在新文件上从 v3 起账，mount 记录即带 mac。
 3. 归档文件如需核对，用无密钥 `new Ledger(path).verify()`：`ok=false / mac_missing`
    是预期结果（历史本就无 mac），不代表账本损坏。
 4. 密钥管理：≥32 字节随机串；不进仓库。推荐 `ledgerMacKeyFile` 指向权限受控的文件，
-   或 `ledgerMacKeyEnv: 'DSH_COVENANT_MAC_KEY'`。
+   或 `ledgerMacKeyEnv: 'DSH_DASHCAM_MAC_KEY'`。
 
 存档哈希说明：命令行存档的 `commandLineHash` 是**原文**的 SHA-256（非打码后文本），
 用于离线对账时验证「账上哈希 == 实际执行过的命令」，不含明文。
@@ -75,7 +75,7 @@ stdout 也能事后查）；`ledgerMacKeyEnv` 指向的环境变量未设置时�
 ## 已知边界
 
 - **F5（口径，已闭合）**：telemetry 附加记录不再计入 metrics 的判定口径——核心
-  dsh-covenant 1.10.12 起 `computeMetrics` / `monthlyMetrics` 只收
+  dsh-dashcam 1.10.12 起 `computeMetrics` / `monthlyMetrics` 只收
   `capability !== 'telemetry'` 的记录，telemetry 数量另列 `telemetryRecords` /
   `telemetryDenies` 并列读数（见核心 docs/ROLLOUT.md 第 6 节）。本宿主附加记录
   （mount / unmapped-tool / unjudgeable-tool / commandline-audit）的 capability

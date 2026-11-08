@@ -1,19 +1,19 @@
 /**
- * dsh-covenant-host —— 把 dsh-covenant 的判定链接入 DeepSeek Harness（cordis 宿主）。
+ * dsh-dashcam-host —— 把 dsh-dashcam 的判定链接入 DeepSeek Harness（cordis 宿主）。
  *
  * 接线（2026-11-06 实跑验证后修正）：
  *  - DSH 工具拦截点只有 `tools/pre-execute`（waterfall，签名 `async (exec, next)`）：
  *    放行必须 `return next()`，拦截 `return { kind: 'deny', reason }`。
  *    旧版监听 'pre-execute'——该事件在 DSH 里不存在（asar 内出现 0 次），
  *    判定链从未被调用过，账本恒为空。
- *  - 映射层：DSH tool exec → covenant capability。见工具集合与 mapToolRequests。
+ *  - 映射层：DSH tool exec → dashcam capability。见工具集合与 mapToolRequests。
  *    一次工具调用可展开为**多条**判定请求（copy=读源+写目标、move=读+删源+写目标、
  *    ops_batch 逐条展开 operations[]、ops_read_files 逐 path）。
  *  - 定位边界（重要）：工具的真实执行在子进程/工具层，本判定链是**入口策略门**
  *    （拦命令/拦路径参数），不覆盖工具执行后的真实副作用；进程内 Node 调用
  *    由 patchBuiltins 的 Bridge 看护（默认关闭，见下）。
  *
- * 模式（与 dsh-covenant 设计讨论的「先观测后收紧」路线一致）：
+ * 模式（与 dsh-dashcam 设计讨论的「先观测后收紧」路线一致）：
  *  - 默认 advisory：映射到的调用照常走 guard.check 记账（含 deny 落账），但放行——
  *    账本先积累「插件实际在碰什么」的事实，供后续 suggest / 增量授权。
  *  - `enforce: true`：判定不允许即拦截（{ kind: 'deny' }）。此时需在 config.grants
@@ -34,23 +34,23 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { readFileSync, statSync, existsSync, appendFileSync } from 'node:fs';
+import { readFileSync, statSync, existsSync, appendFileSync, mkdirSync, renameSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
-const covenant = require('../../src/index.js');
+const dashcam = require('../../src/index.js');
 
-export const name = 'dsh-covenant-host';
+export const name = 'dsh-dashcam-host';
 export const inject = [];
 
-const PLUGIN_VERSION = '1.10.14';
+const PLUGIN_VERSION = '1.11.0';
 
 const MANIFEST = {
-  id: 'dsh-covenant-host',
-  name: 'dsh-covenant-host',
+  id: 'dsh-dashcam-host',
+  name: 'dsh-dashcam-host',
   version: PLUGIN_VERSION,
   entry: 'lib/index.js',
-  covenant: {
-    spec: 'dsh-covenant/1',
+  dashcam: {
+    spec: 'dsh-dashcam/1',
     capabilities: { requests: [] },
     content: {
       rating: 'general',
@@ -62,7 +62,7 @@ const MANIFEST = {
   },
 };
 
-// ── 映射层：DSH tool exec → covenant capability ────────────────────
+// ── 映射层：DSH tool exec → dashcam capability ────────────────────
 // 口径保守：只映射确知名字与参数形状的工具；未列入表的工具直接放行，
 // 但走「未映射遥测」（console 点名 + 账本 telemetry 记录，同名只记一次），
 // 让覆盖缺口可见、可补——否则 shell 主力通道换了名字（如 dsh-ops 的 ops_bash）
@@ -169,7 +169,7 @@ function pathsFromFiles(args) {
 }
 
 /**
- * 命令判定口径 = 首词（与 covenant Bridge 的 firstCommand 同型，含引号形态）。
+ * 命令判定口径 = 首词（与 dashcam Bridge 的 firstCommand 同型，含引号形态）。
  * 工具级入口门与进程内 Bridge 必须同一把尺子，否则账本口径漂移。
  * 完整命令行（含 `cd X && rm -f …` 的后续部分）另存存档记录（见 commandlineArchive）。
  */
@@ -260,7 +260,7 @@ function expandBatchOperation(op) {
 }
 
 /**
- * 把一次 DSH 工具调用映射成 covenant 判定请求；映射不了返回 null（放行 + 遥测）。
+ * 把一次 DSH 工具调用映射成 dashcam 判定请求；映射不了返回 null（放行 + 遥测）。
  *
  * options（L2：per-挂载配置，随调用传入，不再用模块级可变状态）：
  *   commandlineArchive: 'hash' | 'full' —— 命令行存档模式。
@@ -449,7 +449,7 @@ function mapToolRequests(exec, options = {}) {
 /**
  * F1 防呆辅助：账本文件里是否已有无 mac 的历史行（v2 或缺 mac 字段）。
  * 空文件/不存在 → false（可以直接以 v3 起账）。解析失败的行跳过——
- * 真正的完整性校验交给 covenant 的 verify。
+ * 真正的完整性校验交给 dashcam 的 verify。
  */
 function ledgerHasUnmacedHistory(ledgerPath) {
   let raw;
@@ -488,7 +488,7 @@ export function apply(ctx, config = {}) {
       && config.unmappedAllowlist !== null
       && !Array.isArray(config.unmappedAllowlist)) {
     console.error(
-      '[dsh-covenant] 配置错误：unmappedAllowlist 必须是数组（如 ["mcp__demo__*", "memory_*"]），'
+      '[dsh-dashcam] 配置错误：unmappedAllowlist 必须是数组（如 ["mcp__demo__*", "memory_*"]），'
       + `当前是 ${typeof config.unmappedAllowlist}——fail-closed 不挂载，防止静默拦掉全部未映射工具`,
     );
     return;
@@ -496,7 +496,25 @@ export function apply(ctx, config = {}) {
   const unmappedAllowlist = Array.isArray(config.unmappedAllowlist)
     ? config.unmappedAllowlist.map((entry) => String(entry))
     : [];
-  const ledgerPath = config.ledgerPath || join(homedir(), '.dsh', 'dsh-covenant', 'ledger.jsonl');
+  // 1.11.0 改名迁移：默认路径下若只有旧名（dsh-covenant）的账本，原地搬到新目录。
+  // 不合并、不改内容、不改哈希链；显式配置 ledgerPath 时完全不动。
+  const DEFAULT_LEDGER_PATH = join(homedir(), '.dsh', 'dsh-dashcam', 'ledger.jsonl');
+  const LEGACY_LEDGER_PATH = join(homedir(), '.dsh', 'dsh-covenant', 'ledger.jsonl');
+  function migrateLegacyLedger() {
+    try {
+      if (existsSync(DEFAULT_LEDGER_PATH)) return DEFAULT_LEDGER_PATH;
+      if (!existsSync(LEGACY_LEDGER_PATH)) return DEFAULT_LEDGER_PATH;
+      mkdirSync(dirname(DEFAULT_LEDGER_PATH), { recursive: true });
+      renameSync(LEGACY_LEDGER_PATH, DEFAULT_LEDGER_PATH);
+      const legacyLog = LEGACY_LEDGER_PATH + '.guard.log';
+      if (existsSync(legacyLog)) renameSync(legacyLog, DEFAULT_LEDGER_PATH + '.guard.log');
+      console.warn(`[dsh-dashcam] 账本迁移：${LEGACY_LEDGER_PATH} → ${DEFAULT_LEDGER_PATH}`);
+    } catch (error) {
+      console.warn(`[dsh-dashcam] 账本迁移失败（沿用旧位置）：${error.message}`);
+    }
+    return existsSync(DEFAULT_LEDGER_PATH) ? DEFAULT_LEDGER_PATH : LEGACY_LEDGER_PATH;
+  }
+  const ledgerPath = config.ledgerPath || migrateLegacyLedger();
 
   // L3：防呆拒绝挂载也要留痕——此时账本不能写，落到旁边 side 日志
   //（<ledgerPath>.guard.log），桌面版看不到 stdout 也能事后查原因。
@@ -517,7 +535,7 @@ export function apply(ctx, config = {}) {
   if (config.ledgerMacKeyEnv && !process.env[config.ledgerMacKeyEnv]) {
     const message = `环境变量 ${config.ledgerMacKeyEnv} 未设置，取不到 MAC 密钥（fail-closed 不挂载）——`
       + `请设置该环境变量，或改用 ledgerMacKey / ledgerMacKeyFile，或去掉 ledgerMacKeyEnv 配置`;
-    console.error(`[dsh-covenant] 配置错误：${message}`);
+    console.error(`[dsh-dashcam] 配置错误：${message}`);
     appendGuardLog('mac-env-missing', message);
     return;
   }
@@ -536,8 +554,8 @@ export function apply(ctx, config = {}) {
       + `迁移步骤：1) mv ledger.jsonl ledger-v2-archive.jsonl（归档，标注 v2 无 mac）；`
       + `2) 保留 ledgerMacKey 配置重启，判定链会在新文件上从 v3 开始；`
       + `3) 归档文件用无密钥 Ledger.verify()（ok=false 是预期，历史本就无 mac）。`
-      + `详见 dsh-covenant-host/README.md「MAC 启用与账本迁移」。`;
-    console.error(`[dsh-covenant] 配置错误：${message}`);
+      + `详见 dsh-dashcam-host/README.md「MAC 启用与账本迁移」。`;
+    console.error(`[dsh-dashcam] 配置错误：${message}`);
     appendGuardLog('mac-v2-history', message.replace(/\n/g, ' | '));
     return;
   }
@@ -548,10 +566,10 @@ export function apply(ctx, config = {}) {
   let normalizedRequests = [];
   try {
     const raw = Array.isArray(config.requests) ? config.requests : [];
-    normalizedRequests = raw.map((item, index) => covenant.normalizeRequest(item, { home: homedir() }));
+    normalizedRequests = raw.map((item, index) => dashcam.normalizeRequest(item, { home: homedir() }));
   } catch (error) {
     console.error(
-      `[dsh-covenant] 配置错误：config.requests 非法——${error.message}`,
+      `[dsh-dashcam] 配置错误：config.requests 非法——${error.message}`,
       `（正确格式见 README 3.4：每个 request 是 { capability, scope, reason } 对象，`
       + `字符串数组会静默变成「未声明」）`,
     );
@@ -562,34 +580,34 @@ export function apply(ctx, config = {}) {
   const rawGrants = Array.isArray(config.grants) ? config.grants : [];
   let normalizedGrants = [];
   try {
-    normalizedGrants = rawGrants.map((item, index) => covenant.normalizeGrant(item, { home: homedir() }, index));
+    normalizedGrants = rawGrants.map((item, index) => dashcam.normalizeGrant(item, { home: homedir() }, index));
   } catch (error) {
-    console.error(`[dsh-covenant] 配置错误：config.grants 非法——${error.message}`);
+    console.error(`[dsh-dashcam] 配置错误：config.grants 非法——${error.message}`);
     return;
   }
 
   // Two-Key 成对原则：enforce 模式下宿主既要授 grants（钥匙），也要在 manifest
   // 里声明 requests（能力清单）。advisory 模式两者皆空，只记账。
-  // 注意两处都要放：运行时 two-key 读 manifest.covenant.requests，
-  // DSH 插件清单格式是 covenant.capabilities.requests——保持同源不漂移。
+  // 注意两处都要放：运行时 two-key 读 manifest.dashcam.requests，
+  // DSH 插件清单格式是 dashcam.capabilities.requests——保持同源不漂移。
   const manifest = {
     ...MANIFEST,
-    covenant: {
-      ...MANIFEST.covenant,
+    dashcam: {
+      ...MANIFEST.dashcam,
       requests: normalizedRequests,
       capabilities: { requests: normalizedRequests },
     },
   };
   let runtime;
   try {
-    runtime = covenant.activate({
+    runtime = dashcam.activate({
       manifest,
       grants: normalizedGrants,
       policy: config.policy || {},
       ledgerPath,
-      // D4：账本 MAC 密钥透传（covenant v3 账本）。密钥不落仓库——可显式给
+      // D4：账本 MAC 密钥透传（dashcam v3 账本）。密钥不落仓库——可显式给
       // ledgerMacKey / 指向文件的 ledgerMacKeyFile / 环境变量名 ledgerMacKeyEnv
-      //（默认还会尝试 DSH_COVENANT_MAC_KEY）。密钥非法时 activate 抛错，走下面的兜底。
+      //（默认还会尝试 DSH_DASHCAM_MAC_KEY）。密钥非法时 activate 抛错，走下面的兜底。
       ledgerMacKey: config.ledgerMacKey || null,
       ledgerMacKeyFile: config.ledgerMacKeyFile || null,
       ledgerMacKeyEnv: config.ledgerMacKeyEnv || null,
@@ -599,7 +617,7 @@ export function apply(ctx, config = {}) {
     });
   } catch (error) {
     // 装载失败只标记本插件，不拖垮宿主其余插件树。
-    console.warn(`[dsh-covenant] activate failed: ${error.message}`);
+    console.warn(`[dsh-dashcam] activate failed: ${error.message}`);
     return;
   }
   // activate() 返回 { id, runtime, deactivate }：guard 在内层 runtime 上，ledger 同层。
@@ -616,7 +634,7 @@ export function apply(ctx, config = {}) {
         ...record,
       });
     } catch (error) {
-      console.warn(`[dsh-covenant] 附加审计记录写入失败：${error.message}`);
+      console.warn(`[dsh-dashcam] 附加审计记录写入失败：${error.message}`);
     }
   }
 
@@ -636,7 +654,7 @@ export function apply(ctx, config = {}) {
     },
     decision: 'allow',
     ruleId: 'mount',
-    reason: 'dsh-covenant-host 判定链挂载',
+    reason: 'dsh-dashcam-host 判定链挂载',
   });
 
   // tools/pre-execute waterfall：判定链的真正入口（旧版监听 'pre-execute'，
@@ -662,7 +680,7 @@ export function apply(ctx, config = {}) {
             // 去重只作用于日志与 allow 遥测；拦截判定每次都做（P1）。
             seenUnmapped.add(lowered);
             console.info(
-              `[dsh-covenant] 未映射工具（${denyUnmapped ? 'enforceUnmapped 拒绝' : allowlisted ? 'allowlist 豁免放行' : '放行，不记账'}）：`
+              `[dsh-dashcam] 未映射工具（${denyUnmapped ? 'enforceUnmapped 拒绝' : allowlisted ? 'allowlist 豁免放行' : '放行，不记账'}）：`
               + `${exec.name}——如需纳管请补充映射表`,
             );
             if (!denyUnmapped) {
@@ -693,7 +711,7 @@ export function apply(ctx, config = {}) {
             });
             return {
               kind: 'deny',
-              reason: `[dsh-covenant] 未映射工具（enforceUnmapped）：${exec.name} 不在映射表内，按 fail-closed 拒绝`,
+              reason: `[dsh-dashcam] 未映射工具（enforceUnmapped）：${exec.name} 不在映射表内，按 fail-closed 拒绝`,
             };
           }
         }
@@ -718,7 +736,7 @@ export function apply(ctx, config = {}) {
       if (enforce) {
         return {
           kind: 'deny',
-          reason: `[dsh-covenant] 无法判定调用目标，按 fail-closed 拒绝：${mapped.unjudgeable}`,
+          reason: `[dsh-dashcam] 无法判定调用目标，按 fail-closed 拒绝：${mapped.unjudgeable}`,
         };
       }
       return next();
@@ -729,15 +747,15 @@ export function apply(ctx, config = {}) {
       let decision;
       try {
         // guard.check 自带账本落盘（含 deny 明细与 ledgerSeq）：审计先于放行/拦截，
-        // 与 covenant 的 fail-closed 记账语义一致。
+        // 与 dashcam 的 fail-closed 记账语义一致。
         // advisory 模式：告诉 guard 「我会自行放行」，让账本 decision=deny 但
         // intercepted=false——这样 metrics 与审计不会把「would-deny 放行」误算
         // 成真正的拦截（问题 2，1.10.8）。
         decision = guard.check(req.operation, req.payload, { advisory });
       } catch (error) {
         // check 正常不抛（derive 失败已折算成拒绝结果）；真抛了按模式兜底。
-        console.warn(`[dsh-covenant] 判定异常：${error.message}`);
-        if (enforce) return { kind: 'deny', reason: `[dsh-covenant] 判定异常：${error.message}` };
+        console.warn(`[dsh-dashcam] 判定异常：${error.message}`);
+        if (enforce) return { kind: 'deny', reason: `[dsh-dashcam] 判定异常：${error.message}` };
         return next();
       }
       decisions.push(decision);
@@ -755,7 +773,7 @@ export function apply(ctx, config = {}) {
 
     // enforce：多请求任一不允许即拒绝整次工具调用（整批按最严处置）。
     if (denied && enforce) {
-      return { kind: 'deny', reason: `[dsh-covenant] ${denied.reason}` };
+      return { kind: 'deny', reason: `[dsh-dashcam] ${denied.reason}` };
     }
     // advisory 模式：deny 也放行——账本已如实落了 decision=deny + intercepted=false，
     // 收紧交给后续决策。allow 路径 decision.intercepted 本来就是 false，账本照原样落。
@@ -766,11 +784,11 @@ export function apply(ctx, config = {}) {
     try {
       runtime.deactivate();
     } catch (error) {
-      console.warn(`[dsh-covenant] deactivate failed: ${error.message}`);
+      console.warn(`[dsh-dashcam] deactivate failed: ${error.message}`);
     }
   });
   console.info(
-    `[dsh-covenant] 判定链已挂载（event=tools/pre-execute，mode=${enforce ? 'enforce' : 'advisory'}，`
+    `[dsh-dashcam] 判定链已挂载（event=tools/pre-execute，mode=${enforce ? 'enforce' : 'advisory'}，`
     + `enforceUnmapped=${enforceUnmapped}，commandlineArchive=${commandlineArchiveMode}，`
     + `patchBuiltins=${config.patchBuiltins === true}，ledger=${ledgerPath}，`
     + `requests=${normalizedRequests.length}，grants=${normalizedGrants.length}）`,

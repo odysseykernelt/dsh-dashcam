@@ -77,7 +77,7 @@ async function main() {
   const command = rest[0];
   if (!command || command === 'help' || flags.help) {
     process.stdout.write([
-      'dsh-covenant CLI',
+      'dsh-dashcam CLI',
       '  keygen <outDir>',
       '  sign <pluginDir> --plugin <id> --version <v> --publisher-key <pem> --publisher-key-id <id> --reviewer-key <pem> --reviewer-key-id <id>',
       '  verify <pluginDir> --trust <trust.json>',

@@ -17,8 +17,8 @@ function writePlugin(dir, { id = 'com.example.observe', source }) {
     name: 'Observe',
     version: '1.0.0',
     entry: 'index.js',
-    covenant: {
-      spec: 'dsh-covenant/1',
+    dashcam: {
+      spec: 'dsh-dashcam/1',
       capabilities: { requests: [] },
       content: null,
     },
@@ -30,7 +30,7 @@ function writePlugin(dir, { id = 'com.example.observe', source }) {
 test('守卫链：observe 窗口内记 deny 但不抛出，窗口结束后恢复 fail-closed', () => {
   const ledger = { append() { return { seq: 1 }; } };
   const guard = createGuardChain({
-    manifest: { id: 'p', name: 'P', version: '1.0.0', entry: 'i.js', kind: 'covenant', covenant: { spec: 'dsh-covenant/1', requests: [], content: null } },
+    manifest: { id: 'p', name: 'P', version: '1.0.0', entry: 'i.js', kind: 'dashcam', dashcam: { spec: 'dsh-dashcam/1', requests: [], content: null } },
     grants: [],
     ledger,
   });
@@ -151,7 +151,7 @@ test('strict 模式：前置门禁未通过时不执行插件代码', async () =
 
 test('coverage：Hook 装好之后 guard.coverage() 能给出受控入口清单', () => {
   const guard = createGuardChain({
-    manifest: { id: 'p', name: 'P', version: '1.0.0', entry: 'i.js', kind: 'covenant', covenant: { spec: 'dsh-covenant/1', requests: [], content: null } },
+    manifest: { id: 'p', name: 'P', version: '1.0.0', entry: 'i.js', kind: 'dashcam', dashcam: { spec: 'dsh-dashcam/1', requests: [], content: null } },
     grants: [],
   });
   const before = guard.coverage();

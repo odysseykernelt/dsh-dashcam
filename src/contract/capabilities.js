@@ -1,6 +1,6 @@
 'use strict';
 
-const { CovenantInputError } = require('../errors');
+const { DashcamInputError } = require('../errors');
 const {
   expandPath,
   realpathSafe,
@@ -51,7 +51,7 @@ function groupOf(capability) {
 }
 
 function inputError(message, field) {
-  return new CovenantInputError(message, { code: 'SCOPE_INVALID', field });
+  return new DashcamInputError(message, { code: 'SCOPE_INVALID', field });
 }
 
 function asArray(value, field) {

@@ -1,0 +1,19 @@
+{
+  "name": "dsh-dashcam-host",
+  "version": "1.11.0",
+  "private": true,
+  "description": "把 dsh-dashcam 判定链接入 DeepSeek Harness 宿主（tools/pre-execute waterfall + tool→capability 映射层，默认 advisory 只记账）。",
+  "type": "module",
+  "main": "lib/index.js",
+  "scripts": {
+    "smoke": "node test/smoke-host.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "dsh-dashcam": "link:.."
+  }
+}

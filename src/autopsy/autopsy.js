@@ -76,12 +76,12 @@ function runAutopsy({
   }
   const manifest = loaded.manifest;
   if (manifest && manifest.kind === 'legacy') {
-    warnMissing(declaration, 'covenant', 'legacy 插件缺少 covenant 声明，只能进入消费通道', {
+    warnMissing(declaration, 'dashcam', 'legacy 插件缺少 dashcam 声明，只能进入消费通道', {
       file: 'manifest.json',
     });
   }
-  if (manifest && manifest.kind === 'covenant') {
-    const charterErrors = validateCharter(manifest.covenant.content, { file: 'manifest.json' });
+  if (manifest && manifest.kind === 'dashcam') {
+    const charterErrors = validateCharter(manifest.dashcam.content, { file: 'manifest.json' });
     for (const error of charterErrors) {
       missing(declaration, error.field, error.message, { file: error.file, line: error.line });
     }
@@ -159,7 +159,7 @@ function runAutopsy({
     for (const error of scanResult.errors) {
       missing(capability, error.code, error.message, { file: error.file, line: error.line, field: error.field });
     }
-    const requests = (manifest.covenant && manifest.covenant.requests) || [];
+    const requests = (manifest.dashcam && manifest.dashcam.requests) || [];
     const grantedCapabilities = new Set((policy.grants || []).filter((grant) => grant.enabled !== false).map((grant) => grant.capability));
     for (const request of requests) {
       if (!grantedCapabilities.has(request.capability)) {

@@ -10,7 +10,7 @@ const { normalizeGrant } = require('../src/contract/capabilities');
 const { Ledger } = require('../src/runtime/ledger');
 const { createGuardChain } = require('../src/runtime/guards');
 const { createBridge } = require('../src/runtime/bridge');
-const { CovenantDenied } = require('../src/errors');
+const { DashcamDenied } = require('../src/errors');
 const { stableStringify, sha256 } = require('../src/util/stable');
 
 /**
@@ -284,7 +284,7 @@ test('不变量6：enforceBatch 有一条越界就整体失败，deny 的 count 
     } catch (error) {
       thrown = error;
     }
-    assert.ok(thrown instanceof CovenantDenied, '越界必须抛出 CovenantDenied');
+    assert.ok(thrown instanceof DashcamDenied, '越界必须抛出 DashcamDenied');
     assert.equal(thrown.ruleId, 'not_declared');
     assert.deepEqual(thrown.batch, { count: 2, index: 1 });
 

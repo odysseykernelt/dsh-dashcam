@@ -7,7 +7,7 @@ const { stableStringify } = require('../util/stable');
 const { findKey } = require('./trust');
 
 const SIGNATURE_FILE = 'signatures.json';
-const FORMAT = 'dsh-covenant/signatures@1';
+const FORMAT = 'dsh-dashcam/signatures@1';
 
 function walkFiles(directory, base = directory) {
   const results = [];

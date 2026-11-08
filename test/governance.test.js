@@ -52,7 +52,7 @@ test('月度度量：拦截率、误杀率、静默失效率、放弃率、元�
       name: 'A',
       version: '1.0.0',
       entry: 'index.js',
-      covenant: {
+      dashcam: {
         content: {
           rating: 'general',
           scenes: [],

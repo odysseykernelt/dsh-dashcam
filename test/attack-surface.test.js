@@ -97,7 +97,7 @@ test('攻击 1.1：toString 重入——非路径类型在判定层直接拒绝�
     // M2 之前：路径参数被 String() 强转，toString 里的嵌套写入要靠重入守卫拦；
     // 现在非 string/Buffer/URL 的路径在判定层直接拒绝（invalid_path_type），
     // toString 根本不会被调用——攻击面在更早的位置关死。
-    assert.equal(out.attack, 'COVENANT_DENIED', '非路径类型的参数必须被拒绝');
+    assert.equal(out.attack, 'DASHCAM_DENIED', '非路径类型的参数必须被拒绝');
     assert.equal(out.rule, 'invalid_path_type', '应给出精确的拒绝规则号');
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
     assert.ok(
@@ -149,8 +149,8 @@ test('攻击 1.2：Proxy get 陷阱——参数求值期间的嵌套读取同样
   } finally {
     cleanup(dir);
   }
-  assert.equal(result.leaked, 'COVENANT_DENIED', 'Proxy 陷阱里的读取必须被拒');
-  assert.equal(result.attack, 'COVENANT_DENIED', '外层调用同样应被拒');
+  assert.equal(result.leaked, 'DASHCAM_DENIED', 'Proxy 陷阱里的读取必须被拒');
+  assert.equal(result.attack, 'DASHCAM_DENIED', '外层调用同样应被拒');
 });
 
 test('攻击 1.3：Object.prototype 污染——不放大能力面', async () => {
@@ -190,7 +190,7 @@ test('攻击 1.3：Object.prototype 污染——不放大能力面', async () =>
     delete Object.prototype.commands;
     cleanup(dir);
   }
-  assert.equal(result.write, 'COVENANT_DENIED', '原型污染不得让未声明写入通过');
+  assert.equal(result.write, 'DASHCAM_DENIED', '原型污染不得让未声明写入通过');
 });
 
 test('攻击 1.4：options-Proxy 逃逸——原生读取 options 期间的嵌套写入被守卫拒绝', async () => {
@@ -241,7 +241,7 @@ test('攻击 1.4：options-Proxy 逃逸——原生读取 options 期间的嵌�
     await host.register('com.example.attack.optionsproxy');
     const out = await host.invoke('com.example.attack.optionsproxy');
     assert.equal(out.read, 'cache', 'options 剥离后，声明范围内的读取本身应当正常放行');
-    assert.equal(out.attack, 'COVENANT_DENIED', '陷阱内的嵌套写入必须撞上守卫链');
+    assert.equal(out.attack, 'DASHCAM_DENIED', '陷阱内的嵌套写入必须撞上守卫链');
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
     assert.ok(denied(records, 'fs.write'), '账本应记录陷阱写入的拒绝');
   } finally {
@@ -297,7 +297,7 @@ test('攻击 1.5：类实例 getter 逃逸——options 提取期间的嵌套写
     await host.register('com.example.attack.classevil');
     const out = await host.invoke('com.example.attack.classevil');
     assert.equal(out.read, 'cache', 'getter 返回 utf8，声明范围内的读取照常放行');
-    assert.equal(out.attack, 'COVENANT_DENIED', '类实例 getter 里的越权写入必须撞上守卫链');
+    assert.equal(out.attack, 'DASHCAM_DENIED', '类实例 getter 里的越权写入必须撞上守卫链');
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
     assert.ok(denied(records, 'fs.write'), '账本应记录 getter 写入的拒绝');
   } finally {
@@ -364,7 +364,7 @@ test('攻击 1.6：自有 __proto__ 属性换原型——Object.assign 机制被
     const out = await host.invoke('com.example.attack.protoescape');
     assert.equal(out.isBuffer, true, '变体一 encoding 应不可达（返回 Buffer），插件代码零执行');
     assert.equal(out.read, 'cache', '变体二 getter 返回 utf8，读取照常放行');
-    assert.equal(out.attack, 'COVENANT_DENIED', '原型链 getter 里的越权写入必须撞上守卫链');
+    assert.equal(out.attack, 'DASHCAM_DENIED', '原型链 getter 里的越权写入必须撞上守卫链');
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
     assert.ok(denied(records, 'fs.write'), '账本应记录 getter 写入的拒绝');
   } finally {
@@ -413,7 +413,7 @@ test('攻击 2.1：process.getBuiltinModule 拿到的是补丁后的同一模块
     return;
   }
   assert.equal(result.hasRead, true, 'getBuiltinModule 确实能返回模块对象');
-  assert.equal(result.attack, 'COVENANT_DENIED', '但该对象已被 Bridge 补丁，读取仍被拒');
+  assert.equal(result.attack, 'DASHCAM_DENIED', '但该对象已被 Bridge 补丁，读取仍被拒');
 });
 
 test('攻击 2.2：从非插件父模块 require("fs") 发起调用，仍走守卫链', async () => {
@@ -451,7 +451,7 @@ test('攻击 2.2：从非插件父模块 require("fs") 发起调用，仍走守�
   } finally {
     cleanup(dir);
   }
-  assert.equal(result.attack, 'COVENANT_DENIED', '换一个父模块拿到的仍是被补丁的 fs');
+  assert.equal(result.attack, 'DASHCAM_DENIED', '换一个父模块拿到的仍是被补丁的 fs');
 });
 
 test('攻击 2.3：删除 require.cache 后重新 require，封闭面不被还原', async () => {
@@ -517,7 +517,7 @@ test('攻击 3.1：Worker eval 逃逸——未授权 proc.spawn 时创建即被�
   } finally {
     cleanup(dir);
   }
-  assert.equal(result.worker, 'COVENANT_DENIED', 'Worker 创建必须收敛到 proc.spawn 守卫');
+  assert.equal(result.worker, 'DASHCAM_DENIED', 'Worker 创建必须收敛到 proc.spawn 守卫');
 });
 
 test('攻击 3.2：卸载后的残留定时器——Bridge 已拆，写入成功（已知缺口）', async () => {
@@ -622,7 +622,7 @@ test('攻击 4.1：execSync 未声明 proc.spawn——抛出致命拒绝且无�
   } finally {
     cleanup(dir);
   }
-  assert.equal(result.shell, 'COVENANT_DENIED', '未授权命令执行必须是致命拒绝');
+  assert.equal(result.shell, 'DASHCAM_DENIED', '未授权命令执行必须是致命拒绝');
   assert.equal(REAL_EXISTS(pwn), false, '命令不得真的执行');
 });
 
@@ -660,7 +660,7 @@ test('攻击 4.2：new Function 拿到的全局 process，其 fs 仍是被补丁
   } finally {
     cleanup(dir);
   }
-  assert.equal(result.attack, 'COVENANT_DENIED', '动态代码拿到的仍是补丁对象，读取被拒');
+  assert.equal(result.attack, 'DASHCAM_DENIED', '动态代码拿到的仍是补丁对象，读取被拒');
 });
 
 test('coverage().knownGaps 如实自述：realm 级逃逸与已授权进程内不可见', async () => {

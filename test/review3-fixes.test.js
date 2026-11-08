@@ -25,9 +25,9 @@ function manifestFor(requests, pluginRoot = null) {
     name: 'Review3',
     version: '1.0.0',
     entry: 'index.js',
-    kind: 'covenant',
-    covenant: {
-      spec: 'dsh-covenant/1',
+    kind: 'dashcam',
+    dashcam: {
+      spec: 'dsh-dashcam/1',
       content: null,
       // 守卫链只认已归一化的请求（与 loadManifest 的输出同形）：net 的 hosts
       // 在归一化后是 { host, port } 对象，直接塞原始字符串会判成 not_declared。

@@ -93,8 +93,8 @@ test('LocalHost：显式 sandbox=handles 时插件 require("fs") 拿到封闭面
     name: 'Sandbox',
     version: '1.0.0',
     entry: 'index.js',
-    covenant: {
-      spec: 'dsh-covenant/1',
+    dashcam: {
+      spec: 'dsh-dashcam/1',
       capabilities: { requests: [{ capability: 'fs.read', scope: { paths: ['$PLUGIN/**'] }, reason: '读取自身文件' }] },
       content: null,
     },
@@ -143,7 +143,7 @@ test('LocalHost：默认 global，插件拿到原生 fs（存量插件零改动�
     name: 'Global',
     version: '1.0.0',
     entry: 'index.js',
-    covenant: { spec: 'dsh-covenant/1', capabilities: { requests: [] }, content: null },
+    dashcam: { spec: 'dsh-dashcam/1', capabilities: { requests: [] }, content: null },
   }, null, 2));
   fs.writeFileSync(path.join(pluginDir, 'index.js'), [
     "'use strict';",

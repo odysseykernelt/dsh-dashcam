@@ -89,7 +89,7 @@ test('安全门禁：未声明能力精确到文件行', () => {
   const error = result.errors.find((item) => item.code === 'undeclared_capability' && item.line === 4);
   assert.ok(error);
   assert.equal(error.file, 'index.js');
-  assert.equal(error.field, 'covenant.capabilities.requests');
+  assert.equal(error.field, 'dashcam.capabilities.requests');
   cleanup(dir);
 });
 

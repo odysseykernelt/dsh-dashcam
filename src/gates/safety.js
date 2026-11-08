@@ -110,7 +110,7 @@ function scanPlugin(pluginDir, { policy = {}, manifest = null } = {}) {
     });
   }
 
-  const declared = (manifest && manifest.covenant && manifest.covenant.requests) || [];
+  const declared = (manifest && manifest.dashcam && manifest.dashcam.requests) || [];
   const declaredCapabilities = new Set(declared.map((request) => request.capability));
   const errors = [];
 
@@ -119,7 +119,7 @@ function scanPlugin(pluginDir, { policy = {}, manifest = null } = {}) {
       errors.push(gateError('safety', 'undeclared_capability', `代码使用 ${finding.capability}，但 manifest 未声明`, {
         file: finding.file,
         line: finding.line,
-        field: 'covenant.capabilities.requests',
+        field: 'dashcam.capabilities.requests',
       }));
     }
   }
@@ -131,7 +131,7 @@ function scanPlugin(pluginDir, { policy = {}, manifest = null } = {}) {
       errors.push(gateError('safety', 'undeclared_egress_host', `出站主机 ${host.host}:${host.port} 未声明`, {
         file: host.file,
         line: host.line,
-        field: 'covenant.capabilities.requests',
+        field: 'dashcam.capabilities.requests',
       }));
     }
     const allowlist = policy.egressAllowlist;
@@ -164,7 +164,7 @@ function scanPlugin(pluginDir, { policy = {}, manifest = null } = {}) {
       errors.push(gateError('safety', 'credential_manual_review_required', '检测到凭证访问，必须人工复核后才能放行', {
         file: finding.file,
         line: finding.line,
-        field: 'covenant.capabilities.requests',
+        field: 'dashcam.capabilities.requests',
       }));
     }
   }

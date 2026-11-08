@@ -1,4 +1,4 @@
-# dsh-covenant 契约规范（dsh-covenant/1）
+# dsh-dashcam 契约规范（dsh-dashcam/1）
 
 本文件定稿能力分类与 scope 语义。运行时、门禁、画像卡、诊断与合规全部以本规范为唯一口径；
 任何实现与本文件冲突，以本文件为准。
@@ -9,7 +9,7 @@
 2. **Two-Key**：`manifest 声明 ∩ 宿主授予` 同时覆盖请求范围才放行，其余一律拒绝。
 3. **拒绝可解释**：每次判定都写入 Ledger，`reason` 原文来自 manifest 的 `reason` 字段或判定码，不做二次包装。
 4. **审计先于执行**：判定与 Ledger 写入在副作用发生前完成；Ledger 写失败按拒绝处理（失败关闭）。
-5. **legacy 隔离**：没有 `covenant` 字段的插件不拒绝解析，而是生成默认配置
+5. **legacy 隔离**：没有 `dashcam` 字段的插件不拒绝解析，而是生成默认配置
    `{ level: 'legacy', quarantine: true }`；运行时没有声明就没有能力（Two-Key 交集为空），企业通道仍然拒绝。
 6. **非侵入式默认**：`policy.enforcement.mode` 默认 `advisory`——门禁先装、再输出安全画像标签
    （`Untrusted` / `Quarantined` / `ReviewRequired` / `Broken` / `Verified`），
@@ -29,8 +29,8 @@
   "patches": [{ "path": "patches/fix.patch", "reason": "修复已知崩溃" }],
   "scripts": { "install": "node ./scripts/install.js" },
   "uninstall": { "reversePatches": ["patches/fix.patch"] },
-  "covenant": {
-    "spec": "dsh-covenant/1",
+  "dashcam": {
+    "spec": "dsh-dashcam/1",
     "capabilities": {
       "requests": [
         { "capability": "fs.read", "scope": { "paths": ["$PLUGIN/**"] }, "reason": "读取自身代码与缓存" }
@@ -48,10 +48,10 @@
 ```
 
 - 必填：`id`、`name`、`version`、`entry`。`entry` 不得越出插件目录。
-- `covenant.spec` 必须是 `dsh-covenant/1`。
-- `covenant.capabilities.requests` 必须是数组，每一项都必须带非空 `reason`。
-- `covenant.content` 为 Charter，见 [COMPLIANCE.md](./COMPLIANCE.md)。
-- 有 `covenant` ⇒ `kind=covenant`；无 `covenant` ⇒ `kind=legacy`，并自动补默认配置
+- `dashcam.spec` 必须是 `dsh-dashcam/1`。
+- `dashcam.capabilities.requests` 必须是数组，每一项都必须带非空 `reason`。
+- `dashcam.content` 为 Charter，见 [COMPLIANCE.md](./COMPLIANCE.md)。
+- 有 `dashcam` ⇒ `kind=dashcam`；无 `dashcam` ⇒ `kind=legacy`，并自动补默认配置
   `{ level: 'legacy', quarantine: true }`。解析层不因缺少契约而报错。
 
 ## 3. 能力分类
@@ -187,7 +187,7 @@
 
 - 每个 payload 仍然单独推导、单独过 Two-Key——判定质量不因为批量而降级；
 - 全部通过时只写 **一条** `allow`：`ruleId='two-key-batch'`、`scope={batch:true,count:N}`；
-- 任何一条被拒时写 **一条** `deny`：`scope={batch:true,count:K,sample:<第一个越界目标>}`，然后抛 `CovenantDenied`
+- 任何一条被拒时写 **一条** `deny`：`scope={batch:true,count:K,sample:<第一个越界目标>}`，然后抛 `DashcamDenied`
   （`reason` 仍是原文，不做二次包装）。`count` 反映「检查到第几个就失败」，便于定位越界在序列里的位置。
 - **不要与 One-Seal 混用**：批量内部仍会按目标逐个消费一次性授权。
 - `fs.glob` / `fs.globSync` / `fs.promises.glob` 走这条路：结果先去重，再交给 `enforceBatch`。
@@ -243,7 +243,7 @@ mac 的三条硬规则（v3 实现口径）：
    （无密钥的 head 谁都能算，拿它当锚点等于没锚）。
 
 **密钥从哪来**：`resolveLedgerMacKey()`，优先级 **直接传值 > 文件 > 环境变量**（默认名
-`DSH_COVENANT_MAC_KEY`）。三条硬规则：
+`DSH_DASHCAM_MAC_KEY`）。三条硬规则：
 
 1. **显式给出却取不到，必须抛错**。指定了 `ledgerMacKeyFile` / `ledgerMacKeyEnv` 却读不到、读为空，
    一律失败关闭——绝不静默退化成「无密钥的 v2」，那正是「账本看着有 mac、其实没人验」的来源。
@@ -262,7 +262,7 @@ CLI 的 `metrics` 现在是「先校验、再统计」：校验不过（含 `mac
 Bridge 是补丁式的，覆盖永远是 Node API 的真子集。能力句柄走另一条路：**不给插件全局，只给它一个小世界。**
 
 ```js
-const { createCapabilityHandles } = require('dsh-covenant');
+const { createCapabilityHandles } = require('dsh-dashcam');
 const handles = createCapabilityHandles({ guard });      // { fs }
 await handles.fs.promises.readFile('cache.json');        // 每次调用都过守卫链
 ```
@@ -343,11 +343,11 @@ await handles.fs.promises.readFile('cache.json');        // 每次调用都过�
 
 ## 8. 签名与信任
 
-`signatures.json`（`dsh-covenant/signatures@1`）：
+`signatures.json`（`dsh-dashcam/signatures@1`）：
 
 ```json
 {
-  "format": "dsh-covenant/signatures@1",
+  "format": "dsh-dashcam/signatures@1",
   "plugin": "com.example.plugin",
   "version": "1.0.0",
   "keyId": "publisher-2026a",

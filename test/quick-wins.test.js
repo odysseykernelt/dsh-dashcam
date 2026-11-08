@@ -33,9 +33,9 @@ function guardWithFsReadGrant(dir) {
       name: 'QuickWins',
       version: '1.0.0',
       entry: 'x.js',
-      kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [{ capability: 'fs.read', scope, reason: '读自身文件' }],
       },
@@ -80,7 +80,7 @@ test('M2：数字 path 被拒——即使字符串形态落在授权面内（inv
     for (const bad of [0, 3, -1]) {
       assert.throws(
         () => guard.enforce('fs.read', { path: bad }),
-        (error) => error.code === 'COVENANT_DENIED' && error.ruleId === 'invalid_path_type',
+        (error) => error.code === 'DASHCAM_DENIED' && error.ruleId === 'invalid_path_type',
         `数字 path ${bad} 必须按 invalid_path_type 拒绝`,
       );
     }

@@ -1,6 +1,6 @@
 'use strict';
 
-const { CovenantDenied } = require('../errors');
+const { DashcamDenied } = require('../errors');
 const { authorizeAccess } = require('../contract/two-key');
 const { deriveOperation } = require('./derive');
 const { resolveLimits } = require('../policy');
@@ -11,9 +11,9 @@ function recordLedger(ledger, record) {
     return ledger.append(record);
   } catch (error) {
     // 已经是 Ledger 自身的失败就原样抛出，避免错误信息被反复嵌套。
-    if (error instanceof CovenantDenied && error.ruleId === 'ledger') throw error;
+    if (error instanceof DashcamDenied && error.ruleId === 'ledger') throw error;
     // 审计写不进去时失败关闭，宁可拒绝执行。
-    throw new CovenantDenied(`Ledger 写入失败：${String((error && error.message) || error).slice(0, 300)}`, {
+    throw new DashcamDenied(`Ledger 写入失败：${String((error && error.message) || error).slice(0, 300)}`, {
       capability: record.capability,
       scope: record.scope,
       ruleId: 'ledger',
@@ -70,7 +70,7 @@ function createGuardChain({
    *   advisory=true 时：账本仍如实落 decision=deny（审计事实保留），但
    *   intercepted 一律写 false——表示「would-deny，但宿主决定放行」；同时
    *   deny.intercepted 也反映 false，供宿主层做二次决策与 metrics 区分。
-   *   宿主（如 dsh-covenant-host）advisory 模式下会自行忽略 deny 结果；
+   *   宿主（如 dsh-dashcam-host）advisory 模式下会自行忽略 deny 结果；
    *   进程内 Bridge 直接 pass-through 时不用这个选项。
    */
   function check(operation, payload = {}, options = {}) {
@@ -91,11 +91,11 @@ function createGuardChain({
       derived = deriveOperation(operation, payload, ctx);
     } catch (error) {
       stats.denied += 1;
-      // derive 主动抛出的 CovenantDenied 若带精确 ruleId（如 invalid_path_type，
+      // derive 主动抛出的 DashcamDenied 若带精确 ruleId（如 invalid_path_type，
       // M2：数字 path 判定对象 ≠ 执行对象），原样保留到拒绝结果与账本——
       // 比「derive 失败」这个笼统标签可审计得多。derive 自己的通用拒绝
-      // （ruleId 'derive'）与非 CovenantDenied 异常维持原有口径。
-      const precise = error instanceof CovenantDenied
+      // （ruleId 'derive'）与非 DashcamDenied 异常维持原有口径。
+      const precise = error instanceof DashcamDenied
         && error.ruleId && error.ruleId !== 'two-key' && error.ruleId !== 'derive';
       const denial = {
         allowed: false,
@@ -259,7 +259,7 @@ function createGuardChain({
   function enforceBatch(operation, payloads = []) {
     if (!Array.isArray(payloads) || payloads.length === 0) return enforce(operation, {});
     if (payloads.length > limits.batchTargets) {
-      throw new CovenantDenied(
+      throw new DashcamDenied(
         `批量判定目标过多：${payloads.length} 超过上限 ${limits.batchTargets}，请调用方分块`,
         { ruleId: 'batch_too_large' },
       );
@@ -309,7 +309,7 @@ function createGuardChain({
             ledgerSeq,
           };
         }
-        const denial = new CovenantDenied(reason, {
+        const denial = new DashcamDenied(reason, {
           capability: decision.capability,
           scope: decision.scope,
           ruleId: code,
@@ -374,7 +374,7 @@ function createGuardChain({
   function enforce(operation, payload = {}) {
     const decision = check(operation, payload);
     if (!decision.allowed) {
-      throw new CovenantDenied(decision.reason, {
+      throw new DashcamDenied(decision.reason, {
         capability: decision.capability,
         scope: decision.scope,
         ruleId: decision.code,

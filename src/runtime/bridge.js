@@ -9,7 +9,7 @@ const dns = require('node:dns');
 const path = require('node:path');
 const { fileURLToPath } = require('node:url');
 const childProcess = require('node:child_process');
-const { CovenantDenied } = require('../errors');
+const { DashcamDenied } = require('../errors');
 const { keyPatternCovers } = require('../contract/capabilities');
 const { isSensitiveEnvKey } = require('../util/paths');
 const { parseRequestTarget, toPathString, capabilityNeedsForOpen } = require('./derive');
@@ -221,7 +221,7 @@ function assertNoFunctionOptions(capability, extracted, denyHook) {
   }
   if (offenders.length === 0) return;
   if (denyHook) denyHook(capability, offenders);
-  throw new CovenantDenied(
+  throw new DashcamDenied(
     `options 不接受函数型值（${offenders.join(', ')}）：回调会在原生重入窗口内执行，其中的越权调用无法判定，请改用无回调写法`,
     { capability, scope: { options: offenders }, ruleId: 'function_options' },
   );
@@ -353,7 +353,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
   function recheckOpenedFd(fd, pathValue, needs) {
     const stats = fs.fstatSync(fd);
     if (!stats.isFile() && !stats.isDirectory()) {
-      throw new CovenantDenied('open 目标不是普通文件或目录（设备/fifo/socket），拒绝放行', {
+      throw new DashcamDenied('open 目标不是普通文件或目录（设备/fifo/socket），拒绝放行', {
         capability: needs && needs.write ? 'fs.write' : 'fs.read',
         scope: { paths: [toPathString(pathValue)] },
         ruleId: 'fd_recheck',
@@ -757,7 +757,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
         recordBridgeDeny('net.outbound', 'socket_path',
           'net 出站仅支持 TCP（host:port）：Unix socket / 具名管道无法按 host:port 判定，与句柄层同口径拒绝',
           scope);
-        throw new CovenantDenied(
+        throw new DashcamDenied(
           'net 出站仅支持 TCP（host:port）：Unix socket / 具名管道无法判定，已拒绝',
           { capability: 'net.outbound', scope, ruleId: 'socket_path' },
         );
@@ -920,7 +920,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
         // 记账失败不改变拒绝结论。
       }
     }
-    throw new CovenantDenied(
+    throw new DashcamDenied(
       '拒绝含 shell 元字符（; | & $ ` > < 换行等）的命令：首词判定无法覆盖 shell 的重新解释，请改用 execFile 逐参数传递',
       { capability: 'proc.spawn', scope: { command: command.slice(0, 200) }, ruleId: 'shell_metachar' },
     );
@@ -938,14 +938,14 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
           && arg && typeof arg === 'object' && !Array.isArray(arg));
         if (options) {
           if (typeof options.shell === 'string') {
-            throw new CovenantDenied(
+            throw new DashcamDenied(
               `spawn 系入口不接受自定义 shell（${options.shell}）：该解释器未经 proc.spawn 判定`,
               { capability: 'proc.spawn', scope: { command: String(args[0]).slice(0, 200) }, ruleId: 'shell_custom' },
             );
           }
           if (options.shell === true) denyShellMetachar(shellCommandLine(args));
           if (method === 'fork' && typeof options.execPath === 'string' && options.execPath !== process.execPath) {
-            throw new CovenantDenied(
+            throw new DashcamDenied(
               `fork 的 execPath（${options.execPath}）不是当前 Node：判定的 modulePath 与实际执行的程序错位`,
               { capability: 'proc.spawn', scope: { command: options.execPath }, ruleId: 'fork_execpath' },
             );
@@ -980,7 +980,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
   }
 
   function collectDeclaredEnvKeys() {
-    const requests = (pluginInfo && pluginInfo.covenant && pluginInfo.covenant.requests) || [];
+    const requests = (pluginInfo && pluginInfo.dashcam && pluginInfo.dashcam.requests) || [];
     const keys = [];
     for (const request of requests) {
       if (request.capability === 'env.read' || request.capability === 'env.write') {

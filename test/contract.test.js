@@ -16,8 +16,8 @@ function manifestWith(requests) {
   return {
     id: 'com.example.demo',
     version: '1.0.0',
-    kind: 'covenant',
-    covenant: { requests },
+    kind: 'dashcam',
+    dashcam: { requests },
   };
 }
 
@@ -87,7 +87,7 @@ test('凭证能力不能由 fs 声明替代', () => {
   assert.equal(result.code, 'not_declared');
 });
 
-test('legacy：无 covenant 标记，运行时拒绝能力，企业通道拒绝', () => {
+test('legacy：无 dashcam 标记，运行时拒绝能力，企业通道拒绝', () => {
   const { manifest, errors } = parseManifest({
     id: 'com.example.legacy',
     name: 'Legacy',
@@ -121,7 +121,7 @@ test('Charter 默认最保守，缺字段在准入阶段失败', () => {
     name: 'Charter',
     version: '1.0.0',
     entry: 'index.js',
-    covenant: { spec: 'dsh-covenant/1', capabilities: { requests: [] }, content: {} },
+    dashcam: { spec: 'dsh-dashcam/1', capabilities: { requests: [] }, content: {} },
   }).manifest;
   const admission = evaluateAdmission(manifest, { channel: 'consumer', policy: {} });
   assert.equal(admission.admitted, false);
@@ -134,8 +134,8 @@ test('Sieve：分级、场景、商用边界与企业排除', () => {
     name: 'Sieve',
     version: '1.0.0',
     entry: 'index.js',
-    covenant: {
-      spec: 'dsh-covenant/1',
+    dashcam: {
+      spec: 'dsh-dashcam/1',
       capabilities: { requests: [] },
       content: defaultCharter({ rating: 'mature', scenes: ['violence'], commercialUse: 'noncommercial', enterpriseExcluded: true }),
     },

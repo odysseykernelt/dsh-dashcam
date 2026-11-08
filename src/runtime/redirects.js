@@ -43,7 +43,7 @@ function readLocation(response) {
  * @param {object} options
  * @param {Function} options.nativeFetch   创建时钉住的原生 fetch
  * @param {Function} options.resolveTarget 把 input（字符串/URL/Request）翻译成判定目标
- * @param {Function} options.guardTarget   对目标执行守卫；拒绝时抛 CovenantDenied
+ * @param {Function} options.guardTarget   对目标执行守卫；拒绝时抛 DashcamDenied
  * @param {*}        options.input
  * @param {object}   [options.init]
  * @param {number}   [options.maxRedirects]

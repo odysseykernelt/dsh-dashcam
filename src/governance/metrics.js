@@ -5,12 +5,12 @@ const METADATA_FIELDS = [
   'name',
   'version',
   'entry',
-  'covenant',
-  'covenant.content.rating',
-  'covenant.content.scenes',
-  'covenant.content.commercialUse',
-  'covenant.content.sourceFingerprint',
-  'covenant.content.enterpriseExcluded',
+  'dashcam',
+  'dashcam.content.rating',
+  'dashcam.content.scenes',
+  'dashcam.content.commercialUse',
+  'dashcam.content.sourceFingerprint',
+  'dashcam.content.enterpriseExcluded',
 ];
 
 function getField(object, fieldPath) {
@@ -63,7 +63,7 @@ function isBatchScope(record) {
 /**
  * 宿主附加记录（aux telemetry）识别。
  *
- * 宿主适配层（如 dsh-covenant-host）会把**非判定**的附加审计记录直接
+ * 宿主适配层（如 dsh-dashcam-host）会把**非判定**的附加审计记录直接
  * `ledger.append` 进账本：mount 挂载事件、unmapped-tool / unjudgeable-tool
  * 遥测、proc.commandline 命令行存档，capability 固定为 'telemetry'。
  * 它们不是 Two-Key 判定——一条 mount 记录不代表任何目标经过判定，一条

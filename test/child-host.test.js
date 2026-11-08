@@ -4,7 +4,7 @@
  * 多进程运行时垂直切片的集成测试。
  * 验证：授权内读取成功、越界读取被宿主拒绝且账本留痕、子进程崩溃时 invoke 能感知。
  *
- * 注意：createGuardChain 期望 manifest.covenant.requests 里的 scope 是**已展开的绝对路径**
+ * 注意：createGuardChain 期望 manifest.dashcam.requests 里的 scope 是**已展开的绝对路径**
  * （真实流程由 parseManifest 完成）。这里直接内联 manifest，所以 scope 要自己展开成
  * `<dir>/...`，不能用 `$PLUGIN` 占位符——否则会被判成「未声明」。
  */
@@ -30,9 +30,9 @@ function setup(subpath = '/**') {
       name: 'Child',
       version: '1.0.0',
       entry: 'x.js',
-      kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [{ capability: 'fs.read', scope, reason: '读自身文件' }],
       },

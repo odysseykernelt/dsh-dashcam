@@ -1,7 +1,7 @@
 'use strict';
 
 // 第六轮修复（2026-11-06，1.10.9）的回归测试。
-// 依据 .review/dsh-covenant-review-1.10.8-2026-11-06.md 的 P1 清单：
+// 依据 .review/dsh-dashcam-review-1.10.8-2026-11-06.md 的 P1 清单：
 //  - M1：guardSocket 只看 host/port，句柄层拒 path、Bridge 层放行的双轨。
 //  - M4：maxMessageBytes 无实现（ChildHost 双向消息无上限）。
 //  - M5：ipcTimeoutMs 无实现（只有 invokeTimeoutMs 参数）。
@@ -61,9 +61,9 @@ test('R6-M1：net.connect 走 options.path（Unix socket）时 Bridge 层拒绝�
     await host.uninstall('com.example.r6.socketpath');
     // 关键：ruleId 必须是 socket_path（专门拒绝），而不是 not_declared（Two-Key 判定）
     // ——后者说明它被误折算成了 { host:'localhost', port:0 } 走了正常判定轨道。
-    assert.equal(out.objectPath, 'COVENANT_DENIED', 'options.path 形态必须被拒');
+    assert.equal(out.objectPath, 'DASHCAM_DENIED', 'options.path 形态必须被拒');
     assert.equal(out.objectRule, 'socket_path');
-    assert.equal(out.stringPath, 'COVENANT_DENIED', '字符串路径形态必须被拒');
+    assert.equal(out.stringPath, 'DASHCAM_DENIED', '字符串路径形态必须被拒');
     assert.equal(out.stringRule, 'socket_path');
     const denies = readLedger(path.join(dir, 'ledger.jsonl'))
       .filter((r) => r.ruleId === 'socket_path' && r.decision === 'deny');
@@ -81,8 +81,8 @@ function fakeChildSetup(options) {
   const scope = { paths: [dir.replace(/\\/g, '/') + '/**'] };
   const guard = createGuardChain({
     manifest: {
-      id: 'com.example.r6', name: 'R6', version: '1.0.0', entry: 'x.js', kind: 'covenant',
-      covenant: { spec: 'dsh-covenant/1', content: null, requests: [{ capability: 'fs.read', scope, reason: '读' }] },
+      id: 'com.example.r6', name: 'R6', version: '1.0.0', entry: 'x.js', kind: 'dashcam',
+      dashcam: { spec: 'dsh-dashcam/1', content: null, requests: [{ capability: 'fs.read', scope, reason: '读' }] },
     },
     grants: [{ id: 'g', capability: 'fs.read', scope, enabled: true, expiresAt: null, oneSeal: false }],
     ledger: new Ledger(path.join(dir, 'ledger.jsonl')),
@@ -160,9 +160,9 @@ test('R6-M8：activate({ strictPatch }) 在补丁不完整时拒绝装载（与 
     name: 'M8',
     version: '1.0.0',
     entry: 'index.js',
-    kind: 'covenant',
-    covenant: {
-      spec: 'dsh-covenant/1',
+    kind: 'dashcam',
+    dashcam: {
+      spec: 'dsh-dashcam/1',
       capabilities: { requests: [] },
       content: { rating: 'general', scenes: ['host'], commercialUse: 'allowed' },
     },
@@ -285,8 +285,8 @@ test('R6-M15：derive 对无法解析真实路径的请求 fail-closed（derive_
   const scope = { paths: [dir.replace(/\\/g, '/') + '/**'] };
   const guard = createGuardChain({
     manifest: {
-      id: 'com.example.r6.m15', name: 'M15', version: '1.0.0', entry: 'x.js', kind: 'covenant',
-      covenant: { spec: 'dsh-covenant/1', content: null, requests: [{ capability: 'fs.read', scope, reason: '读' }] },
+      id: 'com.example.r6.m15', name: 'M15', version: '1.0.0', entry: 'x.js', kind: 'dashcam',
+      dashcam: { spec: 'dsh-dashcam/1', content: null, requests: [{ capability: 'fs.read', scope, reason: '读' }] },
     },
     grants: [{ id: 'g', capability: 'fs.read', scope, enabled: true, expiresAt: null, oneSeal: false }],
     ledger: new Ledger(path.join(dir, 'ledger.jsonl')),

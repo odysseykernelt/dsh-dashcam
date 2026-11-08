@@ -7,9 +7,9 @@ const { normalizeRequest } = require('./capabilities');
 
 const REQUIRED_FIELDS = ['id', 'name', 'version', 'entry'];
 const MANIFEST_FILE = 'manifest.json';
-const SUPPORTED_SPEC = 'dsh-covenant/1';
+const SUPPORTED_SPEC = 'dsh-dashcam/1';
 
-/** 无 covenant 字段时的默认配置：不拒绝安装，按隔离档运行。 */
+/** 无 dashcam 字段时的默认配置：不拒绝安装，按隔离档运行。 */
 const LEGACY_DEFAULT = Object.freeze({ level: 'legacy', quarantine: true });
 
 function isPlainObject(value) {
@@ -17,7 +17,7 @@ function isPlainObject(value) {
 }
 
 /**
- * 解析 manifest。存在 covenant 字段即视为契约插件；
+ * 解析 manifest。存在 dashcam 字段即视为契约插件；
  * 不存在则标记 legacy，保留可读性但禁入企业通道。
  */
 function parseManifest(raw, { file = MANIFEST_FILE, pluginRoot = process.cwd(), home } = {}) {
@@ -38,47 +38,47 @@ function parseManifest(raw, { file = MANIFEST_FILE, pluginRoot = process.cwd(), 
     }
   }
 
-  const hasCovenant = Object.prototype.hasOwnProperty.call(raw, 'covenant');
-  const kind = hasCovenant ? 'covenant' : 'legacy';
-  const covenant = {
+  const hasDashcam = Object.prototype.hasOwnProperty.call(raw, 'dashcam');
+  const kind = hasDashcam ? 'dashcam' : 'legacy';
+  const dashcam = {
     spec: null,
     requests: [],
     content: null,
-    // 没有 covenant 时不拒绝，只生成隔离档默认配置（非侵入式防护）。
-    level: hasCovenant ? 'covenant' : LEGACY_DEFAULT.level,
-    quarantine: hasCovenant
-      ? Boolean(isPlainObject(raw.covenant) && raw.covenant.quarantine === true)
+    // 没有 dashcam 时不拒绝，只生成隔离档默认配置（非侵入式防护）。
+    level: hasDashcam ? 'dashcam' : LEGACY_DEFAULT.level,
+    quarantine: hasDashcam
+      ? Boolean(isPlainObject(raw.dashcam) && raw.dashcam.quarantine === true)
       : LEGACY_DEFAULT.quarantine,
   };
 
-  if (hasCovenant) {
-    if (!isPlainObject(raw.covenant)) {
-      errors.push(gateError('contract', 'covenant_invalid', 'covenant 必须是对象', {
-        field: 'covenant',
+  if (hasDashcam) {
+    if (!isPlainObject(raw.dashcam)) {
+      errors.push(gateError('contract', 'dashcam_invalid', 'dashcam 必须是对象', {
+        field: 'dashcam',
         file,
       }));
     } else {
-      covenant.spec = raw.covenant.spec;
-      if (raw.covenant.spec !== SUPPORTED_SPEC) {
-        errors.push(gateError('contract', 'covenant_spec_unsupported', `covenant.spec 必须是 ${SUPPORTED_SPEC}`, {
-          field: 'covenant.spec',
+      dashcam.spec = raw.dashcam.spec;
+      if (raw.dashcam.spec !== SUPPORTED_SPEC) {
+        errors.push(gateError('contract', 'dashcam_spec_unsupported', `dashcam.spec 必须是 ${SUPPORTED_SPEC}`, {
+          field: 'dashcam.spec',
           file,
         }));
       }
-      covenant.content = raw.covenant.content ?? null;
-      const capabilities = raw.covenant.capabilities;
+      dashcam.content = raw.dashcam.content ?? null;
+      const capabilities = raw.dashcam.capabilities;
       if (!isPlainObject(capabilities) || !Array.isArray(capabilities.requests)) {
-        errors.push(gateError('contract', 'capability_requests_missing', 'covenant.capabilities.requests 必须是数组', {
-          field: 'covenant.capabilities.requests',
+        errors.push(gateError('contract', 'capability_requests_missing', 'dashcam.capabilities.requests 必须是数组', {
+          field: 'dashcam.capabilities.requests',
           file,
         }));
       } else {
         capabilities.requests.forEach((item, index) => {
           try {
-            covenant.requests.push(normalizeRequest(item, { pluginRoot, home }));
+            dashcam.requests.push(normalizeRequest(item, { pluginRoot, home }));
           } catch (error) {
             errors.push(gateError('contract', 'capability_request_invalid', error.message, {
-              field: error.field || `covenant.capabilities.requests[${index}]`,
+              field: error.field || `dashcam.capabilities.requests[${index}]`,
               file,
             }));
           }
@@ -93,9 +93,9 @@ function parseManifest(raw, { file = MANIFEST_FILE, pluginRoot = process.cwd(), 
     version: typeof raw.version === 'string' ? raw.version.trim() : null,
     entry: typeof raw.entry === 'string' ? raw.entry.trim() : null,
     kind,
-    level: covenant.level,
-    quarantine: covenant.quarantine,
-    covenant,
+    level: dashcam.level,
+    quarantine: dashcam.quarantine,
+    dashcam,
     contributes: isPlainObject(raw.contributes) ? raw.contributes : null,
     patches: Array.isArray(raw.patches) ? raw.patches : [],
     scripts: isPlainObject(raw.scripts) ? raw.scripts : {},
@@ -137,13 +137,13 @@ function isLegacy(manifest) {
 
 /** 隔离档：legacy 默认 true，契约插件也可显式声明 quarantine。 */
 function isQuarantined(manifest) {
-  return Boolean(manifest) && (manifest.quarantine === true || Boolean(manifest.covenant && manifest.covenant.quarantine));
+  return Boolean(manifest) && (manifest.quarantine === true || Boolean(manifest.dashcam && manifest.dashcam.quarantine));
 }
 
 /** 企业通道只接受完整契约与 Charter 的插件。 */
 function isEnterpriseEligible(manifest) {
-  if (!manifest || manifest.kind !== 'covenant') return false;
-  const content = manifest.covenant && manifest.covenant.content;
+  if (!manifest || manifest.kind !== 'dashcam') return false;
+  const content = manifest.dashcam && manifest.dashcam.content;
   return Boolean(content)
     && content.enterpriseExcluded === false
     && content.rating !== 'restricted'

@@ -3,7 +3,7 @@
 const { fileURLToPath } = require('node:url');
 const { normalizeScope, credentialCapabilityForPath, credentialCapabilityForKey } = require('../contract/capabilities');
 const { expandPath, normalizePath, realpathSafe } = require('../util/paths');
-const { CovenantDenied } = require('../errors');
+const { DashcamDenied } = require('../errors');
 
 /**
  * 路径参数只接受 string / Buffer / URL（M2）。此前对其它类型做 String(value)
@@ -17,7 +17,7 @@ function toPathString(value) {
   if (value instanceof URL) return fileURLToPath(value);
   if (Buffer.isBuffer(value)) return value.toString('utf8');
   if (value && typeof value === 'object' && typeof value.href === 'string') return fileURLToPath(value.href);
-  throw new CovenantDenied(
+  throw new DashcamDenied(
     `路径参数类型非法：${Object.prototype.toString.call(value)}（只接受 string/Buffer/URL）`,
     { ruleId: 'invalid_path_type' },
   );
@@ -114,7 +114,7 @@ function deriveOperation(operation, payload = {}, ctx = {}) {
       const host = String(payload.host || '').toLowerCase();
       const port = Number(payload.port);
       if (!host || !Number.isInteger(port)) {
-        throw new CovenantDenied(`无法推导出站目标：${payload.host}:${payload.port}`, {
+        throw new DashcamDenied(`无法推导出站目标：${payload.host}:${payload.port}`, {
           capability: 'net.outbound',
           ruleId: 'derive',
         });
@@ -137,7 +137,7 @@ function deriveOperation(operation, payload = {}, ctx = {}) {
     case 'proc.spawn': {
       const command = String(payload.command || '').trim();
       if (!command) {
-        throw new CovenantDenied('无法推导出进程命令', { capability: 'proc.spawn', ruleId: 'derive' });
+        throw new DashcamDenied('无法推导出进程命令', { capability: 'proc.spawn', ruleId: 'derive' });
       }
       return {
         capability: 'proc.spawn',
@@ -157,7 +157,7 @@ function deriveOperation(operation, payload = {}, ctx = {}) {
     case 'env.write':
       return deriveEnvCapability(operation.split('.')[1], payload.key);
     default:
-      throw new CovenantDenied(`未知操作 ${operation}`, { ruleId: 'derive' });
+      throw new DashcamDenied(`未知操作 ${operation}`, { ruleId: 'derive' });
   }
 }
 

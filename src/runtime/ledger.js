@@ -202,7 +202,7 @@ class Ledger {
       // 活跃实例（不重新构造）在 append 时仍会精确抛「并发写入」。
       if (state.written && diskSize > state.size) {
         console.warn(
-          `[dsh-covenant] 账本在 Ledger 实例之外被写入：期望 ${state.size} 字节，实际 ${diskSize} 字节（${this.file}）。verify() 可定位被动的行。`,
+          `[dsh-dashcam] 账本在 Ledger 实例之外被写入：期望 ${state.size} 字节，实际 ${diskSize} 字节（${this.file}）。verify() 可定位被动的行。`,
         );
       }
       state = { seq: 0, lastHash: 'GENESIS', size: diskSize, written: false };

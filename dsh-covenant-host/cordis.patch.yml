@@ -1,5 +1,0 @@
-# dsh-covenant-host 的挂载声明：把判定链接进 DSH 配置树。
-# id 必须与包名一致；name 用模块名，解析到 package.json 的 main（lib/index.js）。
-- insert:
-    - id: dsh-covenant-host
-      name: 'dsh-covenant-host'

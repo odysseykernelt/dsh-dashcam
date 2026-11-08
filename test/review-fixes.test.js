@@ -23,8 +23,8 @@ const MANIFEST = {
   name: 'Review',
   version: '1.0.0',
   entry: 'index.js',
-  kind: 'covenant',
-  covenant: { spec: 'dsh-covenant/1', content: null, requests: [] },
+  kind: 'dashcam',
+  dashcam: { spec: 'dsh-dashcam/1', content: null, requests: [] },
 };
 
 function runtimeFor(options = {}) {
@@ -143,8 +143,8 @@ test('M2：glob 的 cwd 非法类型直接拒绝，而不是静默退回 process
     }],
     manifest: {
       ...MANIFEST,
-      covenant: {
-        spec: 'dsh-covenant/1',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [{ capability: 'fs.read', scope: { paths: [dir.replace(/\\/g, '/') + '/**'] }, reason: '读自身' }],
       },
@@ -183,7 +183,7 @@ test('M4：activate 拒绝第二个运行时，释放后可再激活', () => {
   let second = null;
   try {
     first = activate(hostFor());
-    assert.throws(() => activate(hostFor()), /只能有一个活动的 covenant 运行时/);
+    assert.throws(() => activate(hostFor()), /只能有一个活动的 dashcam 运行时/);
     first.deactivate();
     first = null;
     second = activate(hostFor());

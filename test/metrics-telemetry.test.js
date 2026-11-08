@@ -7,7 +7,7 @@ const { computeMetrics, monthlyMetrics } = require('../src/governance/metrics');
 /**
  * telemetry 附加记录的口径回归护栏（1.10.12，复核 F5 后半）。
  *
- * 背景：宿主适配层（dsh-covenant-host）把非判定的附加审计记录直接 append 进账本
+ * 背景：宿主适配层（dsh-dashcam-host）把非判定的附加审计记录直接 append 进账本
  * （mount / unmapped-tool / unjudgeable-tool / proc.commandline 存档），capability
  * 固定为 'telemetry'。它们不是 Two-Key 判定，混进 allow/deny 口径会：
  *   - 用 commandline 存档稀释拦截率（一次 shell 调用 = 1 条判定 + 1 条存档）；
@@ -39,11 +39,11 @@ function judgment(overrides = {}) {
   };
 }
 
-/** 宿主附加记录的真实形状（dsh-covenant-host appendAuxRecord 写入）。 */
+/** 宿主附加记录的真实形状（dsh-dashcam-host appendAuxRecord 写入）。 */
 function telemetry(overrides = {}) {
   return {
     ts: '2026-11-01T00:00:00.000Z',
-    plugin: 'dsh-covenant-host',
+    plugin: 'dsh-dashcam-host',
     capability: 'telemetry',
     action: 'unmapped-tool',
     scope: { tool: 'send_meme' },

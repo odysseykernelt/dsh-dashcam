@@ -1,8 +1,8 @@
-# dsh-covenant 合规：Charter 与 Sieve
+# dsh-dashcam 合规：Charter 与 Sieve
 
 ## 1. Charter 字段
 
-`manifest.covenant.content` 必须是对象，包含以下五个字段，缺一不可：
+`manifest.dashcam.content` 必须是对象，包含以下五个字段，缺一不可：
 
 | 字段 | 取值 | 说明 |
 | --- | --- | --- |
@@ -33,7 +33,7 @@
 
 | 错误码 | 条件 |
 | --- | --- |
-| `charter_missing` | `covenant.content` 缺失或不是对象 |
+| `charter_missing` | `dashcam.content` 缺失或不是对象 |
 | `charter_field_missing` | 任一必填字段为 `undefined` / `null` |
 | `charter_rating_invalid` | `rating` 不在枚举内 |
 | `charter_scenes_invalid` | `scenes` 不是数组 |
@@ -41,7 +41,7 @@
 | `charter_fingerprint_invalid` | `sourceFingerprint` 不是 `sha256:<hex>` |
 | `charter_enterprise_invalid` | `enterpriseExcluded` 不是布尔 |
 
-所有错误都带 `field`（如 `covenant.content.rating`）与 `file`（`manifest.json`）。
+所有错误都带 `field`（如 `dashcam.content.rating`）与 `file`（`manifest.json`）。
 
 ## 3. Sieve 准入
 
@@ -95,7 +95,7 @@ policy.enforcement = { mode: 'advisory', allowLegacy: false, requireSignature: f
 
 ## 5. 与元数据覆盖率的关系
 
-月度度量中的 `metadataCoverage` 统计 10 个字段（`id`、`name`、`version`、`entry`、`covenant` + 五个 Charter 字段）
+月度度量中的 `metadataCoverage` 统计 10 个字段（`id`、`name`、`version`、`entry`、`dashcam` + 五个 Charter 字段）
 在 manifest 中的存在比例。覆盖率用于观察生态元数据质量，不作为单个插件的准入依据；
 单个插件的准入只认 `validateCharter` 与 Sieve 的结果。
 
@@ -109,4 +109,4 @@ policy.enforcement = { mode: 'advisory', allowLegacy: false, requireSignature: f
 | 企业通道提交 `rating: mature` | `rating_blocked`（企业上限 `teen`），拒装 |
 | 企业通道提交 `commercialUse: noncommercial` | `commercial_blocked`，拒装 |
 | 未配置 `egressAllowlist` 就走企业通道 | `egress_allowlist_not_configured`，拒装 |
-| 无 `covenant` 字段 | legacy：默认 `{level:'legacy',quarantine:true}`；advisory 消费通道可装并标 `Quarantined`；`required` 拒装；企业通道恒拒 |
+| 无 `dashcam` 字段 | legacy：默认 `{level:'legacy',quarantine:true}`；advisory 消费通道可装并标 `Quarantined`；`required` 拒装；企业通道恒拒 |

@@ -10,8 +10,8 @@
   },
   "patches": [],
   "scripts": {},
-  "covenant": {
-    "spec": "dsh-covenant/1",
+  "dashcam": {
+    "spec": "dsh-dashcam/1",
     "capabilities": {
       "requests": [
         {

@@ -153,8 +153,8 @@ async function runInstallPipeline({
 
   // 契约与 Charter：缺字段在 strict 模式拒装，默认只打标签。
   const contractStage = createStage('contract');
-  if (manifest.kind === 'covenant') {
-    const charterErrors = validateCharter(manifest.covenant.content, { file: 'manifest.json' });
+  if (manifest.kind === 'dashcam') {
+    const charterErrors = validateCharter(manifest.dashcam.content, { file: 'manifest.json' });
     for (const error of charterErrors) {
       const item = { ...error, gate: 'contract' };
       if (strict) contractStage.errors.push(item);
@@ -193,7 +193,7 @@ async function runInstallPipeline({
       code: 'quarantined',
       label: 'Quarantined',
       reason: 'legacy / quarantine 插件：没有可核对的能力声明，运行时按 deny-all 隔离',
-      field: 'covenant',
+      field: 'dashcam',
       file: 'manifest.json',
     });
   }

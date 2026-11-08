@@ -10,7 +10,7 @@ const { isQuarantined } = require('./contract/manifest');
 const { resolveLedgerMacKey } = require('./host/local-host');
 const { createCapabilityHandles, createModuleRedirect } = require('./runtime/handles');
 
-const PLUGIN_ID = 'dsh-covenant';
+const PLUGIN_ID = 'dsh-dashcam';
 
 /**
  * 进程内只能有一个活动运行时。
@@ -151,7 +151,7 @@ function activate(host = {}) {
   // 原生 Hook 会叠加：详见文件顶部 activeRuntimes 的注释。
   if (activeRuntimes > 0) {
     throw new Error(
-      '同一进程只能有一个活动的 covenant 运行时：原生 Hook 会叠加，后装的会独吞判定。'
+      '同一进程只能有一个活动的 dashcam 运行时：原生 Hook 会叠加，后装的会独吞判定。'
       + '请先 deactivate 上一个插件，或用 LocalHost 串行装载。',
     );
   }

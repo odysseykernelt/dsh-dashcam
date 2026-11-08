@@ -79,12 +79,12 @@ test('H3-1：execSync 首词已授权但命令带 shell 元字符——直接拒
       },
     });
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
-    assert.equal(out.exec, 'COVENANT_DENIED', 'execSync 的 `git;curl|sh` 必须被拒');
+    assert.equal(out.exec, 'DASHCAM_DENIED', 'execSync 的 `git;curl|sh` 必须被拒');
     assert.equal(out.execRule, 'shell_metachar');
-    assert.equal(out.spawn, 'COVENANT_DENIED', 'spawn + shell:true 的元字符命令必须被拒');
+    assert.equal(out.spawn, 'DASHCAM_DENIED', 'spawn + shell:true 的元字符命令必须被拒');
     assert.equal(out.spawnRule, 'shell_metachar');
-    assert.equal(out.customShell, 'COVENANT_DENIED', '自定义 shell 解释器必须被拒');
-    assert.equal(out.fork, 'COVENANT_DENIED', 'fork 的 execPath 错位必须被拒');
+    assert.equal(out.customShell, 'DASHCAM_DENIED', '自定义 shell 解释器必须被拒');
+    assert.equal(out.fork, 'DASHCAM_DENIED', 'fork 的 execPath 错位必须被拒');
     const metacharDenies = records.filter((r) => r.ruleId === 'shell_metachar' && r.decision === 'deny');
     assert.ok(metacharDenies.length >= 2, `shell_metachar 必须记账（exec + spawn），实际 ${metacharDenies.length} 条`);
   } finally {
@@ -124,7 +124,7 @@ test('H3-2：exec/execSync 无元字符时首词判定照旧工作（不破坏�
       },
     });
     // 命令本身不含元字符：走既有的首词判定——whoami 不在授权里，照常拒绝。
-    assert.equal(out.whoami, 'COVENANT_DENIED');
+    assert.equal(out.whoami, 'DASHCAM_DENIED');
   } finally {
     cleanup(dir);
   }
@@ -187,7 +187,7 @@ test('H4-1：fs.promises.cp 未授权时拒绝并记账，授权后放行', asyn
     });
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
     // data.txt 不在授权的 inner/** 里：fsp.cp 必须当作读写双面越界拒绝。
-    assert.equal(out.attack, 'COVENANT_DENIED', '未授权的 fsp.cp 必须被拒');
+    assert.equal(out.attack, 'DASHCAM_DENIED', '未授权的 fsp.cp 必须被拒');
     assert.equal(
       fs.existsSync(path.join(dir, 'plugin', 'copy.txt')), false,
       '未授权的拷贝不得落地',
@@ -242,7 +242,7 @@ test('H5-1：createPluginRuntime 半途失败（redirect 冲突）不残留 Hook
     // rt1 的 manifest 授权 pluginRoot 目录：半途失败场景里第二个 runtime 的
     // statSync(pluginRoot) 会穿过 rt1 的 Hook，必须被 rt1 放行才能到达
     // redirect 冲突点（那才是要测的失败位）。同理，第二个 runtime 创建 Ledger
-    // 时解析 mac 密钥会读 process.env.DSH_COVENANT_MAC_KEY——敏感命名穿过
+    // 时解析 mac 密钥会读 process.env.DSH_DASHCAM_MAC_KEY——敏感命名穿过
     // rt1 的 env Proxy 判 cred.read，这条宿主侧行为也要 rt1 放行。
     // 注意：直接调 createPluginRuntime 不经 LocalHost 的 manifest/grants
     // 规范化——`$PLUGIN` 不会被展开，因此这里用字面量绝对路径（POSIX 分隔符，
@@ -251,16 +251,16 @@ test('H5-1：createPluginRuntime 半途失败（redirect 冲突）不残留 Hook
     const manifest = {
       id: 'com.example.h5.rollback',
       version: '1.0.0',
-      covenant: { requests: [
+      dashcam: { requests: [
         { capability: 'fs.read', scope: { paths: [root, `${root}/**`] } },
-        { capability: 'cred.read', scope: { targets: ['env:DSH_COVENANT_MAC_KEY'] } },
+        { capability: 'cred.read', scope: { targets: ['env:DSH_DASHCAM_MAC_KEY'] } },
       ] },
     };
     const base = {
       manifest,
       grants: [
         { capability: 'fs.read', scope: { paths: [root, `${root}/**`] } },
-        { capability: 'cred.read', scope: { targets: ['env:DSH_COVENANT_MAC_KEY'] } },
+        { capability: 'cred.read', scope: { targets: ['env:DSH_DASHCAM_MAC_KEY'] } },
       ],
       pluginRoot: dir,
     };
@@ -295,7 +295,7 @@ test('H5-2：直接 runtime.dispose() 之后 activate 不再被互斥永久挡�
     const manifest = {
       id: 'com.example.h5.release',
       version: '1.0.0',
-      covenant: { requests: [{ capability: 'fs.read', scope: { paths: ['$PLUGIN/**'] } }] },
+      dashcam: { requests: [{ capability: 'fs.read', scope: { paths: ['$PLUGIN/**'] } }] },
     };
     const host = {
       manifest,
@@ -473,7 +473,7 @@ test('H2-2：policy.enforcement.observeLoadWindow=false——装载期越界直�
         await host.install(path.join(dir, 'plugin'));
         await assert.rejects(
           () => host.register('com.example.h2.strict'),
-          /注册失败（加载入口）|COVENANT_DENIED/,
+          /注册失败（加载入口）|DASHCAM_DENIED/,
           '关闭窗口后装载期越界必须让注册失败',
         );
       },

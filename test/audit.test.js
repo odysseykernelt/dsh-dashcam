@@ -126,9 +126,9 @@ test('One-Seal：审计写失败时释放占位，不白烧一次性授权', () 
   seal.issue({ id: 'seal-1', oneSeal: true, sealTtlMs: 60_000 });
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [{ capability: 'fs.read', scope, reason: '读取缓存' }],
       },
@@ -159,9 +159,9 @@ test('One-Seal：成功放行后 commit，第二次必然失败', () => {
   seal.issue({ id: 'seal-1', oneSeal: true, sealTtlMs: 60_000 });
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [{ capability: 'fs.read', scope, reason: '读取缓存' }],
       },
@@ -189,9 +189,9 @@ test('审计归因：reason 来自真正覆盖请求的那条声明', () => {
   const file = path.join(dir, 'ledger.jsonl');
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [
           { capability: 'net.outbound', scope: { hosts: ['metrics.example:443'] }, reason: '上报指标' },
@@ -217,9 +217,9 @@ test('Ledger：intercepted 标记未声明调用，interceptions() 按该口径�
   const file = path.join(dir, 'ledger.jsonl');
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [{ capability: 'fs.read', scope: { paths: ['$PLUGIN/**'] }, reason: '读取自身文件' }],
       },
@@ -251,9 +251,9 @@ test('守卫入口：installNativeHooks 把 fs 直调接入同一条守卫链', 
   fs.writeFileSync(outside, 'secret');
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [],
       },
@@ -322,9 +322,9 @@ test('TOCTOU：open 后按 fd 复核，符号链接替换落点被二次判定�
   }
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [{ capability: 'fs.read', scope: { paths: [`${dir.replace(/\\/g, '/')}/**`] }, reason: '读取插件目录' }],
       },
@@ -353,8 +353,8 @@ test('globSync：路径在返回值里，逐个结果都要过守卫', (t) => {
   fs.writeFileSync(path.join(outsideDir, 'secret.txt'), 'secret');
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: { spec: 'dsh-covenant/1', content: null, requests: [] },
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: { spec: 'dsh-dashcam/1', content: null, requests: [] },
     },
     grants: [],
     ledger: new Ledger(path.join(dir, 'ledger.jsonl')),
@@ -378,8 +378,8 @@ test('worker_threads：Worker 创建收敛到 proc.spawn 判定', (t) => {
   fs.writeFileSync(workerFile, '/* worker */');
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: { spec: 'dsh-covenant/1', content: null, requests: [] },
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: { spec: 'dsh-dashcam/1', content: null, requests: [] },
     },
     grants: [],
     ledger: new Ledger(path.join(dir, 'ledger.jsonl')),

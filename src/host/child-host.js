@@ -69,7 +69,7 @@ class ChildHost {
     // 输入，超大消息可能被用来让宿主分配大量内存。
     const size = messageSizeBytes(msg);
     if (size > this.maxMessageBytes) {
-      console.warn(`[dsh-covenant] 丢弃超大 IPC 消息（${size} > ${this.maxMessageBytes} 字节）`);
+      console.warn(`[dsh-dashcam] 丢弃超大 IPC 消息（${size} > ${this.maxMessageBytes} 字节）`);
       return;
     }
     if (isValidRequest(msg)) this._handleRequest(msg);

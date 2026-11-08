@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 // 账本一律落在临时目录：跑一次冒烟不在仓库/用户目录留下任何痕迹。
-const RESULTS = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-covenant-host-smoke-'));
+const RESULTS = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-dashcam-host-smoke-'));
 const log = [];
 const origError = console.error;
 const origInfo = console.info;
@@ -626,11 +626,11 @@ function check(name, cond, detail = '') {
   freshLog();
   const ctxEnv = makeCtx();
   const ledgerEnv = `${RESULTS}/smoke-f1-env.jsonl`;
-  apply(ctxEnv, { ledgerPath: ledgerEnv, ledgerMacKeyEnv: 'DSH_COVENANT_SMOKE_UNSET' });
+  apply(ctxEnv, { ledgerPath: ledgerEnv, ledgerMacKeyEnv: 'DSH_DASHCAM_SMOKE_UNSET' });
   check('L1: env 未设置不挂载', !mounted(ctxEnv));
   const envErr = log.find(([l, m]) => l === 'error' && /未设置/.test(m));
   check('L1: 报错区分 env 未设置（非 v2 迁移文案）', !!envErr
-    && /DSH_COVENANT_SMOKE_UNSET/.test(envErr[1]) && !/mac_missing/.test(envErr[1]), JSON.stringify(envErr));
+    && /DSH_DASHCAM_SMOKE_UNSET/.test(envErr[1]) && !/mac_missing/.test(envErr[1]), JSON.stringify(envErr));
   check('L1: env 未设置也写 side 日志', fs.existsSync(`${ledgerEnv}.guard.log`)
     && /stage=mac-env-missing/.test(fs.readFileSync(`${ledgerEnv}.guard.log`, 'utf8')));
   // 新账本（不存在）+ MAC：正常挂载

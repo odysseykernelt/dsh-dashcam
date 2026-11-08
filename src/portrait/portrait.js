@@ -10,7 +10,7 @@ function emptyCounts() {
 }
 
 function collectItems(manifest, scan) {
-  const requests = (manifest && manifest.covenant && manifest.covenant.requests) || [];
+  const requests = (manifest && manifest.dashcam && manifest.dashcam.requests) || [];
   const items = requests.map((request) => ({
     capability: request.capability,
     group: groupOf(request.capability),
@@ -99,7 +99,7 @@ function renderPortrait(portrait) {
     lines.push(`安全标签：${portrait.securityLabels.join(' / ')}`);
   }
   if (portrait.quarantine) {
-    lines.push('隔离档：无 covenant 声明，运行时 deny-all');
+    lines.push('隔离档：无 dashcam 声明，运行时 deny-all');
   }
   lines.push(portrait.firstScreen.caveat);
   lines.push('');

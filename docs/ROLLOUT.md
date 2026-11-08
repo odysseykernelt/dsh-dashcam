@@ -1,4 +1,4 @@
-# dsh-covenant 上线节奏与治理
+# dsh-dashcam 上线节奏与治理
 
 本文件按骨架第 8、9 节定稿上线顺序、熔断条件、回滚层级、密钥轮换、应急下架与月度度量。
 不排日期，只定义“进入下一步的条件”和“退回上一档的条件”。
@@ -66,7 +66,7 @@
 
 - 存储：独立 JSON 文件（`Blacklist`），可离线分发；条目 `{plugin, reason, until?}`。
 - 命中即拒绝，`contractChecked=false`；`until` 到期自动放行。
-- CLI：`dsh-covenant blacklist <file> add|remove|list ...`。
+- CLI：`dsh-dashcam blacklist <file> add|remove|list ...`。
 - 运行时：`createGuardChain({blacklist})` 在每个请求前检查，命中返回 `blacklisted`，并写 Ledger。
 
 应急下架优先于一切“补签名/补声明”的修复路径；恢复上架必须重新走完整门禁。
@@ -85,7 +85,7 @@
 | 放弃率 `abandonmentRate` | `abort / (attempt + abort)` | `attempt` 只记未被中止的安装，分母需含 `abort` |
 | 元数据覆盖率 `metadataCoverage` | `present / required` | 10 个必填元数据字段 × manifest 数 |
 
-**telemetry 附加记录排除（1.10.12）**：宿主适配层（dsh-covenant-host）会把非判定的附加
+**telemetry 附加记录排除（1.10.12）**：宿主适配层（dsh-dashcam-host）会把非判定的附加
 审计记录直接 append 进账本（mount / unmapped-tool / unjudgeable-tool / proc.commandline
 存档），capability 固定为 `telemetry`。它们不是 Two-Key 判定：判定读数（上表全部
 allow/deny 口径指标）只收 `capability !== 'telemetry'` 的记录；telemetry 数量与其中
@@ -119,7 +119,7 @@ bug，而是这类「进程内治理」方案的物理边界。上线前逐项�
 | 1 | 目录级 TOCTOU（链接替换、父目录 rename） | `open` 之后只能拿到 `fstat` 的类型和**当前路径**的 realpath，拿不到 fd 指向的 inode 路径 | 插件工作目录独立（父目录不与他人共享可写）；最小权限账号；必要时容器 + 只读挂载 | 用攻击脚本试：判定通过后、IO 之前 rename 父目录——当前会漏，属已知，必须靠文件系统隔离 |
 | 2 | `vm` / 原生扩展（`.node`）/ Worker 内部 | 同一进程内没有第二道墙；Worker 的模块表是新的 | 高风险插件放独立进程或独立 realm；企业通道直接拒收含原生扩展的包 | 安全门禁 `scan.findings` 出现 `native_module` 的必须走隔离，不能只贴标签 |
 | 3 | 账本可写性 | HMAC 只保证「无密钥者伪造不了」；进程账号若对账本目录有写权限，可以直接截断 | 账本放独立存储（append-only 挂载 / 外部日志系统）；定期 `anchor()` 外发 | 用运行账号试删账本，应当失败；`metrics --anchor <锚点文件>` 应通过 |
-| 4 | `macKey` 托管 | 密钥进了仓库/镜像/日志，等于没有密钥 | KMS 或编排层注入（`DSH_COVENANT_MAC_KEY` / `--mac-key-file`）；谁能读写进运维文档；轮换按「新账本 + 旧账本重新锚定」做 | `redact()` 只露 `{macEnabled,keyLength,source}`；密钥在仓库与日志里 grep 不到 |
+| 4 | `macKey` 托管 | 密钥进了仓库/镜像/日志，等于没有密钥 | KMS 或编排层注入（`DSH_DASHCAM_MAC_KEY` / `--mac-key-file`）；谁能读写进运维文档；轮换按「新账本 + 旧账本重新锚定」做 | `redact()` 只露 `{macEnabled,keyLength,source}`；密钥在仓库与日志里 grep 不到 |
 | 5 | 沙箱模式 | 默认 `global` 只靠 Hook 事后拦；`handles` 需要插件改用 `ctx.handles`（`openSync` 等无法兼容） | 高敏插件显式 `sandbox.mode='handles'`；存量保持默认 `global`，零改动 | `host.coverage().sandbox.kind` 与策略一致：`global` → `none`，`handles` → `module-redirect` |
 
 **上线检查清单**（逐项打勾；缺项要在画像卡上标 `ReviewRequired`，不要标 `Verified`）：

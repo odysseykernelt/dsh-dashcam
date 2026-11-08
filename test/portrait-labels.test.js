@@ -9,7 +9,7 @@ const { computeMetrics } = require('../src/governance/metrics');
 
 test('画像卡：安全标签按 label 去重，首屏只报去重后的数量', () => {
   const portrait = buildPortrait({
-    manifest: { id: 'com.example.labels', covenant: { requests: [] } },
+    manifest: { id: 'com.example.labels', dashcam: { requests: [] } },
     labels: [
       { gate: 'signature', code: 'trust_missing', label: 'Untrusted', reason: '未提供信任表，无法验签' },
       { gate: 'safety', code: 'network_egress', label: 'ReviewRequired', reason: '出网范围需要人工复核' },
@@ -39,17 +39,17 @@ test('画像卡：首屏直出安全标签与隔离档两行', () => {
 
   const rendered = renderPortrait(portrait);
   assert.ok(rendered.includes('安全标签：Untrusted / Quarantined'));
-  assert.ok(rendered.includes('隔离档：无 covenant 声明，运行时 deny-all'));
+  assert.ok(rendered.includes('隔离档：无 dashcam 声明，运行时 deny-all'));
 });
 
 test('画像卡：隔离档判定统一走 isQuarantined', () => {
-  // covenant.quarantine 为真、顶层字段缺失时也应判定为隔离档。
-  const fromCovenant = buildPortrait({
-    manifest: { id: 'com.example.quarantined', covenant: { requests: [], quarantine: true } },
+  // dashcam.quarantine 为真、顶层字段缺失时也应判定为隔离档。
+  const fromDashcam = buildPortrait({
+    manifest: { id: 'com.example.quarantined', dashcam: { requests: [], quarantine: true } },
   });
-  assert.equal(fromCovenant.quarantine, true);
+  assert.equal(fromDashcam.quarantine, true);
 
-  const plain = buildPortrait({ manifest: { covenant: { requests: [] } } });
+  const plain = buildPortrait({ manifest: { dashcam: { requests: [] } } });
   assert.equal(plain.quarantine, false);
   assert.equal(buildPortrait({}).quarantine, false);
 });

@@ -7,7 +7,7 @@ const path = require('node:path');
 const { createTrust } = require('../../src/signing/trust');
 const { signBundle } = require('../../src/signing/bundle');
 
-function tempDir(prefix = 'dsh-covenant-') {
+function tempDir(prefix = 'dsh-dashcam-') {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
@@ -70,8 +70,8 @@ function createPlugin({
   };
   if (uninstall !== undefined) manifest.uninstall = uninstall;
   if (!legacy) {
-    manifest.covenant = {
-      spec: 'dsh-covenant/1',
+    manifest.dashcam = {
+      spec: 'dsh-dashcam/1',
       capabilities: { requests },
       content: charter,
     };

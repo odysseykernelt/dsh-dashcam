@@ -1,15 +1,35 @@
-# dsh-covenant
+# dsh-dashcam
 
 DeepSeek Harness 的插件契约与运行时治理插件。它把“插件能做什么”从口头约定变成可校验的契约：
 manifest 声明、宿主授予、运行时拦截、审计账本、安装门禁、双重签名、能力画像、离线诊断与合规准入。
 
 零第三方依赖，Node.js >= 20（CommonJS）。
 
+## 1.11.0 改名：dsh-covenant → dsh-dashcam
+
+从 1.11.0 起，本项目改名为 **dsh-dashcam**（产品定位从「契约层」收窄为「插件行车记录仪」：能力声明 + 运行时记录 + 可验证账本）。内部能力模型名称保留为 *dashcam（原 covenant capability model）*，`docs/SPEC.md` 中的不变量语义不变。
+
+**迁移清单（从 1.10.x 升级）**
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| npm 包名 | `dsh-covenant` | `dsh-dashcam`（未在 npm 发布，无需改依赖声明） |
+| CLI | `dsh-covenant` | `dsh-dashcam`（旧命令在 `package.json` 的 `bin` 中保留为别名，指向同一脚本） |
+| 宿主包 | `dsh-covenant-host` | `dsh-dashcam-host` |
+| 宿主配置条目 | `- id: dsh-covenant-host` | `- id: dsh-dashcam-host`（`config` 内容不变） |
+| 默认账本路径 | `~/.dsh/dsh-covenant/ledger.jsonl` | `~/.dsh/dsh-dashcam/ledger.jsonl` |
+| 签名格式字段 | `dsh-covenant/signatures@1` | `dsh-dashcam/signatures@1` |
+| 契约 spec | `dsh-covenant/1` | `dsh-dashcam/1` |
+
+- **账本自动迁移**：宿主首次启动时，若新路径不存在且旧路径存在，会把旧账本（含 `.guard.log`）原地移到新目录并在日志打印 `账本迁移`；显式配置了 `ledgerPath` 的 profile 不受影响。
+- **签名需要重签**：`spec` / `FORMAT` 字段已改，1.10.x 生成的签名包在 1.11.0 下验签会失败（签名字段属于契约的一部分，不做双格式兼容）。
+- **历史记录不重算**：账本内容与哈希链原样保留，`pluginVersion` 里的旧值只作历史。
+
 ## 快速开始
 
 ```bash
 npm test          # 全量用例：契约、运行时、绕过、门禁、签名、画像、诊断、治理、审计、准入
-node bin/dsh-covenant.js help
+node bin/dsh-dashcam.js help
 ```
 
 ## 核心模型
@@ -25,7 +45,7 @@ manifest 声明 ─┐
 - **非侵入式防护**：`policy.enforcement.mode` 默认 `advisory`——门禁先装，再输出安全画像标签
   （`Untrusted` / `Quarantined` / `ReviewRequired` / `Broken` / `Verified`）；只有恶意脚本与应急黑名单才阻断安装。
   `mode: 'required'` 或企业通道恢复“拒绝安装”语义。
-- **legacy 默认配置**：没有 `covenant` 字段不拒绝解析，自动生成 `{ level: 'legacy', quarantine: true }`；
+- **legacy 默认配置**：没有 `dashcam` 字段不拒绝解析，自动生成 `{ level: 'legacy', quarantine: true }`；
   没有声明就没有能力（Two-Key 交集为空），企业通道仍然拒绝。
 - **能力面**：`fs.*`、`net.outbound`、`net.listen`、`proc.spawn`、`proc.signal`、`env.*`、`cred.*`。凭证路径与环境变量自动升级为 `cred.*`。
 - **scope**：路径 glob、`host:port`、环境变量前缀通配、命令基名、端口子集、signal 目标白名单。完整语义见 [docs/SPEC.md](docs/SPEC.md)。
@@ -54,7 +74,7 @@ test/         契约、运行时、绕过、门禁、签名、画像、诊断、
 ## 宿主集成
 
 ```js
-const { activate } = require('dsh-covenant');
+const { activate } = require('dsh-dashcam');
 
 const plugin = activate({
   manifest,                 // 已解析的 manifest
@@ -78,10 +98,10 @@ DSH 按 profile 装载插件：`~/.dsh/profiles/desktop/package.json` 的 `depen
 `dsh.profile.bundles` 决定启用谁；bundle 自带的 `cordis.patch.yml` 负责把插件插进宿主配置树。
 按这个机制把判定链挂进去只需四步：
 
-1. **挂载**：profile 的 `package.json` 加依赖 `"dsh-covenant-host": "link:<工作区>/dsh-covenant-host"`，
-   并把 `dsh-covenant-host` 追加进 `dsh.profile.bundles`。
+1. **挂载**：profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<工作区>/dsh-dashcam-host"`，
+   并把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`。
 2. **安装**：在 profile 目录跑一次 `pnpm install`（用宿主自带运行时的 node/pnpm）。
-3. **重启** DeepSeek Harness；日志出现 `[dsh-covenant] 判定链已挂载` 即为成功
+3. **重启** DeepSeek Harness；日志出现 `[dsh-dashcam] 判定链已挂载` 即为成功
    （日志在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs`）。
 4. **卸载**：摘掉依赖与 bundle、还原 `cordis.patch.yml`，再跑一次 `pnpm install`，重启生效。
 
@@ -96,33 +116,33 @@ DSH 按 profile 装载插件：`~/.dsh/profiles/desktop/package.json` 的 `depen
 
 ```bash
 # 生成发布者/审核者密钥与信任表
-node bin/dsh-covenant.js keygen ./keys
+node bin/dsh-dashcam.js keygen ./keys
 
 # 双签（发布者 + 审核者）
-node bin/dsh-covenant.js sign ./plugin --plugin com.example.plugin --version 1.0.0 \
+node bin/dsh-dashcam.js sign ./plugin --plugin com.example.plugin --version 1.0.0 \
   --publisher-key keys/publisher.private.pem --publisher-key-id publisher-2026a \
   --reviewer-key  keys/reviewer.private.pem  --reviewer-key-id  reviewer-2026a
 
 # 验签（重建清单 → keyId → 发布者 → 审核者）
-node bin/dsh-covenant.js verify ./plugin --trust keys/trust.json
+node bin/dsh-dashcam.js verify ./plugin --trust keys/trust.json
 
 # 安装门禁（黑名单 → 验签 → 结构 → 契约 → Sieve → 安全 → 可装载性）
-node bin/dsh-covenant.js gates ./plugin --trust keys/trust.json --host --policy examples/demo-policy.json
-node bin/dsh-covenant.js gates examples/negative-plugin --skip-signature   # 反例包：恶意脚本被阻断（ok=false）
+node bin/dsh-dashcam.js gates ./plugin --trust keys/trust.json --host --policy examples/demo-policy.json
+node bin/dsh-dashcam.js gates examples/negative-plugin --skip-signature   # 反例包：恶意脚本被阻断（ok=false）
 
 # 能力画像 / 离线诊断 / 度量 / 黑名单 / 熔断
-node bin/dsh-covenant.js portrait ./plugin
-node bin/dsh-covenant.js autopsy ./plugin --profile profile.json --patch patch.json
-node bin/dsh-covenant.js metrics .dsh-ledger.jsonl --events events.json
-node bin/dsh-covenant.js blacklist blacklist.json add com.example.evil 紧急下架
-node bin/dsh-covenant.js rollout metrics.json
+node bin/dsh-dashcam.js portrait ./plugin
+node bin/dsh-dashcam.js autopsy ./plugin --profile profile.json --patch patch.json
+node bin/dsh-dashcam.js metrics .dsh-ledger.jsonl --events events.json
+node bin/dsh-dashcam.js blacklist blacklist.json add com.example.evil 紧急下架
+node bin/dsh-dashcam.js rollout metrics.json
 ```
 
 失败报告精确到字段与文件行，例如：
 
 ```
 [structure] manifest.json field=patches[0].path — patch 路径越出插件目录
-[safety] index.js:14 field=covenant.capabilities.requests — 代码使用 net.outbound，但 manifest 未声明
+[safety] index.js:14 field=dashcam.capabilities.requests — 代码使用 net.outbound，但 manifest 未声明
 ```
 
 ## 示例包
@@ -133,11 +153,11 @@ node bin/dsh-covenant.js rollout metrics.json
 正例包的完整流程：
 
 ```bash
-node bin/dsh-covenant.js keygen ./keys
-node bin/dsh-covenant.js sign examples/compliant-plugin --plugin com.example.compliant --version 1.0.0 \
+node bin/dsh-dashcam.js keygen ./keys
+node bin/dsh-dashcam.js sign examples/compliant-plugin --plugin com.example.compliant --version 1.0.0 \
   --publisher-key keys/publisher.private.pem --publisher-key-id publisher-2026a \
   --reviewer-key keys/reviewer.private.pem --reviewer-key-id reviewer-2026a
-node bin/dsh-covenant.js gates examples/compliant-plugin --trust keys/trust.json \
+node bin/dsh-dashcam.js gates examples/compliant-plugin --trust keys/trust.json \
   --host --policy examples/demo-policy.json
 ```
 
@@ -168,7 +188,7 @@ const report = bridge.coverage();
 Bridge 只能做到「我想到的都包了」。想真正做到「没声明就做不到」，得反过来：不给插件全局 API，只给它一个受限对象。
 
 ```js
-const { createCapabilityHandles } = require('dsh-covenant');
+const { createCapabilityHandles } = require('dsh-dashcam');
 
 const handles = createCapabilityHandles({ guard });
 await handles.fs.promises.readFile('cache.json');   // 过守卫链
@@ -228,8 +248,8 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
 
 ## 1.10.12 修复（1.10.12 复核 F5 后半：metrics 口径排除 telemetry 附加记录）
 
-来自 `handoff/dsh-covenant-review-1.10.12-2026-11-06.md` 的遗留项（核心侧）。此前宿主
-适配层（dsh-covenant-host）直接 `ledger.append` 的 telemetry 附加记录（mount /
+来自 `handoff/dsh-dashcam-review-1.10.12-2026-11-06.md` 的遗留项（核心侧）。此前宿主
+适配层（dsh-dashcam-host）直接 `ledger.append` 的 telemetry 附加记录（mount /
 unmapped-tool / unjudgeable-tool / `proc.commandline` 存档，capability 固定为
 `telemetry`）被计入 metrics 的 allow/deny 口径——它们不是 Two-Key 判定，会同时污染
 三个读数：拦截率被 commandline 存档凭空稀释一半；`enforceUnmapped` 下 unmapped-tool
@@ -239,12 +259,12 @@ unmapped-tool / unjudgeable-tool / `proc.commandline` 存档，capability 固定
 `telemetryRecords` / `telemetryDenies`（可见性不丢）；`records()` / `verify()` 等
 离线审计仍看全量行。没有 telemetry 记录的旧账本读数完全不变（新增 7 项口径护栏
 用例证明，总回归 241 例 0 fail）。口径文档见 [docs/ROLLOUT.md](docs/ROLLOUT.md) 第 6 节。
-宿主适配层 `dsh-covenant-host` 亦自本版起以 git subtree 并入本仓库（历史完整保留，见
-[dsh-covenant-host/](dsh-covenant-host/README.md)），不再依赖工作区的兄弟目录路径。
+宿主适配层 `dsh-dashcam-host` 亦自本版起以 git subtree 并入本仓库（历史完整保留，见
+[dsh-dashcam-host/](dsh-dashcam-host/README.md)），不再依赖工作区的兄弟目录路径。
 
 ## 1.10.13 修复（1.10.13 复核 R1–R3 批：目录探测负缓存 / 拒绝落账 / allowlist fail-fast）
 
-来自 `handoff/dsh-covenant-review-1.10.13-2026-11-06.md` 的残余项（只动宿主子目录，核心
+来自 `handoff/dsh-dashcam-review-1.10.13-2026-11-06.md` 的残余项（只动宿主子目录，核心
 src/ 无改动，宿主 PLUGIN_VERSION → 1.10.14）：
 
 - **R1（fail-open → 修正）**：L4 目录探测缓存原本正负结果都缓存——「先删文件、30s 内
@@ -262,9 +282,9 @@ src/ 无改动，宿主 PLUGIN_VERSION → 1.10.14）：
 
 ## 1.10.11 修复（1.10.10 两份复核报告 P1–P9 批）
 
-来自 `handoff/dsh-covenant-review-1.10.10-2026-11-06.md` 与
-`handoff/dsh-covenant-host-ops-mapping-1.10.10-2026-11-06.md`。
-本版**只改宿主适配层**（`dsh-covenant-host`），核心 `src/` 无改动，234 例回归不受影响。
+来自 `handoff/dsh-dashcam-review-1.10.10-2026-11-06.md` 与
+`handoff/dsh-dashcam-host-ops-mapping-1.10.10-2026-11-06.md`。
+本版**只改宿主适配层**（`dsh-dashcam-host`），核心 `src/` 无改动，234 例回归不受影响。
 
 - **P1/P8 copy/move 双端判定**：此前 `ops_copy` / `ops_move` 只按源路径记 `fs.write`，
   目标端完全不判——enforce 下「源在域内、目标在域外」可把数据搬出授权域。现在
@@ -285,9 +305,9 @@ src/ 无改动，宿主 PLUGIN_VERSION → 1.10.14）：
 - **P9 `dryRun` 被记成实写**：`write_file` / `edit_file` / `replace` 带 `dryRun: true`
   时降级为 `fs.read`，账本不再高估副作用。
 - **D4 账本 MAC 密钥透传**：`config.ledgerMacKey` / `ledgerMacKeyFile` / `ledgerMacKeyEnv`
-  直通 covenant（v3 账本 HMAC），密钥过短则 activate 失败不挂载。
-- **测试 profile 账本隔离**：`covenant-test` profile 的 `ledgerPath` 指向
-  `ledger-covenant-test.jsonl`，测试期 deny 记录不再混入生产底账。
+  直通 dashcam（v3 账本 HMAC），密钥过短则 activate 失败不挂载。
+- **测试 profile 账本隔离**：`dashcam-test` profile 的 `ledgerPath` 指向
+  `ledger-dashcam-test.jsonl`，测试期 deny 记录不再混入生产底账。
 - 回归：宿主冒烟 28 项 → 57 项全过（copy/move 越界拦截、batch 展开与整批拒绝、
   逐 path、命令行存档、dryRun、MAC 均有用例）。
 - 已知边界（未变）：`replace` 以基目录为审计粒度，glob 命中的实际文件不逐个展开；
@@ -335,18 +355,18 @@ src/ 无改动，宿主 PLUGIN_VERSION → 1.10.14）：
   ENOENT（纯不存在）场景保留词法退化（写/新建文件合法）。
 - 回归：`test/review6-fixes.test.js` 8 例（含平台条件断言：长路径/符号链接环在
   本机产生非 ENOENT 时才断言 fail-closed）。全量 234 例 / 230 通过 / 0 fail /
-  4 symlink skip。宿主冒烟 13 项脚本收进 `dsh-covenant-host/test/smoke-host.mjs`
+  4 symlink skip。宿主冒烟 13 项脚本收进 `dsh-dashcam-host/test/smoke-host.mjs`
   （`npm run smoke`），宿主包自此建 git 仓库（首次入库）。
 
 ## 1.10.8 修复（实跑测试暴露出的两条宿主-本体口径差）
 
-来自 `handoff/dsh-covenant-test-1.10.7-2026-11-06.md` 的实跑问题：
+来自 `handoff/dsh-dashcam-test-1.10.7-2026-11-06.md` 的实跑问题：
 
 - **宿主 `config.requests` 写成字符串会静默失效（问题 1，中）**：`requests: [fs.read]`
   这种错语法不是报配置错误，而是等到运行时判成 `未声明的能力或范围：fs.read (...)`，
-  把「配置语法问题」伪装成「能力未声明」。根因：`covenant.activate()` 直接吃 manifest，
+  把「配置语法问题」伪装成「能力未声明」。根因：`dashcam.activate()` 直接吃 manifest，
   不走 `parseManifest` 里的 `normalizeRequest`——宿主 mount 前自己不校验。修复：
-  `dsh-covenant-host` mount 时用 `covenant.normalizeRequest` + `normalizeGrant`
+  `dsh-dashcam-host` mount 时用 `dashcam.normalizeRequest` + `normalizeGrant`
   提前校验，非法直接打印完整报错（含正确 YAML 示例）并 return，fail-fast。
 - **advisory 下 deny 被账本记 `intercepted=true`（问题 2，中低）**：advisory 模式
   宿主会自行放行 `guard.check()` 返回的 deny 结果，但 guard 无从知道，于是账本里
@@ -615,7 +635,7 @@ new LocalHost({ policy: { limits: { fetchTimeoutMs: 5000 }, enforcement: { stric
 
 ## 1.3.0 新增（非侵入式防护）
 
-- **manifest**：无 `covenant` 不再报错，生成默认 `{ level: 'legacy', quarantine: true }`；新增 `isQuarantined()`。
+- **manifest**：无 `dashcam` 不再报错，生成默认 `{ level: 'legacy', quarantine: true }`；新增 `isQuarantined()`。
 - **守卫入口 Hook**：`guard.installNativeHooks()` / `uninstallNativeHooks()`；`createGuardChain({ nativeHooks: true })`
   可在入口直接安装，`LocalHost` 与 `activate` 都走这条路径。
 - **门禁标签化**：`report.labels` / `securityLabels` / `labelLines`，阶段状态新增 `warn`；

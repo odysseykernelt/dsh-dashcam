@@ -6,7 +6,7 @@ const path = require('node:path');
 const { loadManifest } = require('../contract/manifest');
 
 /** 默认的环境变量名：宿主不传任何参数时也会看它。 */
-const DEFAULT_MAC_KEY_ENV = 'DSH_COVENANT_MAC_KEY';
+const DEFAULT_MAC_KEY_ENV = 'DSH_DASHCAM_MAC_KEY';
 /** HMAC 密钥下限。短于此长度的密钥不值得拿来防篡改。 */
 const MIN_MAC_KEY_BYTES = 32;
 
@@ -268,7 +268,7 @@ class LocalHost {
         if (guard.stats.observed > 0) {
           // 装载窗口把拒绝改写为放行是一次明确的信任让步：它必须可见。
           console.warn(
-            `[dsh-covenant] 装载窗口：插件 ${pluginId} 顶层代码有 ${guard.stats.observed}` +
+            `[dsh-dashcam] 装载窗口：插件 ${pluginId} 顶层代码有 ${guard.stats.observed}` +
             ' 次越界调用被放行（已按 deny 记账）。该窗口可用 policy.enforcement.observeLoadWindow=false 关闭（越界将直接拒绝装载）。',
           );
         }

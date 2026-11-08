@@ -47,47 +47,47 @@ function resolveCharter(content) {
 function validateCharter(content, { file = 'manifest.json' } = {}) {
   const errors = [];
   if (!content || typeof content !== 'object' || Array.isArray(content)) {
-    return [gateError('charter', 'charter_missing', 'covenant.content 缺失或不是对象', {
-      field: 'covenant.content',
+    return [gateError('charter', 'charter_missing', 'dashcam.content 缺失或不是对象', {
+      field: 'dashcam.content',
       file,
     })];
   }
   for (const field of CHARTER_FIELDS) {
     if (content[field] === undefined || content[field] === null) {
       errors.push(gateError('charter', 'charter_field_missing', `缺少 Charter 字段 ${field}`, {
-        field: `covenant.content.${field}`,
+        field: `dashcam.content.${field}`,
         file,
       }));
     }
   }
   if (content.rating !== undefined && !RATINGS.includes(content.rating)) {
     errors.push(gateError('charter', 'charter_rating_invalid', `rating 必须是 ${RATINGS.join(' / ')}`, {
-      field: 'covenant.content.rating',
+      field: 'dashcam.content.rating',
       file,
     }));
   }
   if (content.scenes !== undefined && !Array.isArray(content.scenes)) {
     errors.push(gateError('charter', 'charter_scenes_invalid', 'scenes 必须是字符串数组', {
-      field: 'covenant.content.scenes',
+      field: 'dashcam.content.scenes',
       file,
     }));
   }
   if (content.commercialUse !== undefined && !COMMERCIAL_USE.includes(content.commercialUse)) {
     errors.push(gateError('charter', 'charter_commercial_invalid', `commercialUse 必须是 ${COMMERCIAL_USE.join(' / ')}`, {
-      field: 'covenant.content.commercialUse',
+      field: 'dashcam.content.commercialUse',
       file,
     }));
   }
   if (content.sourceFingerprint !== undefined
     && (typeof content.sourceFingerprint !== 'string' || !/^sha256:[a-f0-9]{32,64}$/i.test(content.sourceFingerprint.trim()))) {
     errors.push(gateError('charter', 'charter_fingerprint_invalid', 'sourceFingerprint 必须是 sha256:<hex>', {
-      field: 'covenant.content.sourceFingerprint',
+      field: 'dashcam.content.sourceFingerprint',
       file,
     }));
   }
   if (content.enterpriseExcluded !== undefined && typeof content.enterpriseExcluded !== 'boolean') {
     errors.push(gateError('charter', 'charter_enterprise_invalid', 'enterpriseExcluded 必须是布尔值', {
-      field: 'covenant.content.enterpriseExcluded',
+      field: 'dashcam.content.enterpriseExcluded',
       file,
     }));
   }
@@ -113,7 +113,7 @@ function evaluateAdmission(manifest, { channel = 'consumer', policy = {} } = {})
       return {
         admitted: false,
         charter: { ...CONSERVATIVE_CHARTER },
-        reasons: [{ code: 'legacy_enterprise_excluded', field: 'covenant', reason: 'legacy 插件禁入企业通道' }],
+        reasons: [{ code: 'legacy_enterprise_excluded', field: 'dashcam', reason: 'legacy 插件禁入企业通道' }],
         warnings,
       };
     }
@@ -125,8 +125,8 @@ function evaluateAdmission(manifest, { channel = 'consumer', policy = {} } = {})
         charter: { ...CONSERVATIVE_CHARTER },
         reasons: [{
           code: 'legacy_not_admitted',
-          field: 'covenant',
-          reason: 'no covenant：legacy 插件在 required 模式下不可装载',
+          field: 'dashcam',
+          reason: 'no dashcam：legacy 插件在 required 模式下不可装载',
         }],
         warnings,
       };
@@ -146,12 +146,12 @@ function evaluateAdmission(manifest, { channel = 'consumer', policy = {} } = {})
     };
   }
 
-  const content = manifest.covenant && manifest.covenant.content;
+  const content = manifest.dashcam && manifest.dashcam.content;
   if (!content || typeof content !== 'object') {
     return {
       admitted: false,
       charter: { ...CONSERVATIVE_CHARTER },
-      reasons: [{ code: 'charter_missing', field: 'covenant.content', reason: 'covenant.content 缺失' }],
+      reasons: [{ code: 'charter_missing', field: 'dashcam.content', reason: 'dashcam.content 缺失' }],
       warnings,
     };
   }
@@ -161,7 +161,7 @@ function evaluateAdmission(manifest, { channel = 'consumer', policy = {} } = {})
     for (const field of missingFields) {
       reasons.push({
         code: 'charter_field_missing',
-        field: `covenant.content.${field}`,
+        field: `dashcam.content.${field}`,
         reason: `缺少 Charter 字段 ${field}`,
       });
     }
@@ -173,7 +173,7 @@ function evaluateAdmission(manifest, { channel = 'consumer', policy = {} } = {})
   if (RATING_RANK[charter.rating] > RATING_RANK[maxRating]) {
     reasons.push({
       code: 'rating_blocked',
-      field: 'covenant.content.rating',
+      field: 'dashcam.content.rating',
       reason: `${charter.rating} 超过通道上限 ${maxRating}`,
     });
   }
@@ -183,7 +183,7 @@ function evaluateAdmission(manifest, { channel = 'consumer', policy = {} } = {})
     if (blockedScenes.includes(scene)) {
       reasons.push({
         code: 'scene_blocked',
-        field: 'covenant.content.scenes',
+        field: 'dashcam.content.scenes',
         reason: scene,
       });
     }
@@ -195,7 +195,7 @@ function evaluateAdmission(manifest, { channel = 'consumer', policy = {} } = {})
   if (!commercialAllowed.includes(charter.commercialUse)) {
     reasons.push({
       code: 'commercial_blocked',
-      field: 'covenant.content.commercialUse',
+      field: 'dashcam.content.commercialUse',
       reason: `${charter.commercialUse} 不被 ${channel} 通道接受`,
     });
   }
@@ -203,7 +203,7 @@ function evaluateAdmission(manifest, { channel = 'consumer', policy = {} } = {})
   if (isEnterprise && charter.enterpriseExcluded) {
     reasons.push({
       code: 'enterprise_excluded',
-      field: 'covenant.content.enterpriseExcluded',
+      field: 'dashcam.content.enterpriseExcluded',
       reason: '发布者声明 enterpriseExcluded=true',
     });
   }

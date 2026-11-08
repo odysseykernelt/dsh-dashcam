@@ -1,7 +1,7 @@
 'use strict';
 
 // 第五轮修复（2026-11-06，1.10.7）的回归测试。
-// 依据 .review/dsh-covenant-review-1.10.6.md 的两条未关口子：
+// 依据 .review/dsh-dashcam-review-1.10.6.md 的两条未关口子：
 //  - 残余 1（P1）：spawn 系 shell:true 只扫 args[0]，args[1..] 原样拼进 shell
 //    命令行——execFile('git', ['status & echo pwned > PWN'], { shell: true })
 //    判定层放行。修复后对首词 + 全部参数拼串统一扫元字符。
@@ -82,11 +82,11 @@ test('R5-1：spawn 系 shell:true 的注入藏在 args[1..] 里——拼串后�
     });
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
     // 三个入口的注入都在 args[1..]：首词判定本来就放行，必须靠拼串扫描拦下。
-    assert.equal(out.execFile, 'COVENANT_DENIED', 'execFile + shell:true 的 args 注入必须被拒');
+    assert.equal(out.execFile, 'DASHCAM_DENIED', 'execFile + shell:true 的 args 注入必须被拒');
     assert.equal(out.execFileRule, 'shell_metachar');
-    assert.equal(out.spawn, 'COVENANT_DENIED', 'spawn + shell:true 的 args 注入必须被拒');
+    assert.equal(out.spawn, 'DASHCAM_DENIED', 'spawn + shell:true 的 args 注入必须被拒');
     assert.equal(out.spawnRule, 'shell_metachar');
-    assert.equal(out.spawnSync, 'COVENANT_DENIED', 'spawnSync + shell:true 的 args 注入必须被拒');
+    assert.equal(out.spawnSync, 'DASHCAM_DENIED', 'spawnSync + shell:true 的 args 注入必须被拒');
     assert.equal(out.spawnSyncRule, 'shell_metachar');
     const metacharDenies = records.filter((r) => r.ruleId === 'shell_metachar' && r.decision === 'deny');
     assert.ok(metacharDenies.length >= 3, `shell_metachar 必须逐条记账，实际 ${metacharDenies.length} 条`);
@@ -128,7 +128,7 @@ test('R5-2：shell:true 参数无元字符时不误伤——继续走既有首�
         return host.invoke('com.example.r5.shell.clean');
       },
     });
-    assert.equal(out.clean, 'COVENANT_DENIED', '未授权命令仍要被拒');
+    assert.equal(out.clean, 'DASHCAM_DENIED', '未授权命令仍要被拒');
     assert.notEqual(out.cleanRule, 'shell_metachar', '干净参数不得被拼串扫描误判为元字符注入');
   } finally {
     cleanup(dir);
@@ -186,11 +186,11 @@ test('R5-3：cp/cpSync/fsp.cp 的 filter 回调直接拒绝并记账（不得再
     });
     const records = readLedger(path.join(dir, 'ledger.jsonl'));
     // 全部读写都在授权范围内：拒绝只能来自函数型 options 检查，不能是能力判定。
-    assert.equal(out.cpSync, 'COVENANT_DENIED', 'cpSync 的 filter 回调必须被拒');
+    assert.equal(out.cpSync, 'DASHCAM_DENIED', 'cpSync 的 filter 回调必须被拒');
     assert.equal(out.cpSyncRule, 'function_options');
-    assert.equal(out.cp, 'COVENANT_DENIED', 'cp 的 filter 回调必须被拒');
+    assert.equal(out.cp, 'DASHCAM_DENIED', 'cp 的 filter 回调必须被拒');
     assert.equal(out.cpRule, 'function_options');
-    assert.equal(out.fspCp, 'COVENANT_DENIED', 'fsp.cp 的 filter 回调必须被拒');
+    assert.equal(out.fspCp, 'DASHCAM_DENIED', 'fsp.cp 的 filter 回调必须被拒');
     assert.equal(out.fspCpRule, 'function_options');
     const denies = records.filter((r) => r.ruleId === 'function_options' && r.decision === 'deny');
     assert.ok(denies.length >= 3, `function_options 必须逐条记账，实际 ${denies.length} 条`);
@@ -239,7 +239,7 @@ test('R5-4：createReadStream 的自定义 fs 实现对象拒绝；AbortSignal �
         return host.invoke('com.example.r5.fsimpl');
       },
     });
-    assert.equal(out.stream, 'COVENANT_DENIED', '自定义 fs 实现对象必须被拒');
+    assert.equal(out.stream, 'DASHCAM_DENIED', '自定义 fs 实现对象必须被拒');
     assert.equal(out.streamRule, 'function_options');
     assert.equal(out.signal, 'ok', 'AbortSignal 不得被函数扫描误伤');
   } finally {
@@ -256,9 +256,9 @@ test('R5-5：guard.check({ advisory:true }) 时账本 decision=deny 但 intercep
   const { createGuardChain } = require('../src/runtime/guards');
   const guard = createGuardChain({
     manifest: {
-      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'covenant',
-      covenant: {
-        spec: 'dsh-covenant/1',
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
         content: null,
         requests: [{ capability: 'fs.read', scope: { paths: [path.join(dir, '**')] }, reason: '读取自身文件' }],
       },

@@ -24,10 +24,10 @@ function authorizeAccess({
 } = {}) {
   if (!manifest) return denial('manifest_missing', '缺少插件 manifest');
   if (manifest.kind === 'legacy') {
-    return denial('legacy', 'legacy 插件没有 covenant 声明，运行时拒绝一切能力');
+    return denial('legacy', 'legacy 插件没有 dashcam 声明，运行时拒绝一切能力');
   }
 
-  const declared = (manifest.covenant && manifest.covenant.requests) || [];
+  const declared = (manifest.dashcam && manifest.dashcam.requests) || [];
   if (declared.length === 0) {
     return denial('not_declared', `${capability} 未在 manifest 中声明`, { capability, scope });
   }
