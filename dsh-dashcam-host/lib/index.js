@@ -40,6 +40,12 @@ import { registerPanelRoutes } from './panel.js';
 
 const require = createRequire(import.meta.url);
 const dashcam = require('../../src/index.js');
+// manifestHash 要与守卫链同源同算法：同一段声明清单、同一个稳定序列化函数，
+// 两处算出的哈希才可比（对账本时能对出「当时声明了什么」）。
+const { stableStringify, sha256 } = require('../../src/util/stable.js');
+// 零契约记录的凭证升级与 deriveOperation 同源：读到 id_rsa/.npmrc 这类路径时
+// capability 升级为 cred.read——零契约只是不判定，不降低记录口径。
+const { credentialCapabilityForPath } = require('../../src/contract/capabilities.js');
 
 export const name = 'dsh-dashcam-host';
 export const inject = [];
@@ -600,19 +606,39 @@ export function apply(ctx, config = {}) {
       capabilities: { requests: normalizedRequests },
     },
   };
+
+  // 归属标注（v4 账本字段）：宿主侧的 profiled / manifestHash 与守卫链同源——
+  // 有契约时每条记录都能对出「当时声明了什么」；零契约时 profiled=false、
+  // manifestHash=null，本身就是「装上时没给契约」的证明。
+  const profiledRequests = normalizedRequests.length > 0;
+  const manifestHash = profiledRequests ? sha256(stableStringify(normalizedRequests)) : null;
+
+  // R2 façade 化之后 activate() 不再外借 Ledger（防插件顺藤摸瓜拿走审计密钥）。
+  // 宿主自建实例经 host.ledger 传入：activate 优先使用注入的账本，mac 密钥解析
+  // 与 activate 内部同函数同参数，行为完全一致；进程内共享账本状态（H6）保证
+  // 两个实例的 seq/size 基准一致。
+  let ledger;
+  try {
+    const resolvedMac = dashcam.resolveLedgerMacKey({
+      ledgerMacKey: config.ledgerMacKey || null,
+      ledgerMacKeyFile: config.ledgerMacKeyFile || null,
+      ledgerMacKeyEnv: config.ledgerMacKeyEnv || null,
+    });
+    ledger = new dashcam.Ledger(ledgerPath, { macKey: resolvedMac.key });
+  } catch (error) {
+    console.warn(`[dsh-dashcam] activate failed: ${error.message}`);
+    return;
+  }
+
   let runtime;
   try {
     runtime = dashcam.activate({
       manifest,
       grants: normalizedGrants,
       policy: config.policy || {},
-      ledgerPath,
-      // D4：账本 MAC 密钥透传（dashcam v3 账本）。密钥不落仓库——可显式给
-      // ledgerMacKey / 指向文件的 ledgerMacKeyFile / 环境变量名 ledgerMacKeyEnv
-      //（默认还会尝试 DSH_DASHCAM_MAC_KEY）。密钥非法时 activate 抛错，走下面的兜底。
-      ledgerMacKey: config.ledgerMacKey || null,
-      ledgerMacKeyFile: config.ledgerMacKeyFile || null,
-      ledgerMacKeyEnv: config.ledgerMacKeyEnv || null,
+      ledger,
+      // Bridge 是进程级补丁，默认必须关（宿主是 Electron 主进程，一装就接管
+      // 应用自身的 fs/net）；需要真实拦截时显式 config.patchBuiltins: true。
       patchBuiltins: config.patchBuiltins === true,
       // 判定不再经由 registerPreExecute 直挂事件：waterfall 契约要求
       // (exec, next) 包装与映射层，check 在下面的 handler 里手动调用。
@@ -622,9 +648,8 @@ export function apply(ctx, config = {}) {
     console.warn(`[dsh-dashcam] activate failed: ${error.message}`);
     return;
   }
-  // activate() 返回 { id, runtime, deactivate }：guard 在内层 runtime 上，ledger 同层。
-  const guard = runtime.runtime.guard;
-  const ledger = runtime.runtime.ledger;
+  // activate() 返回最小 façade：guard 只有 check/enforce/coverage 只读面。
+  const guard = runtime.guard;
 
   /** 附加审计记录（遥测 / 命令行存档 / mount）直接落账本；失败只警告不阻断放行。 */
   function appendAuxRecord(record) {
@@ -633,6 +658,8 @@ export function apply(ctx, config = {}) {
       ledger.append({
         plugin: MANIFEST.id,
         pluginVersion: PLUGIN_VERSION,
+        profiled: profiledRequests,
+        manifestHash,
         ...record,
       });
     } catch (error) {
@@ -640,13 +667,19 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // 零契约模式（行车记录仪出厂态）：没配置 config.requests（且不在 enforce）时，
+  // 不产生 Two-Key 判定——对着不存在的契约判「未声明」，账本会塞满没人看的
+  // not_declared 噪音。改为把每次被观测的工具调用按 unprofiled 如实记录。
+  const zeroContract = !enforce && normalizedRequests.length === 0;
+
   // 遗留 P4（1.10.10 报告）：挂载事件落账本——桌面版看不到 stdout，
   // 「判定链是否挂载」从此可以直接从账本文件判断。
   appendAuxRecord({
     capability: 'telemetry',
     action: 'mount',
     scope: {
-      mode: enforce ? 'enforce' : 'advisory',
+      mode: enforce ? 'enforce' : (zeroContract ? 'unprofiled' : 'advisory'),
+      contract: zeroContract ? 'unprofiled' : 'declared',
       enforceUnmapped,
       commandlineArchive: commandlineArchiveMode,
       patchBuiltins: config.patchBuiltins === true,
@@ -656,7 +689,9 @@ export function apply(ctx, config = {}) {
     },
     decision: 'allow',
     ruleId: 'mount',
-    reason: 'dsh-dashcam-host 判定链挂载',
+    reason: zeroContract
+      ? 'dsh-dashcam-host 判定链挂载（零契约模式：全部观测活动按 unprofiled 记录）'
+      : 'dsh-dashcam-host 判定链挂载',
   });
 
   // ingress 审计：请求出口 + 消息入口的元数据。事件名可配；接不上必须留痕，
@@ -736,14 +771,35 @@ export function apply(ctx, config = {}) {
         if (!NOOP_TOOLS.has(bare)) {
           const allowlisted = matchesAllowlist(exec.name, unmappedAllowlist);
           const denyUnmapped = enforce && enforceUnmapped && !allowlisted;
+          if (zeroContract && !denyUnmapped) {
+            // 零契约：每一次未映射调用都逐次记账（观测记录，不去重）——
+            // 否则默认出厂路径下大部分活动根本不进账本，「装上就能用」
+            // 变成「装上就装了」。参数预览只截 512 字符并过打码。
+            const inputText = JSON.stringify(exec.arguments ?? '') ?? '';
+            appendAuxRecord({
+              capability: 'telemetry',
+              action: 'unmapped-tool',
+              scope: {
+                tool: exec.name,
+                allowlisted,
+                inputLength: inputText.length,
+                inputPreview: maskSecrets(inputText.slice(0, 512)),
+              },
+              decision: 'allow',
+              intercepted: false,
+              ruleId: 'unprofiled',
+              reason: '零契约模式：未映射工具按观测逐次记录（无声明清单，不做 Two-Key 判定）',
+            });
+          }
           if (!seenUnmapped.has(lowered)) {
             // 去重只作用于日志与 allow 遥测；拦截判定每次都做（P1）。
+            // 零契约下逐次 unprofiled 记录已覆盖这件事，allow 遥测不再重复落。
             seenUnmapped.add(lowered);
             console.info(
-              `[dsh-dashcam] 未映射工具（${denyUnmapped ? 'enforceUnmapped 拒绝' : allowlisted ? 'allowlist 豁免放行' : '放行，不记账'}）：`
+              `[dsh-dashcam] 未映射工具（${denyUnmapped ? 'enforceUnmapped 拒绝' : allowlisted ? 'allowlist 豁免放行' : zeroContract ? '放行，按 unprofiled 记账' : '放行，不记账'}）：`
               + `${exec.name}——如需纳管请补充映射表`,
             );
-            if (!denyUnmapped) {
+            if (!denyUnmapped && !zeroContract) {
               appendAuxRecord({
                 capability: 'telemetry',
                 action: 'unmapped-tool',
@@ -802,6 +858,32 @@ export function apply(ctx, config = {}) {
       return next();
     }
 
+    // 零契约：映射到的请求也只记录、不判定——判定要对着声明清单，而这里没有。
+    // 记录粒度与映射层一致（copy=读源+写目标、move=读+删源+写目标……），
+    // capability 取操作前缀；读路径命中凭证特征时与 derive 同源升级为 cred.*，
+    // scope 保存原始目标（路径/主机/命令首词）。
+    // 命令行存档等附加记录照常落账（零契约下没有 deny 处置可改写，保持 allow）。
+    if (zeroContract) {
+      for (const req of mapped.requests) {
+        let capability = String(req.operation || '').split('.')[0] || 'unknown';
+        if (req.operation === 'fs.read' && req.payload && typeof req.payload.path === 'string') {
+          const upgraded = credentialCapabilityForPath(req.payload.path, 'fs.read');
+          if (upgraded !== 'fs.read') capability = upgraded;
+        }
+        appendAuxRecord({
+          capability,
+          action: req.operation,
+          scope: req.payload,
+          decision: 'allow',
+          intercepted: false,
+          ruleId: 'unprofiled',
+          reason: '零契约模式：映射请求按观测记录（无声明清单，不做 Two-Key 判定）',
+        });
+      }
+      for (const auxRecord of mapped.aux) appendAuxRecord(auxRecord);
+      return next();
+    }
+
     const decisions = [];
     for (const req of mapped.requests) {
       let decision;
@@ -853,7 +935,7 @@ export function apply(ctx, config = {}) {
     }
   });
   console.info(
-    `[dsh-dashcam] 判定链已挂载（event=tools/pre-execute，mode=${enforce ? 'enforce' : 'advisory'}，`
+    `[dsh-dashcam] 判定链已挂载（event=tools/pre-execute，mode=${enforce ? 'enforce' : (zeroContract ? 'unprofiled' : 'advisory')}，`
     + `enforceUnmapped=${enforceUnmapped}，commandlineArchive=${commandlineArchiveMode}，`
     + `patchBuiltins=${config.patchBuiltins === true}，ledger=${ledgerPath}，`
     + `requests=${normalizedRequests.length}，grants=${normalizedGrants.length}）`,

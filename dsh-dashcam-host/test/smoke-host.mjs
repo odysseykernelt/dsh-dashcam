@@ -92,7 +92,7 @@ function check(name, cond, detail = '') {
   check('fail-fast: grants 错误信息', !!log.find(([l, m]) => l === 'error' && /grants 非法|grant 必须是对象/.test(m)), JSON.stringify(log));
 }
 
-// 3) advisory：read 未声明 → 落账 deny + intercepted=false，且放行（next 被调用）；mount 记录落账
+// 3) 零契约（advisory 且无 requests）：映射请求只记录不判定——落 allow/unprofiled，放行；mount 记录落账
 {
   freshLog();
   const ctx = makeCtx();
@@ -101,7 +101,9 @@ function check(name, cond, detail = '') {
   apply(ctx, { ledgerPath });
   check('advisory: 已挂载', mounted(ctx));
   const mountRecs = readLedger(ledgerPath).filter((r) => r.action === 'mount' && r.ruleId === 'mount');
-  check('mount: 挂载记录落账本', mountRecs.length === 1 && mountRecs[0].scope.mode === 'advisory', JSON.stringify(mountRecs));
+  check('mount: 挂载记录落账本（unprofiled 模式）', mountRecs.length === 1
+    && mountRecs[0].scope.mode === 'unprofiled' && mountRecs[0].scope.contract === 'unprofiled',
+  JSON.stringify(mountRecs));
   let nextCalled = false;
   const decision = await ctx.handlers['tools/pre-execute'](
     { name: 'read', arguments: { file_path: path.join(RESULTS, 'package.json') } },
@@ -109,7 +111,10 @@ function check(name, cond, detail = '') {
   );
   check('advisory: 未声明读取放行', decision === 'NEXT' && nextCalled, String(decision));
   const recs = judgments(ledgerPath);
-  check('advisory: 账本 decision=deny & intercepted=false', recs.length === 1 && recs[0].decision === 'deny' && recs[0].intercepted === false, JSON.stringify(recs));
+  check('零契约: 账本 allow/unprofiled 且 profiled=false', recs.length === 1
+    && recs[0].decision === 'allow' && recs[0].intercepted === false
+    && recs[0].ruleId === 'unprofiled' && recs[0].profiled === false && recs[0].manifestHash === null,
+  JSON.stringify(recs));
   deactivate(ctx);
 }
 
@@ -146,7 +151,8 @@ function check(name, cond, detail = '') {
   deactivate(ctx);
 }
 
-// 5) ops_* 映射：dsh-ops 前缀剥离 + 参数形态覆盖，全部按 advisory 记账放行
+// 5) ops_* 映射：dsh-ops 前缀剥离 + 参数形态覆盖，全部按零契约观测记账放行
+// （capability 取操作前缀：proc.spawn → proc、fs.* → fs；scope 保存映射层产物）
 {
   freshLog();
   const ctx = makeCtx();
@@ -156,16 +162,16 @@ function check(name, cond, detail = '') {
   check('ops: 已挂载', mounted(ctx));
   const handler = ctx.handlers['tools/pre-execute'];
   const cases = [
-    ['ops_bash（command）', { name: 'ops_bash', arguments: { command: 'git status', description: 'd' } }, 'proc.spawn'],
-    ['ops_bash（script_path）', { name: 'ops_bash', arguments: { script_path: 'C:/tmp/build.sh', description: 'd' } }, 'proc.spawn'],
-    ['ops_read_files（files 数组）', { name: 'ops_read_files', arguments: { files: [{ path: 'src/a.ts' }, { path: 'src/b.ts' }] } }, 'fs.read'],
-    ['ops_glob', { name: 'ops_glob', arguments: { path: 'C:/repo', pattern: ['**/*.md'] } }, 'fs.read'],
-    ['ops_grep', { name: 'ops_grep', arguments: { path: 'C:/repo', pattern: 'todo' } }, 'fs.read'],
-    ['ops_write_file', { name: 'ops_write_file', arguments: { path: 'C:/repo/out.txt', content: 'x' } }, 'fs.write'],
-    ['edit（核心工具，P2）', { name: 'edit', arguments: { file_path: 'C:/repo/x.ts', old_string: 'a', new_string: 'b' } }, 'fs.write'],
-    ['ops_copy（读源+写目标，P1）', { name: 'ops_copy', arguments: { path: 'C:/repo/a.txt', to: 'C:/repo/b.txt', expectedRevision: 'r' } }, 'fs.write'],
-    ['ops_move（删源+写目标，P1/P8）', { name: 'ops_move', arguments: { path: 'C:/repo/a.txt', to: 'C:/repo/b.txt', expectedRevision: 'r' } }, 'fs.write'],
-    ['ops_remove（fs.delete，P8）', { name: 'ops_remove', arguments: { path: 'C:/repo/a.txt', expectedRevision: 'r' } }, 'fs.delete'],
+    ['ops_bash（command）', { name: 'ops_bash', arguments: { command: 'git status', description: 'd' } }, 'proc'],
+    ['ops_bash（script_path）', { name: 'ops_bash', arguments: { script_path: 'C:/tmp/build.sh', description: 'd' } }, 'proc'],
+    ['ops_read_files（files 数组）', { name: 'ops_read_files', arguments: { files: [{ path: 'src/a.ts' }, { path: 'src/b.ts' }] } }, 'fs'],
+    ['ops_glob', { name: 'ops_glob', arguments: { path: 'C:/repo', pattern: ['**/*.md'] } }, 'fs'],
+    ['ops_grep', { name: 'ops_grep', arguments: { path: 'C:/repo', pattern: 'todo' } }, 'fs'],
+    ['ops_write_file', { name: 'ops_write_file', arguments: { path: 'C:/repo/out.txt', content: 'x' } }, 'fs'],
+    ['edit（核心工具，P2）', { name: 'edit', arguments: { file_path: 'C:/repo/x.ts', old_string: 'a', new_string: 'b' } }, 'fs'],
+    ['ops_copy（读源+写目标，P1）', { name: 'ops_copy', arguments: { path: 'C:/repo/a.txt', to: 'C:/repo/b.txt', expectedRevision: 'r' } }, 'fs'],
+    ['ops_move（删源+写目标，P1/P8）', { name: 'ops_move', arguments: { path: 'C:/repo/a.txt', to: 'C:/repo/b.txt', expectedRevision: 'r' } }, 'fs'],
+    ['ops_remove（fs.delete，P8）', { name: 'ops_remove', arguments: { path: 'C:/repo/a.txt', expectedRevision: 'r' } }, 'fs'],
   ];
   for (const [label, exec] of cases) {
     const before = judgments(ledgerPath).length;
@@ -174,19 +180,20 @@ function check(name, cond, detail = '') {
     const recs = judgments(ledgerPath).slice(before);
     const expected = cases.find(([l]) => l === label)[2];
     const last = recs[recs.length - 1];
-    check(`ops: ${label} 记账 ${expected}`, recs.length >= 1 && last && last.capability === expected, JSON.stringify(last));
+    check(`ops: ${label} 记账 ${expected}`, recs.length >= 1 && last && last.capability === expected && last.ruleId === 'unprofiled', JSON.stringify(last));
   }
-  // 首词口径与形态细节
+  // 首词口径与形态细节（零契约 scope 与映射层 payload 同形：path/command 单数）
   const all = judgments(ledgerPath);
-  check('ops: bash 首词口径', all[0].scope && all[0].scope.commands && all[0].scope.commands[0] === 'git', JSON.stringify(all[0]));
-  check('ops: script_path 整串记账', all[1].scope && all[1].scope.commands && all[1].scope.commands[0] === 'C:/tmp/build.sh', JSON.stringify(all[1]));
-  check('ops: read_files 记首个 path', all[2].scope && all[2].scope.paths && all[2].scope.paths[0].endsWith('src/a.ts'), JSON.stringify(all[2]));
+  check('ops: bash 首词口径', all[0].scope && all[0].scope.command === 'git', JSON.stringify(all[0]));
+  check('ops: script_path 整串记账', all[1].scope && all[1].scope.command === 'C:/tmp/build.sh', JSON.stringify(all[1]));
+  check('ops: read_files 记首个 path', all[2].scope && all[2].scope.path.endsWith('src/a.ts'), JSON.stringify(all[2]));
   // copy = fs.read(源) + fs.write(目标)；move = fs.read + fs.delete(源) + fs.write(目标)
-  const copyOps = all.filter((r) => r.scope && r.scope.paths && (r.scope.paths.some((p) => p.endsWith('repo/a.txt')) || r.scope.paths.some((p) => p.endsWith('repo/b.txt'))));
+  const copyOps = all.filter((r) => r.scope && r.scope.path
+    && (r.scope.path.endsWith('repo/a.txt') || r.scope.path.endsWith('repo/b.txt')));
   const copySeq = copyOps.filter((r) => r.action.startsWith('fs.'));
-  check('ops: copy 源记 fs.read', copySeq.some((r) => r.action === 'fs.read' && r.scope.paths[0].endsWith('repo/a.txt')), JSON.stringify(copySeq));
-  check('ops: copy 目标记 fs.write', copySeq.some((r) => r.action === 'fs.write' && r.scope.paths[0].endsWith('repo/b.txt')), JSON.stringify(copySeq));
-  check('ops: move 源记 fs.delete', copySeq.some((r) => r.action === 'fs.delete' && r.scope.paths[0].endsWith('repo/a.txt')), JSON.stringify(copySeq));
+  check('ops: copy 源记 fs.read', copySeq.some((r) => r.action === 'fs.read' && r.scope.path.endsWith('repo/a.txt')), JSON.stringify(copySeq));
+  check('ops: copy 目标记 fs.write', copySeq.some((r) => r.action === 'fs.write' && r.scope.path.endsWith('repo/b.txt')), JSON.stringify(copySeq));
+  check('ops: move 源记 fs.delete', copySeq.some((r) => r.action === 'fs.delete' && r.scope.path.endsWith('repo/a.txt')), JSON.stringify(copySeq));
   deactivate(ctx);
 }
 
@@ -204,7 +211,11 @@ function check(name, cond, detail = '') {
   check('遥测: 未映射工具放行', n1 === 2);
   check('遥测: 同名只报一次', unmappedLogs.length === 1, JSON.stringify(unmappedLogs));
   const teleRecs = readLedger(ledgerPath).filter((r) => r.action === 'unmapped-tool');
-  check('遥测: 账本落 unmapped-tool 记录', teleRecs.length === 1 && teleRecs[0].scope.tool === 'mcp__demo__query', JSON.stringify(teleRecs));
+  // 零契约：每次调用逐条 unprofiled 记账（含参数预览），不再落去重的 allow 遥测。
+  check('遥测: 账本逐次落 unprofiled 记录', teleRecs.length === 2
+    && teleRecs.every((r) => r.scope.tool === 'mcp__demo__query' && r.ruleId === 'unprofiled')
+    && typeof teleRecs[0].scope.inputPreview === 'string',
+  JSON.stringify(teleRecs));
   const before = log.filter(([l, m]) => l === 'info' && /未映射工具/.test(m)).length;
   await handler({ name: 'ops_discover_tools', arguments: {} }, () => 'NEXT');
   await handler({ name: 'ops_result', arguments: { reference: 'r' } }, () => 'NEXT');
@@ -364,7 +375,7 @@ function check(name, cond, detail = '') {
     () => 'NEXT',
   );
   const judge = judgments(ledgerPath);
-  check('P6: 判定仍是首词', judge.length === 1 && judge[0].scope.commands[0] === 'cd', JSON.stringify(judge));
+  check('P6: 判定仍是首词', judge.length === 1 && judge[0].scope.command === 'cd', JSON.stringify(judge));
   const aux = readLedger(ledgerPath).filter((r) => r.ruleId === 'commandline-audit');
   check('F4: 默认 hash-only 不落明文', aux.length === 1 && !('commandLine' in aux[0].scope)
     && /^sha256:[0-9a-f]{64}$/.test(aux[0].scope.commandLineHash)
@@ -533,7 +544,7 @@ function check(name, cond, detail = '') {
   await handler({ name: 'ops_remove', arguments: { path: swap, expectedRevision: 'r' } }, () => 'NEXT');
   const dels = judgments(ledgerPath).filter((r) => r.action === 'fs.delete');
   check('R1: 第二次删除仍判子树（负缓存不生效）', dels.some(
-    (r) => r.scope && r.scope.paths && r.scope.paths[0] === `${swap}/**`,
+    (r) => r.scope && r.scope.path === `${swap}/**`,
   ), JSON.stringify(dels));
   check('R1: 账上共 3 条 fs.delete（文件 1 条 + 目录节点+子树 2 条）', dels.length === 3, JSON.stringify(dels));
   deactivate(ctx);
@@ -648,7 +659,7 @@ function check(name, cond, detail = '') {
   const ledgerPath = `${RESULTS}/smoke-mac.jsonl`;
   apply(ctx, { ledgerPath, ledgerMacKey: 'm'.repeat(64) });
   const recs = readLedger(ledgerPath);
-  check('D4: mount 记录为 v3 且带 mac', recs.length >= 1 && recs[0].v === 3 && typeof recs[0].mac === 'string' && recs[0].mac.length === 64, JSON.stringify(recs[0]));
+  check('D4: mount 记录为 v4 且带 mac', recs.length >= 1 && recs[0].v === 4 && typeof recs[0].mac === 'string' && recs[0].mac.length === 64, JSON.stringify(recs[0]));
   deactivate(ctx);
   // 非法密钥（过短）→ activate 失败不挂载
   freshLog();
