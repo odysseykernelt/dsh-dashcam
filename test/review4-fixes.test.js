@@ -305,14 +305,16 @@ test('H5-2：直接 runtime.dispose() 之后 activate 不再被互斥永久挡�
     };
     const one = activate(host);
     try {
-      assert.equal(typeof one.runtime.guard.check, 'function');
+      assert.equal(typeof one.guard.check, 'function');
+      // R2/A1：façade 不再暴露 runtime 内部对象；dispose 是公开释放口。
+      assert.equal(one.runtime, undefined);
     } finally {
       // 不走 deactivate，直接 dispose：H5 之前这条路径不递减计数，
       // 下一次 activate 会抛「只能有一个活动运行时」。
-      one.runtime.dispose();
+      one.dispose();
     }
     // 重复释放（dispose/deactivate 各再来一次）都必须是空操作。
-    one.runtime.dispose();
+    one.dispose();
     one.deactivate();
     assert.equal(fs.readFileSync(file, 'utf8'), 'ok', 'Hook 卸载后 fs 回到原生');
     const two = activate(host);

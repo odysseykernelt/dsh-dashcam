@@ -108,8 +108,19 @@ test('运行时：activate 不拒绝 legacy，改以 quarantine 档运行', () =
     autoSweep: false,
   });
   try {
-    assert.equal(runtime.runtime.quarantine, true);
-    assert.equal(runtime.runtime.guard.check('fs.read', { path: 'x' }).code, 'legacy');
+    // R2/A1：activate() 返回最小 façade——quarantine 提到顶层，guard 只读句柄。
+    assert.equal(runtime.quarantine, true);
+    assert.equal(runtime.guard.check('fs.read', { path: 'x' }).code, 'legacy');
+    // 管理面不得外借：setGrants / uninstallNativeHooks / hooks / ledger 都不可达。
+    assert.equal(runtime.runtime, undefined);
+    assert.equal(runtime.guard.setGrants, undefined);
+    assert.equal(runtime.guard.uninstallNativeHooks, undefined);
+    assert.equal(runtime.guard.hooks, undefined);
+    assert.equal(runtime.ledger, undefined);
+    assert.equal(runtime.seal, undefined);
+    assert.equal(runtime.bridge, undefined);
+    // façade 冻结：改不了 check/enforce 的绑定。
+    assert.ok(Object.isFrozen(runtime.guard));
   } finally {
     runtime.deactivate();
     cleanup(dir);
