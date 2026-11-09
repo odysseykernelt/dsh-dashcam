@@ -1,6 +1,5 @@
 ﻿node_modules/
-.dsh-ledger.jsonl
-*.jsonl
+.dsh-ledger*.jsonl
 .tmp-*/
 keys/
 *.log

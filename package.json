@@ -3,6 +3,23 @@
   "version": "1.12.0",
   "description": "Plugin dashcam for DSH: capability manifests, runtime guards, and a tamper-evident audit ledger (formerly dsh-covenant).",
   "homepage": "https://github.com/odysseykernelt/dsh-dashcam#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/odysseykernelt/dsh-dashcam.git"
+  },
+  "bugs": {
+    "url": "https://github.com/odysseykernelt/dsh-dashcam/discussions/categories/ideas"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "agent-security",
+    "audit-log",
+    "capability-guard",
+    "runtime-governance",
+    "llm",
+    "ai-agents"
+  ],
   "main": "src/index.js",
   "type": "commonjs",
   "bin": {
