@@ -25,11 +25,42 @@ manifest 声明、宿主授予、运行时拦截、审计账本、安装门禁�
 - **签名需要重签**：`spec` / `FORMAT` 字段已改，1.10.x 生成的签名包在 1.11.0 下验签会失败（签名字段属于契约的一部分，不做双格式兼容）。
 - **历史记录不重算**：账本内容与哈希链原样保留，`pluginVersion` 里的旧值只作历史。
 
+## 1.12.0 新增：ingress 审计（LLM 请求与入站消息对账）
+
+1.11.0 的观测面是「本机执行」：工具、文件、进程、网络。幽灵消息不产生任何这类动作，账本干净是正常的。
+1.12.0 补的是另外两条元数据流，落在同一条哈希链上：
+
+| `action` | 记录 |
+| --- | --- |
+| `llm.request` | 每次请求：消息条数、整体指纹 `messages.hash`、与同 session 上次请求的 `added/removed/changed`、新增消息样本（role / `source.kind` / 长度 / head80 / sha256 / 附件身份）、工具数量与指纹 |
+| `llm.inbound` | 每条真正进入会话的输入：`messageId` / `source.kind` / 长度 / sha256 / head80 |
+| `llm.anomaly` | 对账失败：`added_user_without_inbound` / `dropped_inbound`；只记录，不拦截 |
+
+口径要点：
+
+- **四象限判据**：只有「inbound 无 + request 有」才是注入；「两边都没有」是模型自造，**不告警**。
+  后者正是本次幽灵事件所在的格子——它必须有一条显式回归用例，不能靠人记得。
+- **白名单按 `source.kind`，不按 role**：`runtime-context` / `compaction` / `plugin:memory` / `skill-catalog`
+  等注入消息的 role 也是 `user`，按 role 白名单会立刻误报。
+- **观测记录不是判定**：`capability='llm.ingress'` 不计入 `requests / allows / denies / interceptionRate`，
+  另列 `ingressRequests` / `ingressInbound` / `ingressAnomalies`；`decision` 恒为 `allow`，
+  异常也不写 `deny`、不写 `intercepted`。
+- **只记元数据**：正文不落账；`headBytes: 0` 时连 head 也不存。单条记录受 `maxLineBytes` 约束。
+- **fail-open**：记录失败只进降级队列 + `.guard.log`，不影响请求。
+- **接线（已核对本机 DSH）**：请求挂 `llm/stream` waterfall（监听器必须 `return next()`），
+  入站取 `session/event` 的 `user/message`；不采用 `agent/request`（改不了 messages）
+  与 `agent/inbox/spliced`（投递事件，条目可被取消）。
+- **首请求建基线**：中途接入宿主时，历史消息全部算「新增」但没有 inbound 可比，首次请求不告警。
+- **已知边界**：本地 egress 只能证明「客户端发出去的 messages 里有没有 X」。服务端在客户端之后
+  追加的前缀不在观测范围；`coverage.unknown` 只是辅助信号，不能当实锤。
+
 ## 快速开始
 
 ```bash
 npm test          # 全量用例：契约、运行时、绕过、门禁、签名、画像、诊断、治理、审计、准入
 node bin/dsh-dashcam.js help
+node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --session <id>
+node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --find "状态栏"
 ```
 
 ## 核心模型
@@ -51,6 +82,8 @@ manifest 声明 ─┐
 - **scope**：路径 glob、`host:port`、环境变量前缀通配、命令基名、端口子集、signal 目标白名单。完整语义见 [docs/SPEC.md](docs/SPEC.md)。
 - **审计**：JSONL 追加 + SHA-256 哈希链，字段固定，可逐行离线重算；
   `intercepted=true` 单独记录“实际拦截的未声明 API 调用”，`Ledger.interceptions()` 可直接取出。
+- **ingress 观测**：`capability='llm.ingress'` 的请求/入站/异常记录与判定记录同链、同验签，
+  但 `metrics` 单独计数，不稀释允许率与拦截率；`ingress --find` 只搜已采样的 head（未采样不覆盖）。
 
 ## 目录
 

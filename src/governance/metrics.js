@@ -80,9 +80,19 @@ function isBatchScope(record) {
  * 取舍留给宿主），records() / verify() 等离线审计仍看全量行，不受影响。
  */
 const TELEMETRY_CAPABILITY = 'telemetry';
+/** ingress 审计记录（llm.request / llm.inbound / llm.anomaly）同样是观测，不是判定。 */
+const INGRESS_CAPABILITY = 'llm.ingress';
 
 function isTelemetryRecord(record) {
   return Boolean(record) && record.capability === TELEMETRY_CAPABILITY;
+}
+
+function isIngressRecord(record) {
+  return Boolean(record) && record.capability === INGRESS_CAPABILITY;
+}
+
+function isObservationRecord(record) {
+  return isTelemetryRecord(record) || isIngressRecord(record);
 }
 
 /**
@@ -99,7 +109,11 @@ function computeMetrics({
   const allDecisions = ledgerRecords.filter((record) => record && (record.decision === 'allow' || record.decision === 'deny'));
   const telemetry = allDecisions.filter(isTelemetryRecord);
   const telemetryDenies = telemetry.filter((record) => record.decision === 'deny').length;
-  const decisions = allDecisions.filter((record) => !isTelemetryRecord(record));
+  const ingress = allDecisions.filter(isIngressRecord);
+  const ingressRequests = ingress.filter((record) => record.action === 'llm.request').length;
+  const ingressInbound = ingress.filter((record) => record.action === 'llm.inbound').length;
+  const ingressAnomalies = ingress.filter((record) => record.action === 'llm.anomaly').length;
+  const decisions = allDecisions.filter((record) => !isObservationRecord(record));
   const denies = decisions.filter((record) => record.decision === 'deny').length;
   const allows = decisions.filter((record) => record.decision === 'allow').length;
 
@@ -165,6 +179,15 @@ function computeMetrics({
     // 不在 denies。没有 telemetry 记录时两者恒为 0，旧账本读数不变。
     telemetryRecords: telemetry.length,
     telemetryDenies,
+
+    // ingress 并列读数（加法字段）：llm.request / llm.inbound / llm.anomaly
+    // 是观测记录，不进判定口径。没有 ingress 记录时全部为 0，旧账本读数不变。
+    // ingressAnomalyRate 的分母是请求数：没有请求就没有可对账的对象，记 0。
+    ingressRecords: ingress.length,
+    ingressRequests,
+    ingressInbound,
+    ingressAnomalies,
+    ingressAnomalyRate: ratio(ingressAnomalies, ingressRequests),
 
     // 批量口径（新增）：记录数 ↔ 目标数的换算依据，以及按目标加权的并列读数。
     batchRecords,

@@ -92,6 +92,13 @@ allow/deny 口径指标）只收 `capability !== 'telemetry'` 的记录；teleme
 deny 条数另列并列读数 `telemetryRecords` / `telemetryDenies`，可见性不丢。
 `records()` / `verify()` 等离线审计仍看全量行，不受口径影响。
 
+**ingress 观测记录排除（1.12.0）**：`capability='llm.ingress'` 的 `llm.request` / `llm.inbound` /
+`llm.anomaly` 同样是观测而非判定，判定读数一并排除；另列 `ingressRequests` / `ingressInbound` /
+`ingressAnomalies` / `ingressAnomalyRate`。没有 ingress 记录的旧账本上这些读数恒为 0。
+异常记录不写 `deny`，因此不会抬高拦截率，也不会触发 `falseKillRate` / `abandonmentRate`。
+`interceptionRate` 的告警阈值不因 ingress 调整；ingress 异常率是独立观察项，不参与
+`checkCircuitBreaker` 的自动回滚判定。
+
 `monthlyMetrics` 按 `ts` / `at` 的 `YYYY-MM` 分组，输出每月完整指标。
 
 ## 7. 执行点在宿主

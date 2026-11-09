@@ -97,6 +97,39 @@ const DEFAULT_POLICY = Object.freeze({
   scan: Object.freeze({
     includeNodeModules: false,
   }),
+  // ingress 审计：只记元数据，不落正文。默认开启；headBytes=0 时只留 hash/长度。
+  // 白名单按 source.kind：系统注入的消息 role 也是 user，不能按 role 区分。
+  ingress: Object.freeze({
+    enabled: true,
+    headBytes: 80,
+    maxSample: 32,
+    maxLineBytes: 8192,
+    inboundWindow: 500,
+    inboundTtlMs: 3_600_000,
+    maskSecrets: true,
+    whitelistKinds: Object.freeze([
+      'runtime-context',
+      'time-context',
+      'compaction',
+      'plugin:memory',
+      'skill-catalog',
+      'tool',
+      'system',
+    ]),
+  }),
+});
+
+const INGRESS_MINIMUMS = Object.freeze({
+  headBytes: 0,
+  maxSample: 1,
+  maxLineBytes: 1024,
+  inboundWindow: 1,
+  inboundTtlMs: 0,
+});
+
+const INGRESS_MAXIMUMS = Object.freeze({
+  headBytes: 512,
+  maxSample: 512,
 });
 
 function mergeObject(base, override) {
@@ -138,6 +171,7 @@ function loadPolicy(raw = {}, context = {}) {
   policy.enforcement = mergeObject(DEFAULT_POLICY.enforcement, raw.enforcement);
   policy.limits = resolveLimits({ limits: raw.limits });
   policy.sandbox = resolveSandbox(raw.sandbox);
+  policy.ingress = resolveIngress({ ingress: raw.ingress });
   policy.credentialReview = mergeObject(DEFAULT_POLICY.credentialReview, raw.credentialReview);
   policy.oneSeal = mergeObject(DEFAULT_POLICY.oneSeal, raw.oneSeal);
   policy.circuitBreaker = mergeObject(DEFAULT_POLICY.circuitBreaker, raw.circuitBreaker);
@@ -167,4 +201,39 @@ function resolveLimits(policy = {}) {
   return merged;
 }
 
-module.exports = { DEFAULT_POLICY, DEFAULT_LIMITS, loadPolicy, resolveLimits };
+/**
+ * ingress 审计配置归一化。
+ *
+ * 与 limits 同样的理由：`headBytes: 'abc'` 会让 `text.slice(0, 'abc')` 变成
+ * 截 0 个字，`maxLineBytes: -1` 会让体积上限恒成立——配置错误必须尽早失败，
+ * 而不是变成一处没人知道的空缺。
+ */
+function resolveIngress(policy = {}) {
+  const raw = (policy && policy.ingress) || {};
+  if (!raw || typeof raw !== 'object') {
+    throw new Error(`policy.ingress 非法：${JSON.stringify(raw)}（要求对象）`);
+  }
+  const merged = { ...DEFAULT_POLICY.ingress, ...raw };
+  if (typeof merged.enabled !== 'boolean') {
+    throw new Error(`policy.ingress.enabled 非法：${JSON.stringify(merged.enabled)}（要求布尔）`);
+  }
+  if (typeof merged.maskSecrets !== 'boolean') {
+    throw new Error(`policy.ingress.maskSecrets 非法：${JSON.stringify(merged.maskSecrets)}（要求布尔）`);
+  }
+  for (const [key, minimum] of Object.entries(INGRESS_MINIMUMS)) {
+    const value = merged[key];
+    const maximum = INGRESS_MAXIMUMS[key];
+    if (!Number.isInteger(value) || value < minimum || (maximum !== undefined && value > maximum)) {
+      const range = maximum === undefined ? `>= ${minimum}` : `${minimum}–${maximum}`;
+      throw new Error(
+        `policy.ingress.${key} 非法：${JSON.stringify(value)}（要求 ${range} 的整数，默认 ${DEFAULT_POLICY.ingress[key]}）`,
+      );
+    }
+  }
+  if (!Array.isArray(merged.whitelistKinds) || merged.whitelistKinds.some((item) => typeof item !== 'string')) {
+    throw new Error('policy.ingress.whitelistKinds 非法：要求字符串数组');
+  }
+  return Object.freeze({ ...merged, whitelistKinds: Object.freeze([...merged.whitelistKinds]) });
+}
+
+module.exports = { DEFAULT_POLICY, DEFAULT_LIMITS, loadPolicy, resolveLimits, resolveIngress };

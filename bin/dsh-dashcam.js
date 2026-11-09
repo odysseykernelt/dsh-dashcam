@@ -17,6 +17,7 @@ const { Blacklist } = require('../src/governance/blacklist');
 const { checkCircuitBreaker } = require('../src/governance/rollout');
 const { LocalHost, resolveLedgerMacKey } = require('../src/host/local-host');
 const { Ledger } = require('../src/runtime/ledger');
+const { summarizeIngress, findIngressMatches } = require('../src/runtime/ingress');
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -49,6 +50,31 @@ function parseArgs(argv) {
 
 function output(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * 先校验、再统计：在一个校验不过的账本上算指标，等于给篡改后的数据背书。
+ * 返回 null 表示已打印错误并设置非零退出码。
+ */
+function loadVerifiedLedger(ledgerPath, flags) {
+  const resolvedMac = resolveLedgerMacKey({
+    ledgerMacKeyFile: flags['mac-key-file'] || null,
+    ledgerMacKeyEnv: flags['mac-key-env'] || null,
+  });
+  const ledger = new Ledger(ledgerPath, { macKey: resolvedMac.key });
+  const verification = ledger.verify(flags.anchor ? { anchor: readJson(flags.anchor) } : {});
+  if (!verification.ok) {
+    process.stderr.write(`账本校验失败（${verification.errors.length} 处）：\n`);
+    for (const error of verification.errors.slice(0, 5)) {
+      process.stderr.write(`  line ${error.line} ${error.code} — ${error.detail}\n`);
+    }
+    if (verification.errors.some((error) => error.code === 'mac_key_missing')) {
+      process.stderr.write('提示：该账本是 v3（带 mac）。请用 --mac-key-file <path> 或 --mac-key-env <NAME> 提供密钥。\n');
+    }
+    process.exitCode = 1;
+    return null;
+  }
+  return ledger;
 }
 
 function keygen(outDir) {
@@ -85,6 +111,7 @@ async function main() {
       '  portrait <pluginDir> [--channel consumer|enterprise] [--policy policy.json] [--trust trust.json]',
       '  autopsy <pluginDir> [--profile profile.json] [--patch patch.json] [--policy policy.json] [--no-signature]',
       '  metrics <ledger.jsonl> [--events events.json]',
+      '  ingress <ledger.jsonl> [--session <id>] [--find <text>] [--mac-key-file <path>]',
       '  blacklist <blacklist.json> add|remove|list [plugin] [reason]',
       '  rollout <metrics.json>',
     ].join('\n') + '\n');
@@ -185,30 +212,39 @@ async function main() {
   }
 
   if (command === 'metrics') {
-    // 先校验、再统计：在一个校验不过的账本上算指标，等于给篡改后的数据背书。
-    const resolvedMac = resolveLedgerMacKey({
-      ledgerMacKeyFile: flags['mac-key-file'] || null,
-      ledgerMacKeyEnv: flags['mac-key-env'] || null,
-    });
-    const ledger = new Ledger(rest[1], { macKey: resolvedMac.key });
-    const verification = ledger.verify(flags.anchor ? { anchor: readJson(flags.anchor) } : {});
-    if (!verification.ok) {
-      process.stderr.write(`账本校验失败（${verification.errors.length} 处）：\n`);
-      for (const error of verification.errors.slice(0, 5)) {
-        process.stderr.write(`  line ${error.line} ${error.code} — ${error.detail}\n`);
-      }
-      if (verification.errors.some((error) => error.code === 'mac_key_missing')) {
-        process.stderr.write('提示：该账本是 v3（带 mac）。请用 --mac-key-file <path> 或 --mac-key-env <NAME> 提供密钥。\n');
-      }
-      process.exitCode = 1;
-      return;
-    }
+    const ledger = loadVerifiedLedger(rest[1], flags);
+    if (!ledger) return;
     const records = ledger.records();
     const events = flags.events ? readJson(flags.events) : [];
     output({
       total: computeMetrics({ ledgerRecords: records, installEvents: events }),
       monthly: monthlyMetrics({ ledgerRecords: records, installEvents: events }),
     });
+    return;
+  }
+
+  if (command === 'ingress') {
+    const ledger = loadVerifiedLedger(rest[1], flags);
+    if (!ledger) return;
+    const all = ledger.records().filter((record) => record.capability === 'llm.ingress');
+    const scoped = flags.session
+      ? all.filter((record) => record.scope && record.scope.sessionId === flags.session)
+      : all;
+    const summary = summarizeIngress(scoped);
+    if (flags.find) {
+      const needle = String(flags.find);
+      output({
+        summary,
+        find: {
+          needle,
+          matches: findIngressMatches(scoped, needle),
+          // 覆盖范围必须写在输出里：没搜到 ≠ 没发生。
+          coverage: '仅检索已采样消息的 head；未采样消息不覆盖',
+        },
+      });
+      return;
+    }
+    output({ summary });
     return;
   }
 

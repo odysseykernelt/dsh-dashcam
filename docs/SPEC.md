@@ -231,6 +231,12 @@ v2 要求且必须是布尔值——升版本不能让历史账本变成“损�
 v1/v2 账本在无 macKey 时仍可验证；启用 macKey 后每行都必须带合法 mac，旧账本启用密钥需整体重新锚定。
 密钥通过 `new Ledger(file, { macKey })` 或 `new LocalHost({ ledgerMacKey })` 注入，不落盘。
 
+`capability='llm.ingress'` 的记录是**观测记录**，不属于 Two-Key 判定：`decision` 恒为 `allow`，
+`intercepted` 恒为 `false`，`action` 为 `llm.request` / `llm.inbound` / `llm.anomaly`。
+它们与判定记录共用同一条哈希链、同一套验签，但 `computeMetrics()` 将其排除在
+`requests / allows / denies / interceptionRate` 之外，另列 `ingressRequests` / `ingressInbound` /
+`ingressAnomalies`。异常不写 `deny`：观测层一旦会拦请求，第一次误报就会把用户挡在门外。
+
 mac 的三条硬规则（v3 实现口径）：
 
 1. **无密钥校验 v3 账本必须失败**（`mac_key_missing`）。文件自称 v3 却没验 mac 就返回 ok，

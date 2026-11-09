@@ -222,6 +222,7 @@ module.exports = {
   ...require('./runtime/one-seal'),
   ...require('./runtime/bridge'),
   ...require('./runtime/handles'),
+  ...require('./runtime/ingress'),
   // 门禁
   ...require('./gates/index'),
   ...require('./gates/structure'),
