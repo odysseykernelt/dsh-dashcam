@@ -2,14 +2,14 @@
 
 [English](README.md) | **中文**
 
-![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
+![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
 DeepSeek Harness 的插件契约与运行时治理插件。它把“插件能做什么”从口头约定变成可校验的契约：
 manifest 声明、宿主授予、运行时拦截、审计账本、安装门禁、双重签名、能力画像、离线诊断与合规准入。
 
 零第三方依赖，Node.js >= 20（CommonJS）。
 
-> **极速上手（DSH 桌面宿主，四步）**：profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<工作区>/dsh-dashcam-host"`，把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`，跑一次 `pnpm install`，重启 DeepSeek Harness 即生效。详见[极速安装](#极速安装dsh-桌面宿主)；工作区根目录的 `install-to-host.ps1` / `uninstall-from-host.ps1` 可把四步自动化。
+> **极速上手（DSH 桌面宿主，四步）**：clone 本仓库，在 profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<clone路径>/dsh-dashcam-host"`，把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`，跑一次 `pnpm install`，重启 DeepSeek Harness 即生效。详见[极速安装](#极速安装dsh-桌面宿主)。（宿主适配包的 npm 分发在路线图上，目前请以 clone 方式安装。）
 
 ## 演示：恶意插件在安装期被拦下
 
@@ -161,15 +161,12 @@ DSH 按 profile 装载插件：`~/.dsh/profiles/desktop/package.json` 的 `depen
 `dsh.profile.bundles` 决定启用谁；bundle 自带的 `cordis.patch.yml` 负责把插件插进宿主配置树。
 按这个机制把判定链挂进去只需四步：
 
-1. **挂载**：profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<工作区>/dsh-dashcam-host"`，
+1. **挂载**：clone 本仓库，在 profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<clone路径>/dsh-dashcam-host"`（指向 clone 内的 `dsh-dashcam-host` 目录），
    并把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`。
 2. **安装**：在 profile 目录跑一次 `pnpm install`（用宿主自带运行时的 node/pnpm）。
 3. **重启** DeepSeek Harness；日志出现 `[dsh-dashcam] 判定链已挂载` 即为成功
    （日志在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs`）。
 4. **卸载**：摘掉依赖与 bundle、还原 `cordis.patch.yml`，再跑一次 `pnpm install`，重启生效。
-
-工作区根目录的 `install-to-host.ps1` / `uninstall-from-host.ps1` 把上述步骤连同时间戳备份/还原
-自动化；日常安装走脚本，手工四步只适合一次性验证。
 
 适配包默认 `patchBuiltins: false`：宿主是 Electron 主进程，Bridge 是进程级补丁，直接装上会接管
 应用自身的 fs/net，所以默认只注册 pre-execute 判定函数。需要真实拦截时在 cordis 配置里显式
@@ -737,6 +734,20 @@ new LocalHost({ policy: { limits: { fetchTimeoutMs: 5000 }, enforcement: { stric
   注意 `mkdtemp` 现在算 `fs.write`，宿主/测试需要在安装 Bridge 之前建好临时目录。
 - **`Ledger.verify()`** 在尾行损坏时报告 `json_invalid` 并返回 `head=null`，不再抛异常。
 - 用例数 44 → 61（新增 `test/audit.test.js`、`test/mandate.test.js`）。
+
+## 版本对照（核心包 ↔ 宿主适配包）与早期作者身份说明
+
+核心包与宿主适配包独立版本号——适配包跟随宿主侧的集成节奏：
+
+| 核心（`dsh-dashcam`） | 宿主适配（`dsh-dashcam-host`） | 里程碑 |
+| --- | --- | --- |
+| 1.10.12 | 1.10.12 | 宿主适配包以 git subtree 方式并入本仓库 |
+| 1.11.0 | 1.11.0 | 改名 dsh-covenant → dsh-dashcam |
+| 1.12.0 | 1.14.0（当前） | 核心新增 ingress 审计；适配包接入 ingress 接线与 Agent Dashcam 面板 |
+
+今后每次打 release tag，annotation 中注明对应的宿主适配包版本。
+
+1.6.0–1.10.x 时代的提交使用占位身份（`dsh-covenant <dev@local>`），自改名起使用 GitHub noreply 地址。历史有意不改写。
 
 ## 许可
 

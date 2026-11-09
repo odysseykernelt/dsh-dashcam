@@ -2,14 +2,14 @@
 
 **English** | [中文](README.zh-CN.md)
 
-![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
+![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
 A plugin contract and runtime governance plugin for DeepSeek Harness. It turns "what a plugin is allowed to do" from a verbal agreement into a verifiable contract:
 manifest declarations, host grants, runtime interception, an audit ledger, installation gates, dual signing, capability portraits, offline autopsy, and compliance admission.
 
 Zero third-party dependencies, Node.js >= 20 (CommonJS).
 
-> **TL;DR — four steps on the DSH desktop host**: add the dependency `"dsh-dashcam-host": "link:<workspace>/dsh-dashcam-host"` to the profile's `package.json`, append `dsh-dashcam-host` to `dsh.profile.bundles`, run one `pnpm install`, restart DeepSeek Harness — done. Details in [Fast install](#fast-install-dsh-desktop-host); `install-to-host.ps1` / `uninstall-from-host.ps1` at the workspace root automate all of it.
+> **TL;DR — four steps on the DSH desktop host**: clone this repo, then add the dependency `"dsh-dashcam-host": "link:<clone-path>/dsh-dashcam-host"` to the profile's `package.json`, append `dsh-dashcam-host` to `dsh.profile.bundles`, run one `pnpm install`, restart DeepSeek Harness — done. Details in [Fast install](#fast-install-dsh-desktop-host). (An npm distribution of the host adapter is on the roadmap; for now, install from a clone.)
 
 ## Demo: a malicious plugin gets blocked at install time
 
@@ -145,12 +145,10 @@ plugin.deactivate();
 
 DSH loads plugins per profile: `~/.dsh/profiles/desktop/package.json` `dependencies` decide what gets installed and `dsh.profile.bundles` decides what gets enabled; the bundle's own `cordis.patch.yml` wires the plugin into the host config tree. Hooking the judgment chain in takes four steps:
 
-1. **Mount**: add the dependency `"dsh-dashcam-host": "link:<workspace>/dsh-dashcam-host"` to the profile's `package.json`, and append `dsh-dashcam-host` to `dsh.profile.bundles`.
+1. **Mount**: clone this repo, then add the dependency `"dsh-dashcam-host": "link:<clone-path>/dsh-dashcam-host"` to the profile's `package.json` (pointing at the `dsh-dashcam-host` directory inside the clone), and append `dsh-dashcam-host` to `dsh.profile.bundles`.
 2. **Install**: run `pnpm install` once in the profile directory (using the node/pnpm bundled with the host runtime).
 3. **Restart** DeepSeek Harness; success is confirmed when the log shows `[dsh-dashcam] 判定链已挂载` ("judgment chain mounted") (logs live in `%APPDATA%\@deepseek-ai\dsh-desktop\logs`).
 4. **Uninstall**: remove the dependency and bundle, restore `cordis.patch.yml`, run `pnpm install` again, and restart.
-
-`install-to-host.ps1` / `uninstall-from-host.ps1` at the workspace root automate the steps above together with timestamped backup/restore; use the scripts for day-to-day installs — the manual four steps are for one-off verification.
 
 The adapter package defaults to `patchBuiltins: false`: the host is an Electron main process and the Bridge is a process-level patch; installing it directly would take over the app's own fs/net, so by default only the pre-execute judgment function is registered. Set `patchBuiltins: true` explicitly in the cordis config when real interception is needed (semantics above in "Host integration").
 
@@ -522,6 +520,20 @@ A red-team / architecture / boundaries review confirmed 3 must-fix and 6 recomme
   Note that `mkdtemp` now counts as `fs.write`, so hosts/tests should create temp directories before installing the Bridge.
 - **`Ledger.verify()`** reports `json_invalid` and returns `head=null` on a corrupted tail line instead of throwing.
 - Case count 44 → 61 (new `test/audit.test.js`, `test/mandate.test.js`).
+
+## Version mapping (core ↔ host adapter) and a note on early authorship
+
+The core package and the host adapter version independently — the adapter tracks host-side integration work:
+
+| Core (`dsh-dashcam`) | Host adapter (`dsh-dashcam-host`) | Milestone |
+| --- | --- | --- |
+| 1.10.12 | 1.10.12 | host adapter merged into this repo as a git subtree |
+| 1.11.0 | 1.11.0 | rename dsh-covenant → dsh-dashcam |
+| 1.12.0 | 1.14.0 (current) | core adds ingress audit; adapter adds ingress wiring and the Agent Dashcam panel |
+
+Going forward, each release tag's annotation states the matching host adapter version.
+
+Commits from the 1.6.0–1.10.x era use a placeholder identity (`dsh-covenant <dev@local>`); from the rename onward they use the GitHub noreply address. History is intentionally left unrewritten.
 
 ## License
 
