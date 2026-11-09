@@ -298,24 +298,33 @@ class LocalHost {
         // activate 抛错时必须回滚，否则宿主卡在「已有活动 Bridge」的半装载状态：
         // active / modules 已写入，Hook 与重定向已安装，后续注册会直接失败，
         // 而插件其实从未成功激活。
+        // A2（三视角审查）：activate 是 await——等待期间宿主可能已经 uninstall 本插件
+        // 并 register 了下一个插件。回滚只允许作用于「仍是自己的」活动记录：
+        // 无条件 bridge.uninstall() + active=null 会把后注册插件的 Hook 拆掉、
+        // 把它的注册记录抹掉。
+        const ownsActive = this.active
+          && this.active.pluginId === pluginId
+          && this.active.bridge === bridge;
         try {
           if (typeof module.deactivate === 'function') await module.deactivate();
         } catch {
           // 回滚失败不掩盖原始错误。
         }
-        try {
-          if (redirect) redirect.uninstall();
-        } catch {
-          // 同上。
+        if (ownsActive) {
+          try {
+            if (redirect) redirect.uninstall();
+          } catch {
+            // 同上。
+          }
+          try {
+            bridge.uninstall();
+          } catch {
+            // 同上。
+          }
+          seal.stop();
+          this.modules.delete(pluginId);
+          this.active = null;
         }
-        try {
-          bridge.uninstall();
-        } catch {
-          // 同上。
-        }
-        seal.stop();
-        this.modules.delete(pluginId);
-        this.active = null;
         throw new Error(`注册失败（activate 抛错）：${error.message}`);
       }
     }

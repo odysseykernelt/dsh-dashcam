@@ -15,6 +15,8 @@ const { OneSealStore } = require('../src/runtime/one-seal');
 const { createGuardChain } = require('../src/runtime/guards');
 const { createBridge } = require('../src/runtime/bridge');
 const { Ledger } = require('../src/runtime/ledger');
+const { LocalHost } = require('../src/host/local-host');
+const { createPluginRuntime } = require('../src/index');
 
 // 记账型假账本：只收集记录，不落盘。
 function fakeLedger() {
@@ -324,6 +326,72 @@ test('B1：磁盘账本比进程内基准小时构造告警 ledger_rollback', ()
     assert.ok(rollback.includes('回滚') || rollback.includes('截断'), '告警必须说明回滚/截断风险');
   } finally {
     console.warn = originalWarn;
+    cleanup(dir);
+  }
+});
+
+// ── Fix5 / A1·A2：dispose 走守卫卸载 + 回滚前校验归属 ────────────
+
+test('A1：dispose() 走 guard.uninstallNativeHooks()，guard.hooks 置空', () => {
+  const dir = tempDir('three-lens-dispose-');
+  try {
+    createPlugin({ dir, requests: [] });
+    const { manifest } = loadManifest(dir);
+    const runtime = createPluginRuntime({
+      manifest,
+      grants: [],
+      ledgerPath: path.join(dir, 'ledger.jsonl'),
+      patchBuiltins: true,
+      autoSweep: false,
+    });
+    assert.ok(runtime.guard.hooks, '安装后 guard.hooks 必须存在');
+    runtime.dispose();
+    assert.equal(runtime.guard.hooks, null, 'dispose 后 guard.hooks 必须置空，coverage 不得再指向已卸载的 Bridge');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('A2：activate 等待窗口内的迟到回滚不得拆掉后注册插件的 Bridge', async () => {
+  const dir = tempDir('three-lens-a2-');
+  const host = new LocalHost({ ledgerPath: path.join(dir, 'ledger.jsonl') });
+  const idA = 'com.example.a2.slow';
+  const idB = 'com.example.a2.victim';
+  // B 的探针：无任何授权读取全局路径——Bridge 在位时拒绝（DASHCAM_DENIED），
+  // Bridge 被误拆后不拦截（NOT-DENIED）。
+  const codeB = [
+    "'use strict';",
+    'const fs = require("node:fs");',
+    'module.exports = {',
+    '  async activate() {},',
+    '  invoke() {',
+    '    try { fs.readFileSync(process.execPath); return { probe: "NOT-DENIED" }; }',
+    '    catch (e) { return { probe: e.code || String(e) }; }',
+    '  },',
+    '};',
+  ].join('\n');
+  const codeA = [
+    "'use strict';",
+    'module.exports = {',
+    '  async activate() { await new Promise((resolve) => setTimeout(resolve, 120)); throw new Error("boom"); },',
+    '};',
+  ].join('\n');
+  createPlugin({ dir: path.join(dir, 'a'), id: idA, requests: [], code: codeA });
+  createPlugin({ dir: path.join(dir, 'b'), id: idB, requests: [], code: codeB });
+  try {
+    await host.install(path.join(dir, 'a'));
+    await host.install(path.join(dir, 'b'));
+    const registerA = host.register(idA);
+    // 等 A 完成装载、active 已写入、activate 进入 await 等待窗口。
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await host.uninstall(idA);
+    await host.register(idB);
+    await assert.rejects(registerA, /activate 抛错/);
+    assert.equal(host.active.pluginId, idB, 'B 的活动记录必须原样保留');
+    const out = await host.invoke(idB);
+    assert.equal(out.probe, 'DASHCAM_DENIED', 'A 的迟到回滚不得拆掉 B 的 Hook');
+  } finally {
+    await host.uninstall(idB).catch(() => {});
     cleanup(dir);
   }
 });

@@ -136,7 +136,11 @@ function createPluginRuntime({
       if (disposed) return;
       disposed = true;
       if (redirect) redirect.uninstall();
-      if (bridge) bridge.uninstall();
+      // A1（三视角审查）：走 guard.uninstallNativeHooks() 而不是 bridge.uninstall()——
+      // 前者会把 guard.hooks 置空，dispose 后 coverage() 不会继续指向一个已卸载的
+      // Bridge，strictPatch 的语义在释放后仍然成立（patchBuiltins=false 时本就是
+      // 空操作，幂等安全）。
+      guard.uninstallNativeHooks();
       seals.stop();
     },
   };
