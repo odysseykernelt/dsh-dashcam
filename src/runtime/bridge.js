@@ -336,12 +336,31 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
   }
 
   /**
-   * 数字是文件描述符：句柄在 open 时已经判过，fd 之后无法再映射回路径，
-   * 所以这里直通。真正的关口在 guardOpen——这也是 readSync/writeSync
-   * 故意不包装的原因（包了也只能拿到一个无法定性的 fd）。
+   * R7（三视角审查）：数字 fd 此前一律直通（「无法映射回路径」）。但 wrapped 方法
+   * 收到数字时（fs.readFile(3) / createReadStream({ fd: 3 })），open 判定被完全
+   * 绕开——继承来的 stdio fd（0/1/2）或 Bridge 安装前打开的 fd 就这样漏进去。
+   * 收口：只放行本守卫链 open 发放并复核过的 fd（guardedFds 白名单），其余一律
+   * 拒绝，0/1/2 也不例外。白名单不随 close 回收（fd 号复用只是沿用旧路径的授权
+   * 口径，仍严于曾经的「数字全放行」）。
    */
+  const guardedFds = new Set();
+
   function guardPath(action, pathValue) {
-    if (typeof pathValue === 'number') return;
+    if (typeof pathValue === 'number') {
+      if (guardedFds.has(pathValue)) return;
+      const scope = { fd: pathValue };
+      recordBridgeDeny(
+        `fs.${action}`,
+        'raw_fd',
+        '数字 fd 无法映射回路径且未经本守卫链 open 发放，拒绝（0/1/2 也不例外）',
+        scope,
+      );
+      throw new DashcamDenied(`数字 fd（${pathValue}）未经守卫链 open 发放，拒绝`, {
+        capability: `fs.${action}`,
+        scope,
+        ruleId: 'raw_fd',
+      });
+    }
     guard.enforce(`fs.${action}`, { path: pathValue });
   }
 
@@ -393,6 +412,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
       try { fs.closeSync(fd); } catch { /* fd 可能已被错误路径消耗 */ }
       throw error;
     }
+    guardedFds.add(fd);
     return fd;
   }
 
@@ -559,9 +579,29 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     });
   }
 
+  /**
+   * R7：read 家族的写 flag 归一。readFile(path, { flag: 'r+' })、
+   * createReadStream(path, { flags: 'r+' }) 本质是写，只按 action='read' 判定
+   * 会把未授权的 fs.write 漏成放行（写 flag 绕过 fs.write 判定）。open 路径
+   * 的 flag 由 guardOpen 判，这里补齐不经 open 的方法位：capabilityNeedsForOpen
+   * 认为需要写时，追加一次 fs.write 判定（deny 先记账再抛，与守卫链同口径）。
+   */
+  const WRITE_FLAG_METHODS = new Set(['readFile', 'readFileSync', 'createReadStream']);
+
   function wrapFsMethod(action, { paths = [0], promises = false, method = null } = {}) {
     return (original) => function wrappedFs(...args) {
-      for (const index of paths) guardPath(action, args[index]);
+      for (const index of paths) {
+        if (action === 'read' && method && WRITE_FLAG_METHODS.has(method)) {
+          const options = args[index + 1];
+          if (options && typeof options === 'object' && !Array.isArray(options) && !isNativeObject(options)) {
+            const flagValue = method === 'createReadStream' ? options.flags : options.flag;
+            if (flagValue !== undefined && capabilityNeedsForOpen(flagValue, fs.constants).write) {
+              guardPath('write', args[index]);
+            }
+          }
+        }
+        guardPath(action, args[index]);
+      }
       // H1：options 交给原生前做白名单提取，类实例/继承 getter 在提取时
       // （callDepth === 0）被守卫拦截并记账，原生重入窗口里只剩纯数据。
       const callArgs = extractOptionsArg(args, method ? FS_OPTIONS[method] : null, `fs.${action}`, recordOptionsDeny);
@@ -597,6 +637,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
               try { fs.closeSync(fd); } catch { /* 同上 */ }
               return callback.call(this, error);
             }
+            guardedFds.add(fd);
           }
           return callback.call(this, err, fd);
         };
@@ -706,6 +747,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
           try { await handle.close(); } catch { /* 句柄可能已失效 */ }
           throw error;
         }
+        guardedFds.add(handle.fd);
         return handle;
       }, 'fsp.open');
       patchMethod(fsp, 'opendir', wrapFsMethod('read', { promises: true, method: 'opendir' }), 'fsp.opendir');

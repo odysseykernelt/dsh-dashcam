@@ -1,10 +1,13 @@
 'use strict';
 // 三视角审查（repo-audit-2026-11-09 §6.5）整改的回归用例。
 // Fix1：R1 http options 通道拒绝 + R3 URL/options 合并判定。
+// Fix3：R7 数字 fd 白名单 + readFile 写 flag 归一。
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const { tempDir, createPlugin, cleanup } = require('./helpers/fixtures');
 const { loadManifest } = require('../src/contract/manifest');
 const { normalizeGrant } = require('../src/contract/capabilities');
@@ -17,20 +20,25 @@ function fakeLedger() {
   return { records: [], append(rec) { this.records.push(rec); } };
 }
 
-function setup({ grants, requests }) {
+// grants / requests 支持传函数（入参为 POSIX 分隔的插件根路径），供 fs 用例
+// 在目录创建后动态拼 scope；传数组则按原样使用。
+function setup({ grants, requests, files }) {
   const dir = tempDir('three-lens-');
+  const root = dir.replace(/\\/g, '/');
   createPlugin({
     dir,
-    requests: requests || [
+    requests: typeof requests === 'function' ? requests(root) : (requests || [
       { cap: 'net.outbound', scope: { hosts: ['a.example:80'] }, reason: '只授 a.example:80' },
-    ],
+    ]),
+    files,
   });
   const { manifest } = loadManifest(dir);
   const ledger = fakeLedger();
   const seal = new OneSealStore();
-  const chain = grants.map((scope, index) => normalizeGrant({
-    capability: 'net.outbound',
-    scope,
+  const resolvedGrants = typeof grants === 'function' ? grants(root) : grants;
+  const chain = resolvedGrants.map((grant, index) => normalizeGrant({
+    capability: grant.capability,
+    scope: grant.scope,
   }, { pluginRoot: dir }, index));
   const guard = createGuardChain({ manifest, grants: chain, ledger, seal, pluginRoot: dir });
   const bridge = createBridge({ guard, ledger, plugin: manifest });
@@ -47,7 +55,7 @@ function scopeText(record) {
 }
 
 test('R3：http.request(url, options) 的 options.host 覆盖 URL——合并后判定真实建连对象', () => {
-  const runtime = setup({ grants: [{ hosts: ['a.example:80'] }] });
+  const runtime = setup({ grants: [{ capability: 'net.outbound', scope: { hosts: ['a.example:80'] } }] });
   try {
     // URL 指向已授权的 a.example，options 偷偷换到 b.example：
     // 修复前只判 URL（连 B 记 A），修复后按合并结果 b.example 判定并拒绝。
@@ -79,7 +87,7 @@ test('R3：http.request(url, options) 的 options.host 覆盖 URL——合并后
 });
 
 test('R3：options.host 复合形态 host:port 与显式 port 都按真实端口判定', () => {
-  const runtime = setup({ grants: [{ hosts: ['a.example:80'] }] });
+  const runtime = setup({ grants: [{ capability: 'net.outbound', scope: { hosts: ['a.example:80'] } }] });
   try {
     assert.throws(
       () => http.request({ host: 'a.example:8080' }),
@@ -94,7 +102,7 @@ test('R3：options.host 复合形态 host:port 与显式 port 都按真实端口
 });
 
 test('R1：http options 通道（createConnection / 函数型 lookup / 自定义 agent / socketPath）一律拒绝', () => {
-  const runtime = setup({ grants: [{ hosts: ['a.example:80'] }] });
+  const runtime = setup({ grants: [{ capability: 'net.outbound', scope: { hosts: ['a.example:80'] } }] });
   try {
     const cases = [
       ['createConnection', { createConnection: () => ({}) }, 'http_createConnection'],
@@ -120,7 +128,7 @@ test('R1：http options 通道（createConnection / 函数型 lookup / 自定义
 
 test('R1：agent 为 undefined / false（内部默认 Agent）不误伤', () => {
   const runtime = setup({
-    grants: [{ hosts: ['127.0.0.1:80'] }],
+    grants: [{ capability: 'net.outbound', scope: { hosts: ['127.0.0.1:80'] } }],
     requests: [{ cap: 'net.outbound', scope: { hosts: ['127.0.0.1:80'] }, reason: '本机回环' }],
   });
   try {
@@ -136,6 +144,126 @@ test('R1：agent 为 undefined / false（内部默认 Agent）不误伤', () => 
       }
       assert.notEqual(verdict, 'DASHCAM_DENIED', `agent=${agent} 走内部默认 Agent，不得拒绝`);
     }
+  } finally {
+    runtime.bridge.uninstall();
+    cleanup(runtime.dir);
+  }
+});
+
+// ── Fix3 / R7：数字 fd 白名单 + readFile 写 flag 归一 ────────────
+
+const FS_READ = (root) => ({ capability: 'fs.read', scope: { paths: [root, `${root}/**`] } });
+const FS_WRITE = (root) => ({ capability: 'fs.write', scope: { paths: [root, `${root}/**`] } });
+const FS_REQUESTS = (root) => [
+  { cap: 'fs.read', scope: { paths: [root, `${root}/**`] }, reason: '读' },
+  { cap: 'fs.write', scope: { paths: [root, `${root}/**`] }, reason: '写' },
+];
+
+test('R7：数字 fd 未经守卫链 open 发放一律拒绝（raw_fd），0/1/2 也不例外', () => {
+  const runtime = setup({
+    grants: (root) => [FS_READ(root)],
+    requests: (root) => [{ cap: 'fs.read', scope: { paths: [root, `${root}/**`] }, reason: '读' }],
+    files: { 'data.txt': 'ok\n' },
+  });
+  try {
+    for (const fd of [0, 1, 2, 999]) {
+      assert.throws(
+        () => fs.readFileSync(fd),
+        (e) => e.code === 'DASHCAM_DENIED',
+        `数字 fd ${fd} 必须以 DASHCAM_DENIED 拒绝`,
+      );
+      const deny = runtime.ledger.records.at(-1);
+      assert.equal(deny.ruleId, 'raw_fd', `数字 fd ${fd} 必须按 raw_fd 记账`);
+      assert.equal(deny.intercepted, true);
+    }
+    // 对照：授权路径上的普通读不受影响。
+    assert.equal(fs.readFileSync(path.join(runtime.dir, 'data.txt'), 'utf8'), 'ok\n');
+  } finally {
+    runtime.bridge.uninstall();
+    cleanup(runtime.dir);
+  }
+});
+
+test('R7：经守卫链 open 发放并复核过的 fd，数字形态放行', () => {
+  const runtime = setup({
+    grants: (root) => [FS_READ(root)],
+    requests: (root) => [{ cap: 'fs.read', scope: { paths: [root, `${root}/**`] }, reason: '读' }],
+    files: { 'data.txt': 'ok\n' },
+  });
+  try {
+    const file = path.join(runtime.dir, 'data.txt');
+    // openSync 走守卫链（fs.read 已授）→ 发放并加入白名单；随后数字形态读放行。
+    const fd = fs.openSync(file, 'r');
+    try {
+      assert.equal(fs.readFileSync(fd, 'utf8'), 'ok\n', '白名单内的 fd 必须放行');
+    } finally {
+      fs.closeSync(fd);
+    }
+    // 白名单按设计不随 close 回收（沿用旧路径的授权口径，仍严于曾经的
+    // 「数字全放行」）——close 后再读该 fd 号不再判定拒绝，由原生抛 EBADF。
+    assert.throws(() => fs.readFileSync(fd, 'utf8'), (e) => e.code !== 'DASHCAM_DENIED');
+  } finally {
+    runtime.bridge.uninstall();
+    cleanup(runtime.dir);
+  }
+});
+
+test('R7：readFile 写 flag 归一——flag r+ 需 fs.write 授权，未授则拒绝并记账', () => {
+  const runtime = setup({
+    grants: (root) => [FS_READ(root)],
+    requests: (root) => [{ cap: 'fs.read', scope: { paths: [root, `${root}/**`] }, reason: '只读' }],
+    files: { 'data.txt': 'ok\n' },
+  });
+  try {
+    const file = path.join(runtime.dir, 'data.txt');
+    assert.throws(
+      () => fs.readFileSync(file, { flag: 'r+' }),
+      (e) => e.code === 'DASHCAM_DENIED',
+      "flag 'r+' 本质是写，只授 fs.read 时必须拒绝",
+    );
+    const deny = runtime.ledger.records.at(-1);
+    assert.equal(deny.capability, 'fs.write', '写 flag 必须按 fs.write 判定并记账');
+    // 对照：纯读 flag 正常放行。
+    assert.equal(fs.readFileSync(file, { flag: 'r', encoding: 'utf8' }), 'ok\n');
+  } finally {
+    runtime.bridge.uninstall();
+    cleanup(runtime.dir);
+  }
+});
+
+test('R7：fs.write 已授时 flag r+ 正常工作（归一不误伤）', () => {
+  const runtime = setup({
+    grants: (root) => [FS_READ(root), FS_WRITE(root)],
+    requests: FS_REQUESTS,
+    files: { 'data.txt': 'ok\n' },
+  });
+  try {
+    const file = path.join(runtime.dir, 'data.txt');
+    // 'r+' 读 + 不写内容：readFileSync 只读不落笔，但 flag 需要 fs.write 授权——
+    // 已授时必须原样放行。
+    assert.equal(fs.readFileSync(file, { flag: 'r+', encoding: 'utf8' }), 'ok\n');
+    // createReadStream 的 flags 同口径：写 flag 在只授 fs.read 时拒绝。
+  } finally {
+    runtime.bridge.uninstall();
+    cleanup(runtime.dir);
+  }
+});
+
+test('R7：createReadStream 写 flags 归一——flags r+ 未授 fs.write 时拒绝', () => {
+  const runtime = setup({
+    grants: (root) => [FS_READ(root)],
+    requests: (root) => [{ cap: 'fs.read', scope: { paths: [root, `${root}/**`] }, reason: '只读' }],
+    files: { 'data.txt': 'ok\n' },
+  });
+  try {
+    const file = path.join(runtime.dir, 'data.txt');
+    assert.throws(
+      () => fs.createReadStream(file, { flags: 'r+' }),
+      (e) => e.code === 'DASHCAM_DENIED',
+      "createReadStream 的 flags 'r+' 必须按 fs.write 判定",
+    );
+    const deny = runtime.ledger.records.at(-1);
+    assert.equal(deny.capability, 'fs.write');
   } finally {
     runtime.bridge.uninstall();
     cleanup(runtime.dir);
