@@ -26,19 +26,23 @@ const REAL_REALPATH_SYNC = typeof fs.realpathSync.native === 'function'
   ? fs.realpathSync.native
   : fs.realpathSync;
 
-/** 补丁式覆盖永远是真子集。把差集明确写出来，比假装它不存在有用。 */
+/**
+ * 记录盲区清单（原「拦截缺口」）：行车记录仪不承诺拦住谁，只承诺不撒谎——
+ * 所以这份清单写的不是「防不住什么」，而是「账本上看不到什么」。
+ * 复核账本时把它当作免责边界：这里列出的活动不产生记录，不等于没有发生。
+ */
 const KNOWN_GAPS = Object.freeze([
-  'vm 内生成的代码与原生扩展（.node）：同一进程内没有第二道墙，根治只有分进程或分 realm',
-  '直接 syscall 或 process.binding',
-  'Bridge 安装前已解构保存的函数引用',
-  'Bridge 安装前打开的文件描述符',
-  '未列入补丁表的入口：http2、WebSocket、dgram，以及 fs 的部分低层 API',
-  'TOCTOU 残余窗口：fd 复核把窗口压到 open 返回之后，但无法证明路径在 IO 期间不变；目录级 rename 攻击仍需宿主侧文件系统隔离',
-  '未声明且非敏感的环境变量读取（只有敏感命名或已声明前缀才进守卫链）',
-  '卸载（dispose）之后仍在事件队列里的定时器/回调：Bridge 已还原原生模块，这些调用不再经过守卫链',
-  '已授权的 worker_threads / 子进程内部：独立 realm 或独立进程，本进程的 Hook 对其不可见',
-  'fs options 白名单（FS_OPTIONS）之外的键会被丢弃：Node 新版本给 fs 方法新增 options 键而白名单未同步时，该键静默失效（丢功能不丢安全），升级 Node 后需要对照核补',
-  'options 的深层嵌套值（第二层及以下的对象/存取器）按引用保留：白名单只做第一层提取，深层的 getter 仍可能在原生窗口内执行',
+  '记录盲区：vm 内生成的代码与原生扩展（.node）——本进程内没有第二道墙，其 API 调用不产生账本记录；要记录只能分进程或分 realm',
+  '记录盲区：直接 syscall 或 process.binding 绕过 Node API，账本记不到',
+  '记录盲区：Bridge 安装前已解构保存的函数引用，调用发生在 Hook 之外，账本记不到',
+  '记录盲区：Bridge 安装前打开的文件描述符，后续读写走原生 fd，账本记不到',
+  '记录盲区：未列入补丁表的入口——http2、WebSocket、dgram，以及 fs 的部分低层 API，这些通道的活动不进账本',
+  '记录盲区：TOCTOU 残余窗口——fd 复核把窗口压到 open 返回之后，但 IO 期间路径被 rename 的话，账本记到的是旧路径',
+  '记录盲区：未声明且非敏感的环境变量读取不留痕——只有敏感命名或已声明前缀才进账本',
+  '记录盲区：卸载（dispose）之后仍在事件队列里的定时器/回调——Bridge 已还原原生模块，这些调用不再产生记录',
+  '记录盲区：已授权的 worker_threads / 子进程内部——独立 realm 或独立进程，本进程的 Hook 看不见，其内部活动账本记不到',
+  '记录盲区：fs options 白名单（FS_OPTIONS）之外的键会被丢弃——Node 新版本新增的 options 键静默失效（丢功能不丢记录完整性），升级 Node 后需要对照核补',
+  '记录盲区：options 的深层嵌套值（第二层及以下的对象/存取器）按引用保留——白名单只做第一层提取，深层的 getter 仍可能在原生窗口内执行且不被记录',
 ]);
 
 function safeDefine(target, prop, value, descriptor) {

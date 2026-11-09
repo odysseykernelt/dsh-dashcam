@@ -107,6 +107,7 @@ async function main() {
       '  keygen <outDir>',
       '  sign <pluginDir> --plugin <id> --version <v> --publisher-key <pem> --publisher-key-id <id> --reviewer-key <pem> --reviewer-key-id <id>',
       '  verify <pluginDir> --trust <trust.json>',
+      '  verify-ledger <ledger.jsonl> [--mac-key <key> | --mac-key-file <path> | --mac-key-env <NAME>] [--anchor anchor.json]',
       '  gates <pluginDir> [--channel consumer|enterprise] [--policy policy.json] [--trust trust.json] [--skip-signature] [--host]',
       '  portrait <pluginDir> [--channel consumer|enterprise] [--policy policy.json] [--trust trust.json]',
       '  autopsy <pluginDir> [--profile profile.json] [--patch patch.json] [--policy policy.json] [--no-signature]',
@@ -148,6 +149,53 @@ async function main() {
     const result = verifyBundle({ pluginDir, trust });
     output(result);
     if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (command === 'verify-ledger') {
+    // 独立验链：脱离宿主进程复核账本——逐行重算哈希链 + mac 校验 + 可选外部锚点。
+    // 行车记录仪的产物是账本，复核就不应该依赖装着它的那个宿主还活着。
+    const ledgerPath = path.resolve(rest[1]);
+    if (!fs.existsSync(ledgerPath)) {
+      process.stderr.write(`账本不存在：${ledgerPath}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    let resolvedMac;
+    try {
+      resolvedMac = resolveLedgerMacKey({
+        ledgerMacKey: typeof flags['mac-key'] === 'string' ? flags['mac-key'] : null,
+        ledgerMacKeyFile: flags['mac-key-file'] || null,
+        ledgerMacKeyEnv: flags['mac-key-env'] || null,
+      });
+    } catch (error) {
+      process.stderr.write(`${error.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const ledger = new Ledger(ledgerPath, { macKey: resolvedMac.key });
+    const report = ledger.verify(flags.anchor ? { anchor: readJson(flags.anchor) } : {});
+    const records = ledger.records();
+    const last = records[records.length - 1] || null;
+    output({
+      ok: report.ok,
+      file: ledgerPath,
+      records: report.count,
+      lastSeq: last && Number.isInteger(last.seq) ? last.seq : null,
+      head: report.head,
+      macVerified: Boolean(resolvedMac.key),
+      errors: report.errors,
+    });
+    if (!report.ok) {
+      process.stderr.write(`账本校验失败（${report.errors.length} 处）：\n`);
+      for (const error of report.errors.slice(0, 5)) {
+        process.stderr.write(`  line ${error.line} ${error.code} — ${error.detail}\n`);
+      }
+      if (report.errors.some((error) => error.code === 'mac_key_missing')) {
+        process.stderr.write('提示：该账本带 mac。请用 --mac-key <key> / --mac-key-file <path> / --mac-key-env <NAME> 提供密钥。\n');
+      }
+      process.exitCode = 1;
+    }
     return;
   }
 
