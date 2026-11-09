@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-2.0.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
+![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-2.0.1-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
 **dsh-dashcam 是给 AI 插件装的行车记录仪——它记录插件实际做了什么，不替你决定插件能做什么。**
 

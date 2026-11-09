@@ -1,29 +1,7 @@
 {
   "name": "dsh-dashcam-host",
   "version": "1.14.0",
-  "description": "把 dsh-dashcam 判定链接入 DeepSeek Harness 宿主（tools/pre-execute waterfall + tool→capability 映射层，默认 advisory 只记账）+ 浏览器面板（Agent Dashcam，lib/client.js）。",
-  "type": "module",
-  "main": "lib/index.js",
-  "exports": {
-    ".": { "default": "./lib/index.js" },
-    "./client": "./lib/client.js",
-    "./package.json": "./package.json"
-  },
-  "scripts": {
-    "build": "node build.mjs",
-    "smoke": "node test/smoke-host.mjs && node test/ingress-host.mjs && node test/panel-host.mjs"
-  },
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-renderer",
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-shortcuts"
-      ]
-    }
-  }
+  "private": true,
+  "description": "dsh-dashcam 的宿主适配层（插件入口 + 浏览器面板）。随根包 dsh-dashcam 一起发布：本文件只为让 Node 把 lib/*.js 按 ESM 解析（根包是 commonjs），插件身份与客户端声明都在根 package.json。",
+  "type": "module"
 }
