@@ -35,6 +35,8 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { readFileSync, statSync, existsSync, appendFileSync, mkdirSync, renameSync } from 'node:fs';
+import { attachIngress } from './ingress.js';
+import { registerPanelRoutes } from './panel.js';
 
 const require = createRequire(import.meta.url);
 const dashcam = require('../../src/index.js');
@@ -42,7 +44,7 @@ const dashcam = require('../../src/index.js');
 export const name = 'dsh-dashcam-host';
 export const inject = [];
 
-const PLUGIN_VERSION = '1.11.0';
+const PLUGIN_VERSION = '1.14.0';
 
 const MANIFEST = {
   id: 'dsh-dashcam-host',
@@ -657,6 +659,64 @@ export function apply(ctx, config = {}) {
     reason: 'dsh-dashcam-host 判定链挂载',
   });
 
+  // ingress 审计：请求出口 + 消息入口的元数据。事件名可配；接不上必须留痕，
+  // 不能让「没记录」看起来像「没有异常」。
+  const ingress = attachIngress(ctx, {
+    ledger,
+    policy: { ingress: config.ingress || {} },
+    plugin: MANIFEST.id,
+    pluginVersion: PLUGIN_VERSION,
+    config: config.ingress || {},
+    log: (message) => console.warn(message),
+  });
+  appendAuxRecord({
+    capability: 'telemetry',
+    action: ingress.enabled ? 'ingress-mount' : 'ingress-disabled',
+    scope: {
+      enabled: ingress.enabled,
+      requestEvent: ingress.requestEvent,
+      inboundEvent: ingress.inboundEvent,
+      headBytes: ingress.recorder ? ingress.recorder.settings.headBytes : null,
+    },
+    decision: 'allow',
+    ruleId: ingress.enabled ? 'ingress-mount' : 'ingress-disabled',
+    reason: ingress.enabled ? 'ingress 审计接线' : 'ingress 审计未启用（配置关闭或账本不可用）',
+  });
+
+  // 面板只读 API（1.13.0）：webServer 可用时挂 /api/dsh-dashcam/* 路由，供注入
+  // DSH Web 的浏览器面板（lib/client.js）消费。optional-safe——webServer 缺席或
+  // 挂载失败只丢面板入口，不影响判定链与账本；config.panel.enabled=false 可关。
+  if (config.panel && config.panel.enabled === false) {
+    console.info('[dsh-dashcam] 面板 API 已通过 config.panel.enabled=false 关闭');
+  } else {
+    try {
+      if (typeof ctx.inject === 'function') {
+        ctx.inject(['webServer'], (hostCtx) => {
+          hostCtx.effect(() => {
+            const webServer =
+              typeof hostCtx.get === 'function' ? hostCtx.get('webServer') : hostCtx.webServer;
+            try {
+              const dispose = registerPanelRoutes(webServer, {
+                ledgerPath,
+                version: PLUGIN_VERSION,
+                log: (message) => console.info(message),
+              });
+              console.info(`[dsh-dashcam] 面板 API 已挂载（/api/dsh-dashcam/*，ledger=${ledgerPath}）`);
+              return dispose;
+            } catch (error) {
+              console.warn(`[dsh-dashcam] 面板 API 挂载失败：${error.message}`);
+              return () => {};
+            }
+          }, 'dsh-dashcam: panel routes');
+        });
+      } else {
+        console.info('[dsh-dashcam] 当前宿主未提供 ctx.inject，面板 API 不挂载');
+      }
+    } catch (error) {
+      console.warn(`[dsh-dashcam] 面板 API 不可用：${error.message}`);
+    }
+  }
+
   // tools/pre-execute waterfall：判定链的真正入口（旧版监听 'pre-execute'，
   // DSH 核心只发 tools/pre-execute——判定链因此一次都没跑过）。
   // 未映射遥测：console 点名 + 账本 telemetry 记录同名只记一次（seenUnmapped
@@ -781,6 +841,11 @@ export function apply(ctx, config = {}) {
   });
 
   ctx.effect(() => () => {
+    try {
+      ingress.dispose();
+    } catch (error) {
+      console.warn(`[dsh-dashcam] ingress dispose failed: ${error.message}`);
+    }
     try {
       runtime.deactivate();
     } catch (error) {

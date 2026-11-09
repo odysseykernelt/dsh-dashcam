@@ -19,7 +19,80 @@
 | `ledgerPath` | `~/.dsh/dsh-dashcam/ledger.jsonl` | 账本文件路径；测试 profile 必须独立（如 `ledger-dashcam-test.jsonl`） |
 | `ledgerMacKey` / `ledgerMacKeyFile` / `ledgerMacKeyEnv` | 空 | F1/1.10.11 D4：账本 HMAC 密钥（≥32 字节）。**启用前必读下节** |
 | `patchBuiltins` | `false` | 进程内 Bridge 补丁；Electron 主进程开启会接管应用自身 fs/net，慎开 |
+| `ingress` | `{}`（默认启用） | 1.12.0：LLM 请求/入站消息的元数据审计。见下节 |
+| `panel` | `{}`（默认启用） | 1.13.0：浏览器面板（Agent Dashcam）。`{ enabled: false }` 关闭 `/api/dsh-dashcam/*` 路由。见下节 |
 | `requests` / `grants` | `[]` | Two-Key：能力声明（对象数组，写成字符串会在 mount 时 fail-fast） |
+
+### ingress 审计（1.12.0）
+
+把「发往模型的 messages」与「进入会话的输入」摘要进账本，用于回答「这条消息是进来的还是编出来的」。
+只记元数据，不落正文；不判定、不拦截；记录失败 fail-open。
+
+| 子键 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 关闭时写一条 `telemetry/ingress-disabled`，不静默消失 |
+| `requestEvent` | `llm/stream` | 请求出口 waterfall（`dsh-llm` 的 `streamWithRegistration`），载荷即完整请求。已按本机 `resources/app.asar` 核对 |
+| `inboundEvent` | `session/event` | 只取 `event.type === 'user/message'`，与会话日志同源。已按本机 asar 核对 |
+| `headBytes` | `80` | 每条消息保留的前 N 字；`0` = 只存长度与 sha256 |
+| `maxSample` | `32` | 单条请求记录最多带多少条新增消息样本 |
+| `maxLineBytes` | `8192` | 单条记录体积上限，超出先砍样本再砍 coverage |
+| `inboundWindow` | `500` | 每 session 保留的 inbound 匹配窗口 |
+| `inboundTtlMs` | `3600000` | inbound 匹配窗口的存活时间 |
+| `maskSecrets` | `true` | head 打码（Bearer / `sk-` / `ghp_` / `password=`，best-effort） |
+| `whitelistKinds` | `runtime-context` 等 | 不要求出现在 inbound 的 `source.kind`；**按 kind 不按 role** |
+
+判据：`inbound 无 + request 有` = 注入；`inbound 无 + request 无` = 模型自造（**不告警**，必须有用例守住）。
+`llm.anomaly` 只记录，`decision` 仍是 `allow`、`intercepted` 仍是 `false`。
+
+已知边界：本地只能看到客户端发出去的 messages。服务端在客户端之后追加的前缀不在覆盖范围；
+`ingress --find` 只搜已采样的 head，搜不到不等于没发生。
+接线位置必须在 messages **定型之后**（任何 trim / 重写 / 模板展开之前会与 inbound 指纹对不上，
+产生 `added_user_without_inbound` 误报）。
+
+## 浏览器面板（Agent Dashcam，1.14.0）
+
+注入 DSH Web（桌面与网页同源）的只读仪表盘：右下角悬浮 **REC 徽章**（已录时长走秒），
+可拖拽换位置（按住拖动即可，位置记忆在 localStorage），点击或 `Ctrl+Shift+D` 打开弹窗面板。
+三个视图，全部消费真实账本：
+
+- **实时录制**：指标卡（运行时长 = 判定链挂载至今 / 纳管调用 / 改动文件 / 异常）、
+  实时事件流（增量轮询，事件行与状态窗口都封顶 400 条，DOM 只增不减会拖垮长开会话）、
+  当前步骤、判定链状态（模式 / 旁路命中 / 未纳管调用 / 版本 / 会话 / 模型 / 拦截占比）。
+- **回放**：任一录像段时间轴画布（类型刻度 + 播放头 + 悬浮提示）、播放/暂停/1×·10×·60×、
+  事件列表联动、事件详情（路径 / 命令 / 决策 / 规则）。空格播放暂停、←/→ 逐事件、Esc 关面板。
+  超过 2000 条的录像段明确标注「已截断」。
+- **录像历史**：按「相邻记录间隔 > 15 分钟」聚合成段（`S-xxxx`），搜索 + 状态过滤，
+  点击进入该段回放。
+
+面板口径（1.14.0 复核修正）：
+
+- **异常卡片只算真异常**：`intercepted=true` 或 ingress anomaly。advisory 下
+  `decision=deny` 但未拦截的是**旁路命中**（guards.js 口径：旁路照样落 deny 账），
+  单独以灰色行展示——否则旁路模式下红色常亮，失去警示作用。录像段「异常」列同口径。
+- **纳管/未纳管分开计数**：`judgments` 只覆盖映射表内五类 capability；
+  MCP / workflow / subagent 等映射表外工具走 `telemetry/unmapped-tool`，
+  计入「未纳管调用」单独展示——否则 MCP 重的会话「工具调用」恒为 0。
+- **records 游标不丢记录**：`lastSeq` 只取实际返回的最后一条 seq（此前对整个文件取
+  max，首屏 limit 截断时游标直接跳到文件尾部，中间记录永久丢失）；
+  超出 limit 回 `truncated: true`。
+- **尾部解析缓存**：status/records 共用 size+mtime 键的 10s 缓存（同 history），
+  轮询不再每 2–3 秒重读重解析 4MB 账本。
+
+实现（与 dsh-deepseek-tan-pet 同款姿势）：
+
+- 宿主半侧 [lib/panel.js](lib/panel.js)：`GET /api/dsh-dashcam/status|records|history`
+  三条路由，环回 Host 校验、`no-store`、optional-safe（webServer 缺席只丢面板，
+  判定链与账本不受影响）。
+- 浏览器半侧 `lib/client.js`（由 `npm run build` 从 `src/client/` 拼装）：
+  `window.__ModuleLoader__.load` 包，`package.json` 的 `dsh.client` 声明注入
+  `ui-renderer / ui-slots / shortcuts`；面板直挂 `document.body`（dsh-app:// 下
+  iframe 会 404），只用 right/bottom 定位；单例 + generation 防级联。
+- **脱敏口径**：只透出粗粒度事实（路径 / 命令首词 / 主机 / 计数 / 决策 / reason）；
+  `llm.request` 的 sample（消息 head 样本）与哈希链字段（hash/prevHash/mac）不透出；
+  `llm.inbound` 只透出截断 48 字的 head。历史聚类全量读带 10s 缓存。
+
+改前端后：`npm run build` 重新生成 `lib/client.js`，重启 DSH 生效（桌面版当前
+运行的进程仍加载旧包）。
 
 ## 工具映射表（1.10.13）
 
@@ -93,10 +166,12 @@ stdout 也能事后查）；`ledgerMacKeyEnv` 指向的环境变量未设置时�
 ## 验证
 
 ```powershell
-npm run smoke   # 96 项断言，全过
+npm run smoke   # 96 + 15 + 43 项断言，全过（含 panel 路由/脱敏/聚类/游标口径）
+npm run build   # 重新生成 lib/client.js（改 src/client 后必须跑）
 # 主仓库回归：cd ..; npm test   # 241 例，0 fail
 ```
 
 部署确认（F8）：重启 DSH 桌面后，账本新 mount 记录应为
-`pluginVersion: "1.10.14"`、`scope.mode` 与配置一致；**部署侧暂保持 advisory 观察，
+`pluginVersion: "1.14.0"`、`scope.mode` 与配置一致，右下角出现 REC 徽章、
+`Ctrl+Shift+D` 可开面板；**部署侧暂保持 advisory 观察，
 勿急着开 enforce / enforceUnmapped**（开 enforceUnmapped 前先按上表配 unmappedAllowlist）。
