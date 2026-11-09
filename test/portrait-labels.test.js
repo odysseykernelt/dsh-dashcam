@@ -31,14 +31,14 @@ test('画像卡：首屏直出安全标签与隔离档两行', () => {
   const portrait = buildPortrait({
     manifest,
     labels: [
-      { gate: 'signature', code: 'signature_skipped', label: 'Untrusted', reason: '调用方跳过验签' },
+      { gate: 'signature', code: 'signature_skipped', label: 'SignatureSkipped', reason: '调用方跳过验签' },
       { gate: 'sieve', code: 'quarantined', label: 'Quarantined', reason: 'legacy 插件按 deny-all 隔离' },
     ],
   });
   assert.equal(portrait.quarantine, true);
 
   const rendered = renderPortrait(portrait);
-  assert.ok(rendered.includes('安全标签：Untrusted / Quarantined'));
+  assert.ok(rendered.includes('安全标签：SignatureSkipped / Quarantined'));
   assert.ok(rendered.includes('隔离档：无 dashcam 声明，运行时 deny-all'));
 });
 

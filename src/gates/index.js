@@ -114,8 +114,11 @@ async function runInstallPipeline({
     }
   } else {
     signatureStage.status = 'skip';
+    // N3：跳过验签 ≠ 验过不可信。两者结果都放行，但含义不同——
+    // 「跳过」是调用方主动放弃核验，状态未知；「Untrusted」是核验了且没通过。
+    // 混用同一个 label 会让 --skip-signature 替真问题背锅。
     addLabel(signatureStage, {
-      code: 'signature_skipped', label: 'Untrusted', reason: '调用方跳过验签，签名状态未知',
+      code: 'signature_skipped', label: 'SignatureSkipped', reason: '调用方跳过验签，签名状态未知',
     });
   }
   stages.push(finishStage(signatureStage));

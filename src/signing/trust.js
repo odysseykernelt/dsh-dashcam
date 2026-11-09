@@ -82,9 +82,9 @@ function revokeKey(trust, keyId) {
   return key;
 }
 
-function keysForRole(trust, role) {
-  if (!trust || !Array.isArray(trust.keys)) return [];
-  return trust.keys.filter((key) => key.roles.includes(role) && key.status !== 'revoked');
-}
+// keysForRole 已删除（N4，review-followup-2026-11-09）：它只排除 revoked，
+// 不检查 notAfter、不要求 active，语义与 findKey 不一致且全仓无调用者——
+// 留着的唯一后果是将来有人拿它当验签入口，retired/过期密钥就复活了。
+// 需要按角色列出密钥时，用 findKey 逐个判定（active + notAfter 才算数）。
 
-module.exports = { createTrust, findKey, upsertKey, rotateKey, retireKey, revokeKey, keysForRole, normalizeKey, spkiFingerprint };
+module.exports = { createTrust, findKey, upsertKey, rotateKey, retireKey, revokeKey, normalizeKey, spkiFingerprint };

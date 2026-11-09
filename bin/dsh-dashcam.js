@@ -19,7 +19,9 @@ const { checkCircuitBreaker } = require('../src/governance/rollout');
 const { LocalHost, resolveLedgerMacKey } = require('../src/host/local-host');
 const { Ledger } = require('../src/runtime/ledger');
 const { summarizeIngress, findIngressMatches } = require('../src/runtime/ingress');
-const { buildBehaviorReport } = require('../src/governance/behavior');
+const { buildBehaviorReport, buildDeclarationDraft } = require('../src/governance/behavior');
+const { createPluginRuntime } = require('../src/index');
+const { normalizeGrant } = require('../src/contract/capabilities');
 const { stableStringify, sha256: sha256Hex } = require('../src/util/stable');
 
 function readJson(file) {
@@ -162,6 +164,8 @@ async function main() {
       '  rotate <ledger.jsonl> [--max-bytes <N>] [--mac-key-file <path> | --mac-key-env <NAME>]',
       '  redact <ledger.jsonl> --out <file.jsonl> [--mac-key-file <path> | --mac-key-env <NAME>]',
       '  behavior <ledger.jsonl> [--manifest <pluginDir>] [--mac-key-file <path> | --mac-key-env <NAME>]',
+      '  draft <ledger.jsonl> [--manifest <pluginDir>] [--mac-key-file <path> | --mac-key-env <NAME>]',
+      '  bench [--n <iterations>]',
       '  gates <pluginDir> [--channel consumer|enterprise] [--policy policy.json] [--trust trust.json] [--skip-signature] [--host]',
       '  portrait <pluginDir> [--channel consumer|enterprise] [--policy policy.json] [--trust trust.json]',
       '  autopsy <pluginDir> [--profile profile.json] [--patch patch.json] [--policy policy.json] [--no-signature]',
@@ -371,6 +375,96 @@ async function main() {
       }
     }
     output(buildBehaviorReport(ledger.records(), { manifest }));
+    return;
+  }
+
+  if (command === 'draft') {
+    // 声明草案：从账本观测反推 config.requests / manifest.dashcam.requests。
+    // 服务于「零契约先跑一段，攒够观测再升 enforce」的迁移路径——
+    // 让人改两行，而不是对着能力表凭空写。
+    const ledger = loadVerifiedLedger(rest[1], flags);
+    if (!ledger) return;
+    let manifest = null;
+    if (flags.manifest) {
+      const loaded = loadManifest(path.resolve(flags.manifest));
+      manifest = loaded.manifest;
+      if (!manifest) {
+        process.stderr.write(`无法读取清单：${flags.manifest}（${loaded.errors.map((error) => error.message).join('；')}）\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    output(buildDeclarationDraft(ledger.records(), { manifest }));
+    return;
+  }
+
+  if (command === 'bench') {
+    // N6：bridge 开销微基准。同一进程先跑裸 fs（Hook 未装），再装 Hook 跑同一
+    // 组调用，差值就是「被记录」的每次调用代价。guarded 档包含守卫判定与
+    // 账本逐条落盘——这是行车记录仪的真实开销，不藏。
+    const iterations = Math.max(1, Number(flags.n) || 10000);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-bench-'));
+    const target = path.join(dir, 'payload.bin');
+    fs.writeFileSync(target, Buffer.alloc(64, 0x61));
+    const ledgerPath = path.join(dir, 'bench-ledger.jsonl');
+    const ops = [
+      { op: 'fs.statSync', run: () => fs.statSync(target) },
+      { op: 'fs.openSync', run: () => { const fd = fs.openSync(target, 'r'); fs.closeSync(fd); } },
+      { op: 'fs.readFileSync', run: () => fs.readFileSync(target) },
+      { op: 'fs.existsSync', run: () => fs.existsSync(target) },
+    ];
+    const measure = (phase) => ops.map(({ op, run }) => {
+      const start = process.hrtime.bigint();
+      for (let i = 0; i < iterations; i += 1) run();
+      const perCallUs = Number(process.hrtime.bigint() - start) / 1000 / iterations;
+      return { op, phase, perCallUs: Math.round(perCallUs * 1000) / 1000 };
+    });
+    const unpatched = measure('unpatched');
+    // 授权范围钉在基准文件本身：判定走 allow + 逐条记账，量的是完整链路。
+    // bridge 的 guardPath 走 guard.enforce，manifest 与 grant 缺一不可——
+    // 声明与授予同范围，确保每次调用都走「声明 × 授予 × 记账」全链路。
+    const benchManifest = {
+      id: 'dsh-dashcam-bench',
+      version: '0.0.0',
+      kind: 'dashcam',
+      dashcam: {
+        requests: [{ capability: 'fs.read', scope: { paths: [target] }, reason: 'bench 基准授权范围' }],
+      },
+    };
+    const runtime = createPluginRuntime({
+      manifest: benchManifest,
+      ledgerPath,
+      patchBuiltins: true,
+      autoSweep: false,
+      grants: [normalizeGrant({ capability: 'fs.read', scope: { paths: [target] }, reason: 'bench' })],
+    });
+    let guarded;
+    try {
+      guarded = measure('guarded');
+    } finally {
+      runtime.dispose();
+    }
+    // 卸载 Hook 后再读账本：确认 guarded 档确实逐条落了账。
+    let recorded = null;
+    try {
+      const benchLedger = new Ledger(ledgerPath);
+      recorded = benchLedger.records().length;
+    } catch {
+      recorded = null;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    output({
+      iterations,
+      note: 'guarded 含守卫判定与账本逐条落盘；unpatched 为同进程 Hook 安装前的裸 fs。'
+        + 'overhead = guarded − unpatched，即每次调用被记录的额外代价（微秒）。',
+      results: ops.map(({ op }, index) => ({
+        op,
+        unpatchedUsPerCall: unpatched[index].perCallUs,
+        guardedUsPerCall: guarded[index].perCallUs,
+        overheadUsPerCall: Math.round((guarded[index].perCallUs - unpatched[index].perCallUs) * 1000) / 1000,
+      })),
+      ledgerRecords: recorded,
+    });
     return;
   }
 

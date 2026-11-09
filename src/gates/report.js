@@ -8,8 +8,10 @@ function createStage(name) {
 
 /**
  * 非侵入式门禁：不通过安装来“惩罚”插件，而是输出安全画像标签。
- * label 是给用户看的分档（Untrusted / Quarantined / ReviewRequired / Broken / Verified），
- * code 保留原始判定码，便于追溯。
+ * label 是给用户看的分档（Untrusted / SignatureSkipped / Quarantined /
+ * ReviewRequired / Broken / Verified），code 保留原始判定码，便于追溯。
+ * SignatureSkipped（N3）与 Untrusted 分档：跳过验签是「状态未知」，
+ * 不是「验过不可信」，混用会让 --skip-signature 替真问题背锅。
  */
 function addLabel(stage, { code, label, reason, ...extra }) {
   stage.labels.push({ gate: stage.name, code, label, reason: reason || '', ...extra });

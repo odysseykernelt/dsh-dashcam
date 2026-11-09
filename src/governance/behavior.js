@@ -1,5 +1,8 @@
 'use strict';
 
+const nodePath = require('node:path');
+const { credentialCapabilityForPath } = require('../contract/capabilities');
+
 // 行为画像报告（批次三·取证产物）：行车记录仪的产物是「实际做了什么」。
 // 这份报告把账本记录按插件聚合——实际读过的路径、连过的主机、跑过的命令——
 // 并在拿到声明清单（manifest）时给出「实际 vs 声明」的能力级 diff。
@@ -132,4 +135,97 @@ function buildBehaviorReport(records = [], { manifest = null } = {}) {
   return { generatedFor: manifest ? (manifest.id || null) : null, plugins };
 }
 
-module.exports = { buildBehaviorReport };
+/**
+ * 把观测目标折叠成建议 scope：
+ * - fs 读/写：折叠到目录（观测到哪个目录就建议哪个目录，不发明通配）；
+ * - 凭证路径：经 credentialCapabilityForPath 升级为 cred.*，保留精确目标
+ *   （凭证范围的放大必须由人来决定，工具不代劳）；
+ * - fs.delete：保留精确路径——删除能力按目录授权等于把整个目录交给人家删；
+ * - net：原样（观测到什么 host 写什么）；
+ * - proc：取命令首词（commandCovers 本来就允许按基名授权）。
+ */
+function draftScopeFor(capability, targets) {
+  if (capability === 'net.outbound') return { hosts: [...new Set(targets)] };
+  if (capability === 'proc.spawn') {
+    const words = targets.map((command) => String(command).trim().split(/\s+/)[0]).filter(Boolean);
+    return { commands: [...new Set(words)] };
+  }
+  if (capability === 'fs.delete' || capability.startsWith('cred.')) {
+    return capability.startsWith('cred.') ? { targets: [...new Set(targets)] } : { paths: [...new Set(targets)] };
+  }
+  const directories = [...new Set(targets.map((target) => nodePath.dirname(target)))];
+  return { paths: directories };
+}
+
+/**
+ * 声明草案（批次四）：给想从零契约升 enforce 的人。行车记录仪先跑一段，
+ * 账本里已经有了「它实际用了什么」，这份草案把观测结果反推成
+ * manifest.dashcam.requests / 宿主 config.requests 的形状——人改两行就能迁移，
+ * 而不是从对着能力表凭空写。
+ *
+ * 诚实的边界写进输出里：草案只覆盖观测到的用法，没跑过的路径不会出现；
+ * 它是建议，不是判定——入 manifest 前需人工收敛。
+ *
+ * @param {Array} records 账本记录（已验链的 Ledger.records() 产物）。
+ * @param {{manifest?: object}} options 传入现有 manifest 时，已声明的精确能力
+ *   不再重复建议（避免把已经在契约里的东西又推荐一遍）。
+ */
+function buildDeclarationDraft(records = [], { manifest = null } = {}) {
+  const report = buildBehaviorReport(records, { manifest });
+  // 覆盖判定按精确能力（fs.read ≠ fs.delete）：家族级会把「声明了 fs.read」
+  // 放大成「fs 全家已声明」，删除这种高风险能力就被顺手盖掉了。
+  const declaredCapabilities = new Set();
+  for (const request of declaredRequestsOf(manifest)) {
+    if (request && request.capability) declaredCapabilities.add(String(request.capability));
+  }
+
+  const plugins = report.plugins.map((section) => {
+    const covered = section.plugin === (manifest && manifest.id)
+      ? [...declaredCapabilities].sort()
+      : [];
+    const isCovered = (capability) => covered.includes(capability);
+    const requests = [];
+    const pushDraft = (baseCapability, targets) => {
+      if (targets.length === 0) return;
+      // 同一批观测目标按最终能力（fs/cred）分组：凭证路径单独授权是硬规则，
+      // 草案里就要体现这个分组，而不是让人合并成一条 fs.read。
+      const groups = new Map();
+      for (const target of targets) {
+        const capability = credentialCapabilityForPath(target, baseCapability);
+        if (!groups.has(capability)) groups.set(capability, []);
+        groups.get(capability).push(target);
+      }
+      for (const [capability, groupTargets] of groups) {
+        // 已声明的精确能力不再建议；没声明的（含凭证升级出的 cred.*）仍要给出。
+        if (isCovered(capability)) continue;
+        requests.push({
+          capability,
+          scope: draftScopeFor(capability, groupTargets),
+          reason: `由账本观测反推：${groupTargets.length} 个不同目标（示例：${String(groupTargets[0]).slice(0, 120)}）；需人工收敛`,
+        });
+      }
+    };
+    pushDraft('fs.read', section.observed.fsRead);
+    pushDraft('fs.write', section.observed.fsWrite);
+    pushDraft('fs.delete', section.observed.fsDelete);
+    pushDraft('net.outbound', section.observed.hosts);
+    pushDraft('proc.spawn', section.observed.commands);
+    return {
+      plugin: section.plugin,
+      activity: section.activity.total,
+      // 零契约（profiled=false）的插件才是草案的目标用户；已有契约的如实说明。
+      zeroContract: section.contract.zeroContract,
+      requests,
+      coveredByManifest: covered,
+    };
+  });
+
+  return {
+    generatedFrom: 'ledger',
+    note: '建议声明由账本行为反推，仅覆盖观测到的用法——没跑过的路径不会出现在这里。'
+      + '这是建议不是判定，入 manifest / 宿主 config.requests 前需人工收敛。',
+    plugins,
+  };
+}
+
+module.exports = { buildBehaviorReport, buildDeclarationDraft };

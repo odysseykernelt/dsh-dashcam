@@ -67,13 +67,14 @@ test('安装流水线：legacy 默认带 Quarantined 标签放行，required 才
   cleanup(dir);
 });
 
-test('LocalHost：没有信任表仍可安装，但画像是 Untrusted', async () => {
+test('LocalHost：没有信任表仍可安装，画像是 SignatureSkipped（跳过 ≠ 验过不可信）', async () => {
   const dir = tempDir('mandate-host-');
   const plugin = createPlugin({ dir, requests: [] });
   const host = new LocalHost({ ledgerPath: path.join(dir, '.ledger.jsonl') });
   const result = await host.install(dir);
   assert.equal(result.id, plugin.manifest.id);
-  assert.ok(result.labels.some((label) => label.label === 'Untrusted'));
+  // N3：默认跳过验签是「状态未知」，与「核验了且没通过」（Untrusted）分档。
+  assert.ok(result.labels.some((label) => label.label === 'SignatureSkipped'));
   assert.equal(host.installed.has(plugin.manifest.id), true);
   cleanup(dir);
 });
