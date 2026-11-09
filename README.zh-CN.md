@@ -9,6 +9,8 @@ manifest 声明、宿主授予、运行时拦截、审计账本、安装门禁�
 
 零第三方依赖，Node.js >= 20（CommonJS）。
 
+> **极速上手（DSH 桌面宿主，四步）**：profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<工作区>/dsh-dashcam-host"`，把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`，跑一次 `pnpm install`，重启 DeepSeek Harness 即生效。详见[极速安装](#极速安装dsh-桌面宿主)；工作区根目录的 `install-to-host.ps1` / `uninstall-from-host.ps1` 可把四步自动化。
+
 ## 1.11.0 改名：dsh-covenant → dsh-dashcam
 
 从 1.11.0 起，本项目改名为 **dsh-dashcam**（产品定位从「契约层」收窄为「插件行车记录仪」：能力声明 + 运行时记录 + 可验证账本）。内部能力模型名称保留为 *dashcam（原 covenant capability model）*，`docs/SPEC.md` 中的不变量语义不变。

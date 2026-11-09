@@ -9,6 +9,8 @@ manifest declarations, host grants, runtime interception, an audit ledger, insta
 
 Zero third-party dependencies, Node.js >= 20 (CommonJS).
 
+> **TL;DR — four steps on the DSH desktop host**: add the dependency `"dsh-dashcam-host": "link:<workspace>/dsh-dashcam-host"` to the profile's `package.json`, append `dsh-dashcam-host` to `dsh.profile.bundles`, run one `pnpm install`, restart DeepSeek Harness — done. Details in [Fast install](#fast-install-dsh-desktop-host); `install-to-host.ps1` / `uninstall-from-host.ps1` at the workspace root automate all of it.
+
 ## 1.11.0 Rename: dsh-covenant → dsh-dashcam
 
 Starting from 1.11.0, this project is renamed **dsh-dashcam** (the product positioning narrows from "contract layer" to "plugin dashcam": capability declaration + runtime recording + verifiable ledger). The internal capability model name stays *dashcam (formerly the covenant capability model)*; the invariant semantics in `docs/SPEC.md` are unchanged.
