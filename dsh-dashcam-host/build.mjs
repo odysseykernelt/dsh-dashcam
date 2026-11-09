@@ -9,7 +9,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
-const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+// 注册 id 必须等于**插件包**（根包）的包名：DSH 的 client-modules 按包名建行，
+// 加载完 bundle 后只认 id 与行 id 相同的注册。本目录是宿主适配层，包名
+// dsh-dashcam-host 与插件身份不同，不能拿它当注册 id（2.0.0/2.0.1 的崩溃即此）。
+const pkg = JSON.parse(readFileSync(join(root, '..', 'package.json'), 'utf8'));
 
 function toBody(file) {
   const source = readFileSync(join(root, file), 'utf8');
