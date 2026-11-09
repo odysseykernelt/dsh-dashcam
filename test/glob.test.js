@@ -21,6 +21,9 @@ function setup({ requests, grants, dir = tempDir('glob-') }) {
 }
 
 test('glob：一次遍历只写一条账本，而不是每个文件一条', () => {
+  if (typeof fs.globSync !== 'function') {
+    return; // fs.globSync 是 Node 22+ 的 API；node 20 上整文件的两个用例都依赖它
+  }
   const dir = tempDir('glob-tree-');
   for (let folder = 0; folder < 4; folder += 1) {
     const sub = path.join(dir, 'd' + folder);
@@ -50,6 +53,9 @@ test('glob：一次遍历只写一条账本，而不是每个文件一条', () =
 });
 
 test('glob：混进范围外目标时整体失败，且账本只有一条 deny', () => {
+  if (typeof fs.globSync !== 'function') {
+    return;
+  }
   const runtime = setup({
     requests: [{ cap: 'fs.read', scope: { paths: ['$PLUGIN/inside/**'] }, reason: '只读子目录' }],
     grants: [{ capability: 'fs.read', scope: { paths: ['$PLUGIN/inside/**'] } }],
