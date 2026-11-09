@@ -133,7 +133,7 @@ test('M1：fetch 默认注入超时信号，调用方给 signal 时以它为准'
   }
 });
 
-test('M2：glob 的 cwd 非法类型直接拒绝，而不是静默退回 process.cwd()', () => {
+test('M2：glob 的 cwd 非法类型直接拒绝，而不是静默退回 process.cwd()', { skip: typeof fs.globSync !== 'function' ? 'node 20 无 fs.globSync' : false }, () => {
   const dir = tempDir('glob-cwd-');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
   const runtime = runtimeFor({

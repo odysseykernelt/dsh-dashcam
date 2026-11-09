@@ -188,8 +188,22 @@ class ChildHost {
         this.pending.delete(id);
         reject(new Error(`invoke 超时（${this.ipcTimeoutMs}ms）`));
       }, this.ipcTimeoutMs) : null;
+      const fail = (error) => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        if (timer) clearTimeout(timer);
+        reject(Object.assign(new Error(`invoke 发送失败：${error.message}`), { code: error.code }));
+      };
       this.pending.set(id, { resolve, reject, timer });
-      this.child.send(request);
+      try {
+        // 传 send 回调：子进程在检查 connected 之后、写入之前死掉时（CI Linux
+        // 实测出现 EPIPE 未捕获异常），错误走回调拒绝而不是进程级 uncaughtException。
+        this.child.send(request, (error) => {
+          if (error) fail(error);
+        });
+      } catch (error) {
+        fail(error);
+      }
     });
   }
 
