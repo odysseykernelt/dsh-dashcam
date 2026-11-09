@@ -212,6 +212,23 @@ class Ledger {
     if (!state) {
       state = { seq: 0, lastHash: 'GENESIS', size: diskSize, written: false };
       SHARED_LEDGER_STATE.set(this.file, state);
+      // N1：本进程第一次认识这个账本。如果它最近 5 秒内刚被写过，多半是
+      // 另一个宿主实例还开着同一个文件——单写者契约下两个进程迟早打架
+      //（活跃实例 append 时抛「并发写入」）。这里提前点名，不做静默对齐。
+      if (diskSize > 0) {
+        try {
+          const mtimeMs = REAL_STAT_SYNC(this.file).mtime.getTime();
+          if (Date.now() - mtimeMs < 5000) {
+            console.warn(
+              `[dsh-dashcam] 账本 ${this.file} 在最近 5 秒内被外部修改过：`
+              + '可能存在另一个写入者进程（Ledger 单写者契约下双方会互相失败）。'
+              + '多实例请用分实例路径（.dsh-ledger-<profile>.jsonl 或 config.ledgerPath）',
+            );
+          }
+        } catch {
+          // 文件恰好消失：按无预警处理，后续 append 自然会暴露问题。
+        }
+      }
     } else if (diskSize !== state.size) {
       // 进程内共享基准不会落后于自己写过的字节：磁盘不一致说明有 Ledger
       // 之外的写入者（外部进程追加，或文件被截断/重建）。构造即对齐到磁盘
@@ -263,8 +280,20 @@ class Ledger {
           `账本损坏：${this.file} 只有残缺的半行（无任何完整记录），已拒绝打开以避免整文件清零。请人工确认后删除或归档该文件`,
         );
       }
+      // N1：truncate 前后各取样一次 size+mtime。两次取样之间磁盘变了，
+      // 说明有写入者正在写这半行——此时截断等于「修复动作自己在删别人的
+      // 数据」，宁可拒绝打开，让宿主先停掉另一个写入者。
+      const beforeTruncate = REAL_STAT_SYNC(this.file);
       const keepText = raw.slice(0, raw.lastIndexOf('\n') + 1);
       const keep = Buffer.byteLength(keepText, 'utf8');
+      const afterRead = REAL_STAT_SYNC(this.file);
+      if (afterRead.size !== beforeTruncate.size
+        || afterRead.mtime.getTime() !== beforeTruncate.mtime.getTime()) {
+        throw new Error(
+          `账本 ${this.file} 尾部存在活动写入（读取期间 size/mtime 发生变化），`
+          + '已拒绝截断半行：先停掉其他写入者进程，或使用分实例账本路径',
+        );
+      }
       const fd = REAL_OPEN_SYNC(this.file, 'r+');
       try {
         REAL_TRUNCATE_SYNC(fd, keep);

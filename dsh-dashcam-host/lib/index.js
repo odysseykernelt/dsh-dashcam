@@ -506,7 +506,8 @@ export function apply(ctx, config = {}) {
     : [];
   // 1.11.0 改名迁移：默认路径下若只有旧名（dsh-covenant）的账本，原地搬到新目录。
   // 不合并、不改内容、不改哈希链；显式配置 ledgerPath 时完全不动。
-  const DEFAULT_LEDGER_PATH = join(homedir(), '.dsh', 'dsh-dashcam', 'ledger.jsonl');
+  const LEDGER_DIR = join(homedir(), '.dsh', 'dsh-dashcam');
+  const DEFAULT_LEDGER_PATH = join(LEDGER_DIR, 'ledger.jsonl');
   const LEGACY_LEDGER_PATH = join(homedir(), '.dsh', 'dsh-covenant', 'ledger.jsonl');
   function migrateLegacyLedger() {
     try {
@@ -522,7 +523,22 @@ export function apply(ctx, config = {}) {
     }
     return existsSync(DEFAULT_LEDGER_PATH) ? DEFAULT_LEDGER_PATH : LEGACY_LEDGER_PATH;
   }
-  const ledgerPath = config.ledgerPath || migrateLegacyLedger();
+  // N1：账本是单写者契约，多个 DSH profile 同时开宿主时共用 ledger.jsonl 会
+  // 互相判「并发写入」。配置 config.profile 后默认路径分实例：
+  // ~/.dsh/dsh-dashcam/ledger-<profile>.jsonl（各实例独立成链，互不干扰）。
+  let ledgerPath;
+  if (config.ledgerPath) {
+    ledgerPath = config.ledgerPath;
+  } else if (typeof config.profile === 'string' && config.profile.trim()) {
+    const profileName = config.profile.trim();
+    if (!/^[\w.-]+$/.test(profileName)) {
+      console.warn(`[dsh-dashcam] 配置错误：profile 只允许字母数字与 . _ -，当前是 ${JSON.stringify(profileName)}——fail-closed 不挂载`);
+      return;
+    }
+    ledgerPath = join(LEDGER_DIR, `ledger-${profileName}.jsonl`);
+  } else {
+    ledgerPath = migrateLegacyLedger();
+  }
 
   // L3：防呆拒绝挂载也要留痕——此时账本不能写，落到旁边 side 日志
   //（<ledgerPath>.guard.log），桌面版看不到 stdout 也能事后查原因。

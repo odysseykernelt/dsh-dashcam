@@ -25,7 +25,11 @@ function createPluginRuntime({
   manifest,
   grants = [],
   policy: policyInput = {},
-  ledgerPath = path.join(process.cwd(), '.dsh-ledger.jsonl'),
+  // N1：默认账本路径按实例区分（profile 未传时为 default）。账本是单写者契约，
+  // 两个宿主实例共用 cwd/.dsh-ledger.jsonl 会互相判「并发写入」卡死；
+  // 多实例请传 profile（或显式 ledgerPath）。
+  profile = null,
+  ledgerPath = path.join(process.cwd(), `.dsh-ledger-${profile || 'default'}.jsonl`),
   ledgerMacKey = null,
   ledgerMacKeyFile = null,
   ledgerMacKeyEnv = null,
@@ -163,6 +167,8 @@ function activate(host = {}) {
     manifest: host.manifest,
     grants: host.grants || [],
     policy: host.policy || {},
+    // N1：分实例默认路径的实例名（default 兜底）；显式 host.ledgerPath 优先。
+    profile: host.profile || null,
     ledgerPath: host.ledgerPath,
     ledgerMacKey: host.ledgerMacKey || null,
     ledgerMacKeyFile: host.ledgerMacKeyFile || null,

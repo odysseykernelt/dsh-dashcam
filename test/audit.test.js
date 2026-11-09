@@ -9,6 +9,8 @@ const { Ledger } = require('../src/runtime/ledger');
 const { stableStringify, sha256 } = require('../src/util/stable');
 const { OneSealStore } = require('../src/runtime/one-seal');
 const { createGuardChain } = require('../src/runtime/guards');
+const { LocalHost } = require('../src/host/local-host');
+const { spawnSync } = require('node:child_process');
 
 function record(overrides = {}) {
   return {
@@ -225,6 +227,66 @@ test('归属标注：账本记录带 profiled / manifestHash（有契约与零�
   const rowB = new Ledger(fileB).records()[0];
   assert.equal(rowB.profiled, false);
   assert.equal(rowB.manifestHash, null);
+  cleanup(dir);
+});
+
+test('N1：本进程首次打开的账本若刚被外部写入，构造时显式告警', () => {
+  const dir = tempDir('audit-n1-');
+  const file = path.join(dir, 'ledger.jsonl');
+  // 模拟另一个写入者进程刚落了一行（本进程对这条路径没有任何共享基准）。
+  fs.writeFileSync(file, `${JSON.stringify({ v: 4, seq: 1, note: '外部写入' })}\n`, 'utf8');
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (message) => warnings.push(String(message));
+  try {
+    new Ledger(file);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.ok(
+    warnings.some((message) => message.includes('最近 5 秒内被外部修改')),
+    `应有外部新写告警，实际：${JSON.stringify(warnings)}`,
+  );
+  cleanup(dir);
+});
+
+test('N1：默认账本路径按实例区分（profile → .dsh-ledger-<profile>.jsonl）', () => {
+  const defaultHost = new LocalHost();
+  assert.ok(
+    defaultHost.baseLedgerPath.endsWith(path.join('.dsh-ledger-default.jsonl'))
+      || defaultHost.baseLedgerPath.endsWith('.dsh-ledger-default.jsonl'),
+    defaultHost.baseLedgerPath,
+  );
+  const webHost = new LocalHost({ profile: 'web' });
+  assert.ok(webHost.baseLedgerPath.endsWith('.dsh-ledger-web.jsonl'), webHost.baseLedgerPath);
+});
+
+test('CLI verify-ledger：脱离宿主进程验链，篡改行报非零退出', () => {
+  const dir = tempDir('audit-cli-');
+  const file = path.join(dir, 'ledger.jsonl');
+  const ledger = new Ledger(file);
+  ledger.append(record());
+  ledger.append(record({ decision: 'deny', ruleId: 'not_granted', reason: '宿主未授予' }));
+
+  const bin = path.join(__dirname, '..', 'bin', 'dsh-dashcam.js');
+  const good = spawnSync(process.execPath, [bin, 'verify-ledger', file], { encoding: 'utf8' });
+  assert.equal(good.status, 0, good.stderr);
+  const parsed = JSON.parse(good.stdout);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.records, 2);
+  assert.equal(parsed.lastSeq, 2);
+
+  // 篡改中间行的 reason（不改 hash）→ 校验失败、退出码 1。
+  const lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
+  const forged = JSON.parse(lines[0]);
+  forged.reason = '被篡改的理由';
+  lines[0] = stableStringify(forged);
+  fs.writeFileSync(file, `${lines.join('\n')}\n`, 'utf8');
+  const bad = spawnSync(process.execPath, [bin, 'verify-ledger', file], { encoding: 'utf8' });
+  assert.equal(bad.status, 1);
+  const badParsed = JSON.parse(bad.stdout);
+  assert.equal(badParsed.ok, false);
+  assert.ok(badParsed.errors.some((error) => error.code === 'hash_mismatch'));
   cleanup(dir);
 });
 

@@ -85,7 +85,10 @@ const { createCapabilityHandles, createModuleRedirect } = require('../runtime/ha
  */
 class LocalHost {
   constructor({
-    ledgerPath = path.join(process.cwd(), '.dsh-ledger.jsonl'),
+    // N1：默认账本路径按实例区分（profile 未传时为 default）——账本是单写者
+    // 契约，两个实例共用同一文件会互相判「并发写入」而卡死。
+    profile = null,
+    ledgerPath = path.join(process.cwd(), `.dsh-ledger-${profile || 'default'}.jsonl`),
     ledgerMacKey = null,
     ledgerMacKeyFile = null,
     ledgerMacKeyEnv = null,
