@@ -1,15 +1,13 @@
 {
   "name": "dsh-dashcam-host",
   "version": "1.14.0",
-  "private": true,
   "description": "把 dsh-dashcam 判定链接入 DeepSeek Harness 宿主（tools/pre-execute waterfall + tool→capability 映射层，默认 advisory 只记账）+ 浏览器面板（Agent Dashcam，lib/client.js）。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": { "default": "./lib/index.js" },
     "./client": "./lib/client.js",
-    "./package.json": "./package.json",
-    "./cordis.patch.yml": "./cordis.patch.yml"
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "node build.mjs",
@@ -27,8 +25,5 @@
         "@deepseek-ai/dsh-client-shortcuts"
       ]
     }
-  },
-  "dependencies": {
-    "dsh-dashcam": "link:.."
   }
 }

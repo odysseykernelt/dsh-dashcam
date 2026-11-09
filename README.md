@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
+![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-2.0.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
 **dsh-dashcam is a dashcam for your AI plugins — it records what they actually do, it does not decide what they may do.**
 
@@ -35,7 +35,7 @@ If you later want judgment on top of recording, add `config.requests` (what the 
 
 **If you are not comfortable with a plugin watching plugin activity, do not install it.** This is the primary advice, not a disclaimer: the ledger is a high-value target (it knows exactly which files were touched and when), the host adapter runs inside your agent's main process, and "it only records" is precisely why it sees everything. Verify the clone, keep the ledger out of backups you do not trust, set an HMAC key (`ledgerMacKey`) if tamper-resistance matters — or skip the install; the dashcam works hardest at earning that skepticism.
 
-> **TL;DR — four steps on the DSH desktop host**: clone this repo, then add the dependency `"dsh-dashcam-host": "link:<clone-path>/dsh-dashcam-host"` to the profile's `package.json`, append `dsh-dashcam-host` to `dsh.profile.bundles`, run one `pnpm install`, restart DeepSeek Harness — done. Details in [Fast install](#fast-install-dsh-desktop-host). (An npm distribution of the host adapter is on the roadmap; for now, install from a clone.)
+> **TL;DR — one command, complete plugin**: `dsh plugin --profile web add dsh-dashcam`, restart DeepSeek Harness — done. The same works with `--profile desktop`. By default it only observes and never blocks a call. Details in [Install](#install-dsh-host).
 
 Underneath the dashcam sits the machinery built up over previous versions: install-time gates (structure / safety / signature), capability portraits, offline autopsy, ingress reconciliation. They still run — but in dashcam mode their output is evidence and labels, not verdicts.
 
@@ -160,6 +160,7 @@ src/
   governance/ three-tier rollback, blacklist, monthly metrics, circuit breaker
   host/       LocalHost: install → register → invoke → uninstall
 bin/          CLI
+dsh-dashcam-host/  host adapter: plugin entry (judgment chain), browser panel, build script
 docs/         specs, rollout cadence, compliance
 examples/     positive package, negative package, demo policy
 test/         contracts, runtime, bypasses, gates, signing, portraits, autopsy, governance, audit, admission
@@ -168,7 +169,7 @@ test/         contracts, runtime, bypasses, gates, signing, portraits, autopsy, 
 ## Host integration
 
 ```js
-const { activate } = require('dsh-dashcam');
+const { activate } = require('dsh-dashcam/core');
 
 const plugin = activate({
   manifest,                 // parsed manifest
@@ -185,14 +186,50 @@ plugin.deactivate();
 
 `activate` installs native module hooks at the guard entrance (covering in-process `fs/net/child_process/env` calls) and registers the pre-execute judgment function. If the host only wants judgments without patching, pass `patchBuiltins: false`.
 
-## Fast install (DSH desktop host)
+## Install (DSH host)
 
-DSH loads plugins per profile: `~/.dsh/profiles/desktop/package.json` `dependencies` decide what gets installed and `dsh.profile.bundles` decides what gets enabled; the bundle's own `cordis.patch.yml` wires the plugin into the host config tree. Hooking the judgment chain in takes four steps:
+One command installs the complete plugin — judgment chain, ledger, and the Agent Dashcam browser panel:
 
-1. **Mount**: clone this repo, then add the dependency `"dsh-dashcam-host": "link:<clone-path>/dsh-dashcam-host"` to the profile's `package.json` (pointing at the `dsh-dashcam-host` directory inside the clone), and append `dsh-dashcam-host` to `dsh.profile.bundles`.
-2. **Install**: run `pnpm install` once in the profile directory (using the node/pnpm bundled with the host runtime).
-3. **Restart** DeepSeek Harness; success is confirmed when the log shows `[dsh-dashcam] 判定链已挂载` ("judgment chain mounted") (logs live in `%APPDATA%\@deepseek-ai\dsh-desktop\logs`).
-4. **Uninstall**: remove the dependency and bundle, restore `cordis.patch.yml`, run `pnpm install` again, and restart.
+```bash
+dsh plugin --profile web add dsh-dashcam      # or: dsh plugin --profile desktop add dsh-dashcam
+```
+
+Restart DeepSeek Harness after installing. **By default the dashcam only observes and never blocks**: every mapped tool call is recorded to the ledger, nothing is denied — judgment on top of recording is opt-in (`config.requests` / `config.grants` + `enforce: true`).
+
+**Supported profiles**: `desktop` / `web`. The judgment chain and ledger run in the host main process on both; the browser panel targets the web client (`dsh.client.platform: web` in the shipped package).
+
+**What you should see.** On startup the host log (`%APPDATA%\@deepseek-ai\dsh-desktop\logs`) shows:
+
+```
+[dsh-dashcam] 判定链已挂载（event=tools/pre-execute，mode=unprofiled，enforceUnmapped=false，commandlineArchive=hash，patchBuiltins=false，ledger=C:\Users\you\.dsh\dsh-dashcam\ledger.jsonl，requests=0，grants=0）
+```
+
+Every observed tool call then lands in `~/.dsh/dsh-dashcam/ledger.jsonl` (fields elided):
+
+```jsonl
+{"v":4,"plugin":"dsh-dashcam-host","pluginVersion":"1.14.0","capability":"fs","action":"fs.read","scope":{"path":"C:/repo/src/app.ts"},"decision":"allow","ruleId":"unprofiled","profiled":false,"manifestHash":null,"seq":1,"ts":"2026-11-09T14:09:14.822Z","prevHash":"GENESIS","hash":"b504c225…"}
+```
+
+The chain can be re-verified offline at any time — no host process required:
+
+```bash
+npx dsh-dashcam verify-ledger ~/.dsh/dsh-dashcam/ledger.jsonl
+```
+
+```json
+{
+  "ok": true,
+  "records": 2,
+  "lastSeq": 2,
+  "head": "6003e9f193a63198cfbc2039f296029d669d98337cb52c213da5e21238f5300b",
+  "macVerified": false,
+  "errors": []
+}
+```
+
+**Uninstall** is one command too: `dsh plugin --profile web remove dsh-dashcam` — the judgment chain is detached and no hooks remain.
+
+**Upgrading from a link install (pre-2.0)**: remove the `"dsh-dashcam-host": "link:…"` dependency from the profile's `package.json` and the `dsh-dashcam-host` entry in `dsh.profile.bundles`, then install with the one-liner above. The default ledger path is unchanged (`~/.dsh/dsh-dashcam/ledger.jsonl`); existing records and their hash chain are preserved as-is — nothing to migrate by hand.
 
 The adapter package defaults to `patchBuiltins: false`: the host is an Electron main process and the Bridge is a process-level patch; installing it directly would take over the app's own fs/net, so by default only the pre-execute judgment function is registered. Set `patchBuiltins: true` explicitly in the cordis config when real interception is needed (semantics above in "Host integration").
 
@@ -271,7 +308,7 @@ const report = bridge.coverage();
 The Bridge can only achieve "everything I thought of is wrapped". To genuinely achieve "not declared, therefore impossible", invert the model: do not give the plugin the global API, give it a restricted object instead.
 
 ```js
-const { createCapabilityHandles } = require('dsh-dashcam');
+const { createCapabilityHandles } = require('dsh-dashcam/core');
 
 const handles = createCapabilityHandles({ guard });
 await handles.fs.promises.readFile('cache.json');   // passes the guard chain

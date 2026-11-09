@@ -268,7 +268,7 @@ CLI 的 `metrics` 现在是「先校验、再统计」：校验不过（含 `mac
 Bridge 是补丁式的，覆盖永远是 Node API 的真子集。能力句柄走另一条路：**不给插件全局，只给它一个小世界。**
 
 ```js
-const { createCapabilityHandles } = require('dsh-dashcam');
+const { createCapabilityHandles } = require('dsh-dashcam/core');
 const handles = createCapabilityHandles({ guard });      // { fs }
 await handles.fs.promises.readFile('cache.json');        // 每次调用都过守卫链
 ```

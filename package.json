@@ -1,6 +1,6 @@
 {
   "name": "dsh-dashcam",
-  "version": "1.12.1",
+  "version": "2.0.0",
   "description": "Plugin dashcam for DSH: capability manifests, runtime guards, and a tamper-evident audit ledger (formerly dsh-covenant).",
   "homepage": "https://github.com/odysseykernelt/dsh-dashcam#readme",
   "repository": {
@@ -20,8 +20,28 @@
     "llm",
     "ai-agents"
   ],
-  "main": "src/index.js",
+  "main": "dsh-dashcam-host/lib/index.js",
   "type": "commonjs",
+  "exports": {
+    ".": "./dsh-dashcam-host/lib/index.js",
+    "./core": "./src/index.js",
+    "./client": "./dsh-dashcam-host/lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-shortcuts"
+      ]
+    }
+  },
   "bin": {
     "dsh-dashcam": "bin/dsh-dashcam.js",
     "dsh-covenant": "bin/dsh-dashcam.js"
@@ -42,7 +62,11 @@
     "!docs/*-audit-*.md",
     "!docs/*review*.md",
     "!docs/*verify*.md",
-    "!docs/audiences.md"
+    "!docs/audiences.md",
+    "!docs/*checklist*.md",
+    "dsh-dashcam-host/lib/",
+    "dsh-dashcam-host/package.json",
+    "./cordis.patch.yml"
   ],
   "engines": {
     "node": ">=20"

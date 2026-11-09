@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
+![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-2.0.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
 **dsh-dashcam 是给 AI 插件装的行车记录仪——它记录插件实际做了什么，不替你决定插件能做什么。**
 
@@ -35,7 +35,7 @@
 
 **不放心就别装。** 这是主要建议，不是免责声明：账本本身就是高价值目标（它精确知道你碰过哪些文件、什么时候碰的），宿主适配包跑在 agent 主进程里，而「它只记录」恰恰意味着它什么都看得见。校验 clone 来源，别把账本放进你不信任的备份，在意防篡改就配 HMAC 密钥（`ledgerMacKey`）——或者干脆不装；行车记录仪最不怕的就是这种怀疑。
 
-> **极速上手（DSH 桌面宿主，四步）**：clone 本仓库，在 profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<clone路径>/dsh-dashcam-host"`，把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`，跑一次 `pnpm install`，重启 DeepSeek Harness 即生效。详见[极速安装](#极速安装dsh-桌面宿主)。（宿主适配包的 npm 分发在路线图上，目前请以 clone 方式安装。）
+> **极速上手（一条命令，装出完整插件）**：`dsh plugin --profile web add dsh-dashcam`，重启 DeepSeek Harness 即生效（`--profile desktop` 同样可用）。默认只观察、不拦截任何调用。详见[安装](#安装dsh-宿主)。
 
 行车记录仪下面，是历届版本积攒的全部机器：安装门禁（结构/安全/签名）、能力画像、离线诊断、入站对账。它们照常运行——但在行车记录仪模式下，它们产出的是证据和标签，不是判决。
 
@@ -173,6 +173,7 @@ src/
   governance/ 三级回滚、黑名单、月度度量、熔断
   host/       LocalHost：装 → 注册 → 调用 → 卸载
 bin/          CLI
+dsh-dashcam-host/  宿主适配：插件入口（判定链）、浏览器面板、构建脚本
 docs/         规范、上线节奏、合规
 examples/     正例包、反例包、演示策略
 test/         契约、运行时、绕过、门禁、签名、画像、诊断、治理、审计、准入
@@ -181,7 +182,7 @@ test/         契约、运行时、绕过、门禁、签名、画像、诊断、
 ## 宿主集成
 
 ```js
-const { activate } = require('dsh-dashcam');
+const { activate } = require('dsh-dashcam/core');
 
 const plugin = activate({
   manifest,                 // 已解析的 manifest
@@ -199,18 +200,50 @@ plugin.deactivate();
 `activate` 会在守卫入口安装原生模块 Hook（看护进程内 `fs/net/child_process/env` 调用）并注册 pre-execute 判定函数。
 如果宿主只想要判定、不想打补丁，传 `patchBuiltins: false`。
 
-## 极速安装（DSH 桌面宿主）
+## 安装（DSH 宿主）
 
-DSH 按 profile 装载插件：`~/.dsh/profiles/desktop/package.json` 的 `dependencies` 决定装什么、
-`dsh.profile.bundles` 决定启用谁；bundle 自带的 `cordis.patch.yml` 负责把插件插进宿主配置树。
-按这个机制把判定链挂进去只需四步：
+一条命令装出完整插件——判定链、账本、Agent Dashcam 浏览器面板：
 
-1. **挂载**：clone 本仓库，在 profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<clone路径>/dsh-dashcam-host"`（指向 clone 内的 `dsh-dashcam-host` 目录），
-   并把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`。
-2. **安装**：在 profile 目录跑一次 `pnpm install`（用宿主自带运行时的 node/pnpm）。
-3. **重启** DeepSeek Harness；日志出现 `[dsh-dashcam] 判定链已挂载` 即为成功
-   （日志在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs`）。
-4. **卸载**：摘掉依赖与 bundle、还原 `cordis.patch.yml`，再跑一次 `pnpm install`，重启生效。
+```bash
+dsh plugin --profile web add dsh-dashcam      # 或：dsh plugin --profile desktop add dsh-dashcam
+```
+
+装完重启 DeepSeek Harness。**默认只观察、不拦截**：被映射到的工具调用逐条落账，不拒绝任何调用——想要「记录之上再判定」需显式开启（`config.requests` / `config.grants` + `enforce: true`）。
+
+**支持的 profile**：`desktop` / `web`。判定链与账本跑在宿主主进程，两种 profile 下都生效；浏览器面板面向 web 客户端（发布包里 `dsh.client.platform: web`）。
+
+**装上后应该看到什么。** 启动时宿主日志（`%APPDATA%\@deepseek-ai\dsh-desktop\logs`）出现：
+
+```
+[dsh-dashcam] 判定链已挂载（event=tools/pre-execute，mode=unprofiled，enforceUnmapped=false，commandlineArchive=hash，patchBuiltins=false，ledger=C:\Users\you\.dsh\dsh-dashcam\ledger.jsonl，requests=0，grants=0）
+```
+
+之后每次被观测的工具调用落进 `~/.dsh/dsh-dashcam/ledger.jsonl`（字段有省略）：
+
+```jsonl
+{"v":4,"plugin":"dsh-dashcam-host","pluginVersion":"1.14.0","capability":"fs","action":"fs.read","scope":{"path":"C:/repo/src/app.ts"},"decision":"allow","ruleId":"unprofiled","profiled":false,"manifestHash":null,"seq":1,"ts":"2026-11-09T14:09:14.822Z","prevHash":"GENESIS","hash":"b504c225…"}
+```
+
+整条链随时可离线复验——不需要宿主进程：
+
+```bash
+npx dsh-dashcam verify-ledger ~/.dsh/dsh-dashcam/ledger.jsonl
+```
+
+```json
+{
+  "ok": true,
+  "records": 2,
+  "lastSeq": 2,
+  "head": "6003e9f193a63198cfbc2039f296029d669d98337cb52c213da5e21238f5300b",
+  "macVerified": false,
+  "errors": []
+}
+```
+
+**卸载**同样一条命令：`dsh plugin --profile web remove dsh-dashcam`——判定链摘除，无残留 Hook。
+
+**从 link 安装升级（2.0 之前）**：把 profile 的 `package.json` 里 `"dsh-dashcam-host": "link:…"` 依赖和 `dsh.profile.bundles` 里的 `dsh-dashcam-host` 条目删掉，再用上面一条命令安装。默认账本路径不变（`~/.dsh/dsh-dashcam/ledger.jsonl`），历史记录与哈希链原样保留——无需手动迁移。
 
 适配包默认 `patchBuiltins: false`：宿主是 Electron 主进程，Bridge 是进程级补丁，直接装上会接管
 应用自身的 fs/net，所以默认只注册 pre-execute 判定函数。需要真实拦截时在 cordis 配置里显式
@@ -296,7 +329,7 @@ const report = bridge.coverage();
 Bridge 只能做到「我想到的都包了」。想真正做到「没声明就做不到」，得反过来：不给插件全局 API，只给它一个受限对象。
 
 ```js
-const { createCapabilityHandles } = require('dsh-dashcam');
+const { createCapabilityHandles } = require('dsh-dashcam/core');
 
 const handles = createCapabilityHandles({ guard });
 await handles.fs.promises.readFile('cache.json');   // 过守卫链
