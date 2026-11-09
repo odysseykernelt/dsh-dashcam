@@ -4,12 +4,42 @@
 
 ![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
-DeepSeek Harness 的插件契约与运行时治理插件。它把“插件能做什么”从口头约定变成可校验的契约：
-manifest 声明、宿主授予、运行时拦截、审计账本、安装门禁、双重签名、能力画像、离线诊断与合规准入。
+**dsh-dashcam 是给 AI 插件装的行车记录仪——它记录插件实际做了什么，不替你决定插件能做什么。**
 
-零第三方依赖，Node.js >= 20（CommonJS）。
+零配置装上，所有被观测到的活动——读了哪些文件、连了哪些主机、跑了哪些命令、调了哪些工具——都会落进一份防篡改的 JSONL 账本（SHA-256 哈希链，可选 HMAC 封印），每一行都标注是哪个插件干的、这件事发生在契约之下（`profiled: true`）还是之外（`profiled: false`，零契约模式）。不拦任何调用，也不需要插件作者写或声明任何东西——被观测不该成为被观测者的负担。
+
+**装上之后有什么变化**（默认挂载，零契约）：
+
+| | 装之前 | 装之后 |
+|---|---|---|
+| 插件活动 | 不可见——出了事才知道 | 每次被观测的工具调用逐条记录 |
+| 归属 | 靠猜 | 每行都带 `plugin` / `pluginVersion` |
+| 有没有契约管着 | 无从知晓 | 每行都带 `profiled` / `manifestHash` |
+| 防篡改 | 无 | 哈希链，逐行离线重算可验 |
+| 拦截 | — | 无。行车记录仪模式不拒绝任何调用 |
+
+**30 秒看懂零契约**——默认挂载、config 留空，正常干活时 `~/.dsh/dsh-dashcam/ledger.jsonl` 里落的是这些（字段有省略）：
+
+```jsonl
+{"v":4,"plugin":"dsh-dashcam-host","capability":"fs","action":"fs.read","scope":{"path":"C:/repo/src/app.ts"},"decision":"allow","ruleId":"unprofiled","profiled":false,"manifestHash":null}
+{"v":4,"plugin":"dsh-dashcam-host","capability":"proc","action":"proc.spawn","scope":{"command":"git"},"decision":"allow","ruleId":"unprofiled","profiled":false,"manifestHash":null}
+```
+
+之后如果想要「记录之上再判定」，给宿主配置加 `config.requests`（插件声明能做什么）和 `config.grants`（宿主授了什么）——同一条链切换为 Two-Key 判定：声明∩授予 → 放行，否则 advisory 记 would-deny（`enforce: true` 时真拒）。记录与判定共用一本账、同一条链，升级不会分叉你的审计线索。
+
+**行车记录仪的三条诚实原则：**
+
+- **不拦车。** 记账故障从不拒绝调用：默认 fail-open，大声告警 + best-effort 落一条 `ledger_fail` 标记。（要护栏语义可用 `policy.ledger.failMode: 'closed'` 显式回到「写不进账就拒绝执行」。）
+- **不撒谎。** 只有真的拒绝了才写 `decision: deny`；`intercepted: true` 意味着真的拦下了未声明调用，不是假设。
+- **看不见就说看不见。** 未映射工具按观测逐条记录并带参数预览；挂载记录写明当前处于哪种模式。不存在被包装成「全覆盖」的盲区。
+
+**不放心就别装。** 这是主要建议，不是免责声明：账本本身就是高价值目标（它精确知道你碰过哪些文件、什么时候碰的），宿主适配包跑在 agent 主进程里，而「它只记录」恰恰意味着它什么都看得见。校验 clone 来源，别把账本放进你不信任的备份，在意防篡改就配 HMAC 密钥（`ledgerMacKey`）——或者干脆不装；行车记录仪最不怕的就是这种怀疑。
 
 > **极速上手（DSH 桌面宿主，四步）**：clone 本仓库，在 profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<clone路径>/dsh-dashcam-host"`，把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`，跑一次 `pnpm install`，重启 DeepSeek Harness 即生效。详见[极速安装](#极速安装dsh-桌面宿主)。（宿主适配包的 npm 分发在路线图上，目前请以 clone 方式安装。）
+
+行车记录仪下面，是历届版本积攒的全部机器：安装门禁（结构/安全/签名）、能力画像、离线诊断、入站对账。它们照常运行——但在行车记录仪模式下，它们产出的是证据和标签，不是判决。
+
+零第三方依赖，Node.js >= 20（CommonJS）。
 
 ## 演示：恶意插件在安装期被拦下
 

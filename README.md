@@ -4,12 +4,42 @@
 
 ![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
-A plugin contract and runtime governance plugin for DeepSeek Harness. It turns "what a plugin is allowed to do" from a verbal agreement into a verifiable contract:
-manifest declarations, host grants, runtime interception, an audit ledger, installation gates, dual signing, capability portraits, offline autopsy, and compliance admission.
+**dsh-dashcam is a dashcam for your AI plugins — it records what they actually do, it does not decide what they may do.**
 
-Zero third-party dependencies, Node.js >= 20 (CommonJS).
+Install it with zero configuration and every observed action — files read, hosts contacted, commands run, tools invoked — lands in a tamper-evident JSONL ledger (SHA-256 hash chain, optional HMAC seal), each line stamped with which plugin did it and whether it happened under a contract (`profiled: true`) or outside any (`profiled: false`, zero-contract mode). Nothing is blocked, and no plugin author has to write or declare anything — being observed is not a burden on the observed.
+
+**What changes when you install it** (default mount, zero contract):
+
+| | Before | After |
+|---|---|---|
+| Plugin activity | invisible — you learn about it when something breaks | every observed tool call recorded, per call |
+| Attribution | guesses | `plugin` / `pluginVersion` on every line |
+| Under a contract? | unknowable | `profiled` / `manifestHash` on every line |
+| Tamper evidence | none | hash chain; offline re-verification of every line |
+| Blocking | — | none. dashcam mode never denies a call |
+
+**30 seconds, zero contract** — default mount, empty `config`. While you work normally, this lands in `~/.dsh/dsh-dashcam/ledger.jsonl` (fields elided):
+
+```jsonl
+{"v":4,"plugin":"dsh-dashcam-host","capability":"fs","action":"fs.read","scope":{"path":"C:/repo/src/app.ts"},"decision":"allow","ruleId":"unprofiled","profiled":false,"manifestHash":null}
+{"v":4,"plugin":"dsh-dashcam-host","capability":"proc","action":"proc.spawn","scope":{"command":"git"},"decision":"allow","ruleId":"unprofiled","profiled":false,"manifestHash":null}
+```
+
+If you later want judgment on top of recording, add `config.requests` (what the plugin may do) and `config.grants` (what the host grants) — the same chain then runs Two-Key: declared + granted → allow, otherwise an advisory would-deny record (or a real deny under `enforce: true`). Recording and judging share one ledger and one hash chain, so upgrading never forks your audit trail.
+
+**Honesty rules of the road:**
+
+- **It does not block.** Recording failures never deny a call: fail-open by default, with a loud warning and a best-effort `ledger_fail` marker entry. (`policy.ledger.failMode: 'closed'` restores refuse-to-run if you want that.)
+- **It does not lie.** `decision: deny` is only written when something was actually denied; `intercepted: true` means an undeclared call was actually intercepted, not hypothetically.
+- **It says what it cannot see.** Unmapped tools are recorded as observed with an input preview; the mount record states which mode the chain is in. No silent blind spots presented as coverage.
+
+**If you are not comfortable with a plugin watching plugin activity, do not install it.** This is the primary advice, not a disclaimer: the ledger is a high-value target (it knows exactly which files were touched and when), the host adapter runs inside your agent's main process, and "it only records" is precisely why it sees everything. Verify the clone, keep the ledger out of backups you do not trust, set an HMAC key (`ledgerMacKey`) if tamper-resistance matters — or skip the install; the dashcam works hardest at earning that skepticism.
 
 > **TL;DR — four steps on the DSH desktop host**: clone this repo, then add the dependency `"dsh-dashcam-host": "link:<clone-path>/dsh-dashcam-host"` to the profile's `package.json`, append `dsh-dashcam-host` to `dsh.profile.bundles`, run one `pnpm install`, restart DeepSeek Harness — done. Details in [Fast install](#fast-install-dsh-desktop-host). (An npm distribution of the host adapter is on the roadmap; for now, install from a clone.)
+
+Underneath the dashcam sits the machinery built up over previous versions: install-time gates (structure / safety / signature), capability portraits, offline autopsy, ingress reconciliation. They still run — but in dashcam mode their output is evidence and labels, not verdicts.
+
+Zero third-party dependencies, Node.js >= 20 (CommonJS).
 
 ## Demo: a malicious plugin gets blocked at install time
 
