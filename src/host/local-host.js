@@ -78,6 +78,7 @@ const { Ledger } = require('../runtime/ledger');
 const { OneSealStore } = require('../runtime/one-seal');
 const { createGuardChain } = require('../runtime/guards');
 const { createCapabilityHandles, createModuleRedirect } = require('../runtime/handles');
+const { buildPluginFacade } = require('../runtime/facade');
 
 /**
  * LocalHost：可装载性门禁使用的真实宿主适配器。
@@ -285,14 +286,17 @@ class LocalHost {
     this.active = { pluginId, ledger, seal, guard, bridge, handles, redirect };
     this.modules.set(pluginId, module);
     if (typeof module.activate === 'function') {
+      // 交付面与 activate() 共用同一份定义（runtime/facade.js）：此前这里把裸
+      // guard/ledger/seal 直接交给插件——ctx.guard.setGrants 自我授权、
+      // uninstallNativeHooks 拆进程级 Hook、ctx.ledger.append/macKey 泄露审计
+      // 材料，全部从这一处断掉。registerPreExecute 与 fs 是宿主集成真正需要
+      // 的，保留；guard/ledger/seal 实例只留在 host 闭包（this.active）里。
+      const facade = buildPluginFacade({ manifest: record.manifest, guard, handles });
       try {
         await module.activate({
           plugin: record.manifest,
-          ledger,
-          guard,
-          seal,
+          ...facade,
           fs: sandboxed ? handles.fs : fs,
-          handles,
           registerPreExecute: (handler) => {
             this.active.preExecute = handler;
           },

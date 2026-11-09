@@ -9,8 +9,7 @@ const { createGuardChain } = require('./runtime/guards');
 const { isQuarantined } = require('./contract/manifest');
 const { resolveLedgerMacKey } = require('./host/local-host');
 const { createCapabilityHandles, createModuleRedirect } = require('./runtime/handles');
-
-const PLUGIN_ID = 'dsh-dashcam';
+const { buildPluginFacade, PLUGIN_ID } = require('./runtime/facade');
 
 /**
  * 进程内只能有一个活动运行时。
@@ -210,23 +209,14 @@ function activate(host = {}) {
   // R2/A1（三视角审查）：activate() 的返回值会被宿主持有、传递甚至全局暂存，
   // 插件代码有机会摸到它。此前把整个 runtime 对象（guard 管理面 + Ledger 实例 +
   // OneSeal + Bridge）原样交出——setGrants 可以自我授权，uninstallNativeHooks
-  // 可以拆掉进程级 Hook，ledger/macKey 直接泄露审计密钥材料。这里只交付最小面：
-  // 宿主集成真正需要的只有 deactivate、quarantine 档位与只读判定句柄；
-  // guard 的管理面与账本、OneSeal 实例一律不外借（内部仍走 runtime 闭包）。
-  return {
-    id: PLUGIN_ID,
-    quarantine: isQuarantined(host.manifest),
-    guard: Object.freeze({
-      // 参数原样透传：check/enforce 的签名演进不在这里截断。
-      check: (...args) => runtime.guard.check(...args),
-      enforce: (...args) => runtime.guard.enforce(...args),
-      coverage: () => runtime.guard.coverage(),
-    }),
+  // 可以拆掉进程级 Hook，ledger/macKey 直接泄露审计密钥材料。
+  // 交付面定义在 runtime/facade.js，与 LocalHost 装配路共用同一份（改一处即两路生效）。
+  return buildPluginFacade({
+    manifest: host.manifest,
+    guard: runtime.guard,
     handles: runtime.handles,
-    deactivate: release,
-    // dispose 与 deactivate 同一释放路径（H5）：宿主两种习惯都保留。
-    dispose: release,
-  };
+    release,
+  });
 }
 
 module.exports = {

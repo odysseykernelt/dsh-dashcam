@@ -1,6 +1,6 @@
 {
   "name": "dsh-dashcam",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "description": "Plugin dashcam for DSH: capability manifests, runtime guards, and a tamper-evident audit ledger (formerly dsh-covenant).",
   "homepage": "https://github.com/odysseykernelt/dsh-dashcam#readme",
   "repository": {

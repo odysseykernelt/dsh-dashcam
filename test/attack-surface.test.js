@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { LocalHost } = require('../src/host/local-host');
 const { Ledger } = require('../src/runtime/ledger');
+const dashcam = require('../src');
 const { createPlugin, tempDir, cleanup } = require('./helpers/fixtures');
 
 // Bridge 一旦装上，本测试进程自己的 fs 调用也会被守卫；先钉住原生引用。
@@ -680,4 +681,94 @@ test('coverage().knownGaps 如实自述：realm 级逃逸与已授权进程内�
     try { await host.uninstall('com.example.gaps'); } catch { /* 已卸载 */ }
     cleanup(dir);
   }
+});
+
+// ── 第五类：装配面（两条装配路共用同一份交付面定义） ─────────────────
+
+// 复检报告 2026-11-09 剩余的一条缝：activate() 与 LocalHost 是两份装配代码，
+// façade 只加在 activate() 返回值上，LocalHost 仍把裸 guard/ledger/seal 交给
+// 插件——探针实测 ctx.guard.setGrants([...]) 自我授权 SUCCEEDED。
+// 修法是把交付面抽成唯一一份（src/runtime/facade.js），两条路各测各的。
+
+test('装配面回归 A：activate() 返回值不含 guard 管理面、账本与 OneSeal', () => {
+  let preExecute = null;
+  const facade = dashcam.activate({
+    manifest: { id: 'com.example.hosted', version: '1.0.0' },
+    grants: [],
+    policy: {},
+    patchBuiltins: false, // 测试进程不装全局 Hook
+    registerPreExecute(fn) { preExecute = fn; },
+  });
+  try {
+    assert.equal(typeof facade.guard.check, 'function', '只读判定句柄必须可用');
+    assert.equal(typeof facade.guard.enforce, 'function', 'enforce 句柄必须可用');
+    assert.equal(typeof facade.guard.coverage, 'function', 'coverage 句柄必须可用');
+    assert.equal(typeof facade.guard.setGrants, 'undefined', 'setGrants 管理面不得外借');
+    assert.equal(typeof facade.guard.uninstallNativeHooks, 'undefined', '拆 Hook 的能力不得外借');
+    assert.equal(facade.ledger, undefined, '账本实例不得外借');
+    assert.equal(facade.seal, undefined, 'OneSeal 不得外借');
+    assert.equal(facade.bridge, undefined, 'Bridge 不得外借');
+    assert.ok(Object.isFrozen(facade.guard), 'guard 交付面必须冻结');
+    assert.equal(typeof preExecute, 'function', 'registerPreExecute 必须收到判定函数');
+    assert.equal(typeof facade.deactivate, 'function', 'deactivate 必须在交付面上');
+    assert.equal(typeof facade.dispose, 'function', 'dispose 必须在交付面上');
+  } finally {
+    // H5：release 幂等——重复释放不得抛错、不得重复回收。
+    facade.deactivate();
+    facade.deactivate();
+  }
+  // 释放后互斥计数归零：同一进程必须能再次 activate。
+  const again = dashcam.activate({ patchBuiltins: false, policy: {} });
+  again.deactivate();
+  assert.equal(typeof again.guard.check, 'function', '释放后重新激活必须成功');
+});
+
+test('装配面回归 B：LocalHost 交给插件 activate(ctx) 的也是同一份封闭面', async () => {
+  const code = [
+    "'use strict';",
+    'module.exports = {',
+    '  activate(ctx) {',
+    '    const probe = { keys: Object.keys(ctx).sort() };',
+    '    probe.setGrants = typeof ctx.guard.setGrants;',
+    '    probe.uninstallHooks = typeof ctx.guard.uninstallNativeHooks;',
+    '    probe.ledger = typeof ctx.ledger;',
+    '    probe.seal = typeof ctx.seal;',
+    '    probe.macKey = ctx.ledger ? typeof ctx.ledger.macKey : "n/a";',
+    '    probe.check = typeof ctx.guard.check;',
+    '    probe.enforce = typeof ctx.guard.enforce;',
+    '    probe.handles = typeof ctx.handles;',
+    '    probe.preExecute = typeof ctx.registerPreExecute;',
+    '    probe.escalate = "NOT-TRIED";',
+    '    try {',
+    '      ctx.guard.setGrants([{ capability: "fs.write", scope: { paths: ["/**"] } }]);',
+    '      probe.escalate = "SUCCEEDED";',
+    '    } catch (e) { probe.escalate = e.code || e.message; }',
+    '    if (ctx.registerPreExecute) ctx.registerPreExecute((decision) => decision);',
+    '    global.__facadeProbe = probe;',
+    '  },',
+    '  invoke() { return global.__facadeProbe; },',
+    '  deactivate() { delete global.__facadeProbe; },',
+    '};',
+  ].join('\n');
+  const { result } = await withHost({
+    id: 'com.example.attack.facade',
+    requests: [],
+    grants: [],
+    code,
+    run: async ({ host }) => host.invoke('com.example.attack.facade'),
+  });
+  assert.equal(result.setGrants, 'undefined', '插件 ctx 上不得有 setGrants');
+  assert.equal(result.uninstallHooks, 'undefined', '插件 ctx 上不得有 uninstallNativeHooks');
+  assert.equal(result.ledger, 'undefined', '插件 ctx 上不得有账本实例');
+  assert.equal(result.seal, 'undefined', '插件 ctx 上不得有 OneSeal');
+  assert.equal(result.macKey, 'n/a', 'MAC 密钥不得随 ctx 泄露');
+  assert.equal(result.check, 'function', '只读判定句柄必须可用');
+  assert.equal(result.enforce, 'function', 'enforce 句柄必须可用');
+  assert.equal(result.handles, 'object', '能力句柄必须可用');
+  assert.equal(result.preExecute, 'function', 'registerPreExecute 必须保留给宿主集成');
+  assert.notEqual(result.escalate, 'SUCCEEDED', '自我授权必须失败');
+  assert.ok(
+    !result.keys.includes('ledger') && !result.keys.includes('seal'),
+    `ctx 键面不得再出现 ledger/seal：${result.keys.join(',')}`,
+  );
 });
