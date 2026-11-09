@@ -359,7 +359,7 @@ test('mac 账本：追加 ingress 记录后 verify 仍通过', () => {
 
   const verification = ledger.verify();
   assert.equal(verification.ok, true, JSON.stringify(verification.errors));
-  assert.ok(ledger.records().every((record) => record.v === 3));
+  assert.ok(ledger.records().every((record) => record.v === 4));
 });
 
 test('metrics 隔离：ingress 记录不进判定口径，旧读数不变', () => {

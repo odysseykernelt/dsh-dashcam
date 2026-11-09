@@ -4,20 +4,57 @@ const { DashcamDenied } = require('../errors');
 const { authorizeAccess } = require('../contract/two-key');
 const { deriveOperation } = require('./derive');
 const { resolveLimits } = require('../policy');
+const { stableStringify, sha256 } = require('../util/stable');
 
-function recordLedger(ledger, record) {
+/**
+ * 账本写入的处置模式：
+ *  - 'open'（默认）：行车记录仪不拦车——账本写不进去不拦截活动，显式告警并
+ *    best-effort 补一条 ledger_fail 标记；
+ *  - 'closed'（opt-in）：审计写不进去就拒绝执行——护栏语义的保留位。
+ * 由 policy.ledger.failMode 配置。
+ */
+const DEFAULT_LEDGER_FAIL_MODE = 'open';
+
+function recordLedger(ledger, record, failMode = DEFAULT_LEDGER_FAIL_MODE) {
   if (!ledger) return null;
   try {
     return ledger.append(record);
   } catch (error) {
-    // 已经是 Ledger 自身的失败就原样抛出，避免错误信息被反复嵌套。
-    if (error instanceof DashcamDenied && error.ruleId === 'ledger') throw error;
-    // 审计写不进去时失败关闭，宁可拒绝执行。
-    throw new DashcamDenied(`Ledger 写入失败：${String((error && error.message) || error).slice(0, 300)}`, {
-      capability: record.capability,
-      scope: record.scope,
-      ruleId: 'ledger',
-    });
+    if (failMode === 'closed') {
+      // 已经是 Ledger 自身的失败就原样抛出，避免错误信息被反复嵌套。
+      if (error instanceof DashcamDenied && error.ruleId === 'ledger') throw error;
+      throw new DashcamDenied(`Ledger 写入失败：${String((error && error.message) || error).slice(0, 300)}`, {
+        capability: record.capability,
+        scope: record.scope,
+        ruleId: 'ledger',
+      });
+    }
+    // failMode='open'：记账故障必须可见，但不能变成「拦活」的理由。
+    // 告警走 console（宿主日志可见）；再 best-effort 落一条 ledger_fail 标记——
+    // 若故障是瞬时的（磁盘满一瞬），恢复后的第一条标记能把故障窗口钉在链上；
+    // 若账本持续不可用，标记写不进去属预期，告警就是唯一的线索。
+    console.warn(
+      `[dsh-dashcam] ledger_fail：账本写入失败（failMode=open，放行不阻断）：`
+      + `${String((error && error.message) || error).slice(0, 300)}`,
+    );
+    try {
+      ledger.append({
+        plugin: record.plugin,
+        pluginVersion: record.pluginVersion,
+        capability: 'telemetry',
+        action: 'ledger-fail',
+        scope: { failedAction: record.action || null },
+        decision: 'deny',
+        ruleId: 'ledger_fail',
+        reason: `账本写入失败（failMode=open，活动已放行）：${String((error && error.message) || error).slice(0, 260)}`,
+        intercepted: false,
+        profiled: record.profiled === true,
+        manifestHash: typeof record.manifestHash === 'string' ? record.manifestHash : null,
+      });
+    } catch {
+      // 账本仍不可用：告警已发，标记留待账本恢复后的下一次成功写入。
+    }
+    return null;
   }
 }
 
@@ -41,6 +78,21 @@ function createGuardChain({
   integrityEvery = null,
 } = {}) {
   const limits = resolveLimits(policy);
+  // failMode：账本写入失败的处置（见文件头 DEFAULT_LEDGER_FAIL_MODE 注释）。
+  // 默认 open；policy.ledger.failMode='closed' 显式回到「写不进账就拒绝执行」。
+  const effectiveLedgerFailMode = policy && policy.ledger && policy.ledger.failMode === 'closed'
+    ? 'closed'
+    : DEFAULT_LEDGER_FAIL_MODE;
+  // 归属标注：每条账本记录固定带 profiled / manifestHash（v4 字段）。
+  // 判据与 Two-Key 同源——manifest.dashcam.requests（兼容 capabilities.requests
+  // 双写形态）；有契约时 manifestHash 是声明清单的稳定哈希，与宿主侧对账本时
+  // 能对出「当时声明了什么」；零契约时 profiled=false、manifestHash=null。
+  const declaredRequests = (manifest && manifest.dashcam && manifest.dashcam.requests)
+    || (manifest && manifest.dashcam
+      && manifest.dashcam.capabilities && manifest.dashcam.capabilities.requests)
+    || [];
+  const profiled = Array.isArray(declaredRequests) && declaredRequests.length > 0;
+  const manifestHash = profiled ? sha256(stableStringify(declaredRequests)) : null;
   const effectiveIntegrityEvery = Number.isFinite(integrityEvery)
     ? integrityEvery
     : limits.integrityEvery;
@@ -110,6 +162,8 @@ function createGuardChain({
       denial.ledgerSeq = record ? (recordLedger(ledger, {
         plugin: manifest && manifest.id,
         pluginVersion: manifest && manifest.version,
+        profiled,
+        manifestHash,
         capability: denial.capability,
         action: denial.action,
         scope: denial.scope,
@@ -117,7 +171,7 @@ function createGuardChain({
         ruleId: precise ? error.ruleId : 'derive',
         reason: denial.reason,
         intercepted: denyFlags.intercepted,
-      })?.seq || null) : null;
+      }, effectiveLedgerFailMode)?.seq || null) : null;
       emit({ type: 'deny', ...denial });
       return denial;
     }
@@ -186,6 +240,8 @@ function createGuardChain({
       const entry = record ? recordLedger(ledger, {
         plugin: manifest && manifest.id,
         pluginVersion: manifest && manifest.version,
+        profiled,
+        manifestHash,
         capability: denial.capability,
         action: denial.action,
         scope: denial.scope,
@@ -193,7 +249,7 @@ function createGuardChain({
         ruleId: denial.code,
         reason: denial.reason,
         intercepted: denyFlags.intercepted,
-      }) : null;
+      }, effectiveLedgerFailMode) : null;
       denial.ledgerSeq = entry ? entry.seq : null;
       denial.intercepted = denyFlags.intercepted;
       if (observeDepth > 0) {
@@ -219,6 +275,8 @@ function createGuardChain({
       if (record) entry = recordLedger(ledger, {
         plugin: manifest && manifest.id,
         pluginVersion: manifest && manifest.version,
+        profiled,
+        manifestHash,
         capability: base.capability,
         action: base.action,
         scope: base.scope,
@@ -226,7 +284,7 @@ function createGuardChain({
         ruleId: 'two-key',
         reason: declaredReasonOf(authorization),
         intercepted: false,
-      });
+      }, effectiveLedgerFailMode);
     } catch (error) {
       // 审计没写进去就不算放行，也不能把一次性授权留在已消费状态。
       if (reservedSealId) releaseSeal(seal, reservedSealId);
@@ -290,6 +348,8 @@ function createGuardChain({
         const entry = recordLedger(ledger, {
           plugin: manifest && manifest.id,
           pluginVersion: manifest && manifest.version,
+          profiled,
+          manifestHash,
           capability: decision.capability,
           action: decision.action,
           scope: { batch: true, count: index + 1, sample: decision.scope },
@@ -297,7 +357,7 @@ function createGuardChain({
           ruleId: code,
           reason,
           intercepted,
-        });
+        }, effectiveLedgerFailMode);
         const ledgerSeq = entry ? entry.seq : null;
         if (observeDepth > 0) {
           return {
@@ -329,6 +389,8 @@ function createGuardChain({
     const entry = recordLedger(ledger, {
       plugin: manifest && manifest.id,
       pluginVersion: manifest && manifest.version,
+      profiled,
+      manifestHash,
       capability,
       action,
       scope: {
@@ -340,7 +402,7 @@ function createGuardChain({
       ruleId: 'two-key-batch',
       reason: declaredReasonOf(authorizationForBatch(operation, payloads[0])),
       intercepted: false,
-    });
+    }, effectiveLedgerFailMode);
     const result = {
       allowed: true,
       batch: true,

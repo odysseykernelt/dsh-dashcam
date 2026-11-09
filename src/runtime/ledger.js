@@ -72,8 +72,19 @@ const FIELDS_V2 = Object.freeze([
  */
 const FIELDS_V3 = Object.freeze([...FIELDS_V2, 'mac']);
 
+/**
+ * v4 = v2 + profiled + manifestHash（归属标注，可不含 mac）。
+ * 行车记录仪的核心取证维度是「这条活动有没有契约管着」：profiled=false 表示
+ * 记录产生于零契约模式（宿主没给这个插件任何声明清单）；manifestHash 是声明
+ * 清单（requests）的稳定哈希——有契约时事后能对出「当时到底声明了什么」，
+ * 无契约时为 null，本身就是「没契约」的证明。
+ */
+const FIELDS_V4 = Object.freeze([...FIELDS_V2, 'profiled', 'manifestHash']);
+/** v4 + mac：与 v3 一样，macKey 存在时 mac 必须在。 */
+const FIELDS_V4_MAC = Object.freeze([...FIELDS_V4, 'mac']);
+
 /** 兼容导出：默认按最新版本。 */
-const FIELDS = FIELDS_V3;
+const FIELDS = FIELDS_V4;
 
 function hmacSha256(key, text) {
   return crypto.createHmac('sha256', key).update(text, 'utf8').digest('hex');
@@ -88,6 +99,7 @@ function safeEqualHex(left, right) {
 }
 
 function recordVersion(parsed) {
+  if (parsed && parsed.v === 4) return 4;
   if (parsed && parsed.v === 3) return 3;
   if (parsed && parsed.v === 2) return 2;
   return 1;
@@ -95,7 +107,7 @@ function recordVersion(parsed) {
 
 function buildRecord(record, seq, prevHash, ts, macKey) {
   const base = {
-    v: macKey ? 3 : 2,
+    v: 4,
     seq,
     ts,
     plugin: record.plugin,
@@ -109,6 +121,10 @@ function buildRecord(record, seq, prevHash, ts, macKey) {
     // 记录“实际拦截的未声明 API 调用”。拦截与普通拒绝分开统计，
     // 便于事后区分「未声明越权」与「已声明但未授予」。
     intercepted: record.intercepted === true,
+    // 归属标注（v4）：这条活动发生时插件是否在契约之下、契约清单是什么。
+    // 缺省即「无契约」——这对零契约模式是如实记录，不是缺字段。
+    profiled: record.profiled === true,
+    manifestHash: typeof record.manifestHash === 'string' ? record.manifestHash : null,
     prevHash,
   };
   base.hash = sha256(stableStringify(base));
@@ -122,7 +138,9 @@ function verifyLine(parsed, expectedSeq, expectedPrev, macKey) {
     return { ok: false, errors: [{ code: 'record_invalid', detail: '不是 JSON 对象' }] };
   }
   const version = recordVersion(parsed);
-  const fields = version === 3 ? FIELDS_V3 : (version === 2 ? FIELDS_V2 : FIELDS_V1);
+  const fields = version === 4
+    ? (macKey ? FIELDS_V4_MAC : FIELDS_V4)
+    : (version === 3 ? FIELDS_V3 : (version === 2 ? FIELDS_V2 : FIELDS_V1));
   for (const field of fields) {
     if (!Object.prototype.hasOwnProperty.call(parsed, field)) {
       errors.push({ code: 'field_missing', detail: field });
@@ -370,6 +388,8 @@ class Ledger {
     let expectedPrev = 'GENESIS';
     const errors = [];
     // 是否已经出现过带 mac 的行。出现之后再冒出低版本行，就是「降版本绕过 mac」。
+    // 判据是 mac 字段本身而非版本号：v4 无密钥时同样没有 mac，不能凭 v>=3
+    // 就要求密钥——那会把无密钥的 v4 账本误报成 mac_key_missing。
     let sawMacRecord = false;
 
     lines.forEach((line, index) => {
@@ -385,10 +405,10 @@ class Ledger {
         errors.push({
           line: index + 1,
           code: 'version_downgrade',
-          detail: 'v3 记录之后出现低版本行：疑似降版本以绕过 mac',
+          detail: '带 mac 的记录之后出现低版本行：疑似降版本以绕过 mac',
         });
       }
-      if (version >= 3) sawMacRecord = true;
+      if (parsed && typeof parsed.mac === 'string') sawMacRecord = true;
       const result = verifyLine(parsed, index + 1, expectedPrev, this.macKey);
       if (!result.ok) {
         for (const error of result.errors) errors.push({ line: index + 1, ...error });
@@ -402,7 +422,7 @@ class Ledger {
       errors.push({
         line: 0,
         code: 'mac_key_missing',
-        detail: '账本包含 v3 记录，但未提供 macKey：mac 未被校验，不能当作完整审计',
+        detail: '账本包含带 mac 的记录，但未提供 macKey：mac 未被校验，不能当作完整审计',
       });
     }
 
@@ -462,6 +482,8 @@ module.exports = {
   FIELDS_V1,
   FIELDS_V2,
   FIELDS_V3,
+  FIELDS_V4,
+  FIELDS_V4_MAC,
   verifyLine,
   recordVersion,
   hmacSha256,

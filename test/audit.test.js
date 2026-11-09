@@ -119,7 +119,7 @@ test('Ledger：中间行被篡改时定位到具体行号', () => {
   cleanup(dir);
 });
 
-test('One-Seal：审计写失败时释放占位，不白烧一次性授权', () => {
+test('One-Seal：审计写失败时释放占位，不白烧一次性授权（failMode=closed 显式开启）', () => {
   const dir = tempDir('audit-seal-');
   const scope = { paths: [path.join(dir, '**')] };
   const seal = new OneSealStore({ ttlMs: 60_000 });
@@ -144,10 +144,87 @@ test('One-Seal：审计写失败时释放占位，不白烧一次性授权', () 
     }],
     ledger: { append() { throw new Error('disk full'); } },
     seal,
+    // closed 是 opt-in：只有显式配置才回到「写不进账就拒绝执行」的护栏语义。
+    policy: { ledger: { failMode: 'closed' } },
   });
 
   assert.throws(() => guard.enforce('fs.read', { path: path.join(dir, 'a.txt') }), /Ledger 写入失败/);
   assert.equal(seal.isAvailable('seal-1'), true, '一次性授权不应被审计故障消耗');
+  cleanup(dir);
+});
+
+test('One-Seal：failMode=open（默认）时账本故障不拦活，放行且消费一次性授权', () => {
+  const dir = tempDir('audit-seal-open-');
+  const scope = { paths: [path.join(dir, '**')] };
+  const seal = new OneSealStore({ ttlMs: 60_000 });
+  seal.issue({ id: 'seal-1', oneSeal: true, sealTtlMs: 60_000 });
+  let appendCalls = 0;
+  const guard = createGuardChain({
+    manifest: {
+      id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+      dashcam: {
+        spec: 'dsh-dashcam/1',
+        content: null,
+        requests: [{ capability: 'fs.read', scope, reason: '读取缓存' }],
+      },
+    },
+    grants: [{
+      id: 'seal-1',
+      capability: 'fs.read',
+      scope,
+      enabled: true,
+      oneSeal: true,
+      expiresAt: null,
+      sealTtlMs: 60_000,
+    }],
+    ledger: { append() { appendCalls += 1; throw new Error('disk full'); } },
+    seal,
+  });
+
+  // 默认 open：账本故障不抛、活动照常放行（行车记录仪不拦车）；
+  // 放行了就要烧掉一次性授权，不能留下可重放的窗口。
+  const decision = guard.enforce('fs.read', { path: path.join(dir, 'a.txt') });
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.ledgerSeq, null);
+  assert.equal(seal.isAvailable('seal-1'), false, '放行必须 commit 一次性授权');
+  // 原始写入 + ledger_fail 标记都尝试过（标记也失败属预期）。
+  assert.equal(appendCalls, 2);
+  cleanup(dir);
+});
+
+test('归属标注：账本记录带 profiled / manifestHash（有契约与零契约两种形态）', () => {
+  const dir = tempDir('audit-attribution-');
+  const scope = { paths: [path.join(dir, '**')] };
+  const requests = [{ capability: 'fs.read', scope, reason: '读取缓存' }];
+  const manifestOf = (reqs) => ({
+    id: 'p', name: 'P', version: '1.0.0', entry: 'index.js', kind: 'dashcam',
+    dashcam: { spec: 'dsh-dashcam/1', content: null, requests: reqs },
+  });
+
+  // 有契约：profiled=true，manifestHash 是声明清单的稳定哈希。
+  const fileA = path.join(dir, 'a.jsonl');
+  const guardA = createGuardChain({
+    manifest: manifestOf(requests),
+    grants: [{ id: 'g1', capability: 'fs.read', scope, enabled: true }],
+    ledger: new Ledger(fileA),
+  });
+  guardA.enforce('fs.read', { path: path.join(dir, 'a.txt') });
+  const rowA = new Ledger(fileA).records()[0];
+  assert.equal(rowA.profiled, true);
+  assert.equal(rowA.manifestHash, sha256(stableStringify(requests)));
+
+  // 零契约：profiled=false，manifestHash=null——「没契约」本身是可审计事实。
+  const fileB = path.join(dir, 'b.jsonl');
+  const guardB = createGuardChain({
+    manifest: manifestOf([]),
+    grants: [],
+    ledger: new Ledger(fileB),
+  });
+  const denial = guardB.check('fs.read', { path: path.join(dir, 'b.txt') });
+  assert.equal(denial.allowed, false);
+  const rowB = new Ledger(fileB).records()[0];
+  assert.equal(rowB.profiled, false);
+  assert.equal(rowB.manifestHash, null);
   cleanup(dir);
 });
 
@@ -283,7 +360,7 @@ test('Ledger MAC：有密钥的账本无法被无密钥者重算', () => {
   ledger.append(record());
   ledger.append(record({ decision: 'deny', ruleId: 'not_declared', intercepted: true }));
   assert.equal(new Ledger(file, { macKey: key }).verify().ok, true);
-  assert.equal(new Ledger(file).records()[0].v, 3);
+  assert.equal(new Ledger(file).records()[0].v, 4);
 
   // 篡改者重算了哈希链但没有密钥：mac 校验必须抓出来。
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean);

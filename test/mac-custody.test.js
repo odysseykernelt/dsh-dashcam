@@ -59,7 +59,7 @@ test('LocalHost：redact() 不含密钥，账本按 v3 写', async () => {
     await host.install(dir);
     const rows = new Ledger(ledgerPath, { macKey: KEY }).records();
     assert.ok(rows.length >= 1);
-    assert.equal(rows[0].v, 3);
+    assert.equal(rows[0].v, 4);
     assert.equal(typeof rows[0].mac, 'string');
     assert.equal(new Ledger(ledgerPath, { macKey: KEY }).verify().ok, true);
   } finally {

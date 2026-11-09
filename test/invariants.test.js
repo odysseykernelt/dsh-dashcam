@@ -110,7 +110,8 @@ test('不变量1：v1 历史账本仍可验证（手工构造哈希链，无 int
     const ledger = new Ledger(file);
     assert.equal(ledger.seq, 3);
     const appended = ledger.append(baseRecord({ reason: '继续追加' }));
-    assert.equal(appended.v, 2);
+    // 新追加的行按当前格式版本 v4 写（旧版本行不受影响，链可混版本续写）。
+    assert.equal(appended.v, 4);
 
     const after = new Ledger(file).verify();
     assert.equal(after.ok, true, JSON.stringify(after.errors));
@@ -129,7 +130,7 @@ test('不变量2：v3 账本无密钥校验必须失败（mac_key_missing）', (
     ledger.append(baseRecord({ decision: 'deny', ruleId: 'not_granted', intercepted: false }));
 
     assert.equal(
-      new Ledger(file).records().every((record) => record.v === 3 && typeof record.mac === 'string'),
+      new Ledger(file).records().every((record) => record.v === 4 && typeof record.mac === 'string'),
       true,
     );
 
