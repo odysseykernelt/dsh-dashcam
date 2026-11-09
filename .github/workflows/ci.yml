@@ -29,4 +29,4 @@ jobs:
         run: |
           cp -r dsh-dashcam-host /tmp/hostbuild
           cd /tmp/hostbuild && node build.mjs
-          diff -q /tmp/hostbuild/lib/client.js dsh-dashcam-host/lib/client.js
+          diff -q --strip-trailing-cr /tmp/hostbuild/lib/client.js "$GITHUB_WORKSPACE/dsh-dashcam-host/lib/client.js"

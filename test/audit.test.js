@@ -335,7 +335,8 @@ test('TOCTOU：open 后按 fd 复核，符号链接替换落点被二次判定�
   const hooks = guard.installNativeHooks();
   try {
     // 链接本体在插件目录内（判定通过），落点在目录外（fd 复核必须拦下）。
-    assert.throws(() => fs.readFileSync(linkInside, 'utf8'), /未在 manifest 中声明|未授予|拒绝/);
+    // Linux 上 fd 复核走另一分支，文案是「未声明的能力或范围」；Windows 上是「未授予/拒绝」。
+    assert.throws(() => fs.readFileSync(linkInside, 'utf8'), /未在 manifest 中声明|未授予|未声明的能力或范围|拒绝/);
   } finally {
     guard.uninstallNativeHooks();
     cleanup(dir);
