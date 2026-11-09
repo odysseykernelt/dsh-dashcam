@@ -38,7 +38,11 @@
     "README.md",
     "README.zh-CN.md",
     "LICENSE",
-    "SECURITY.md"
+    "SECURITY.md",
+    "!docs/*-audit-*.md",
+    "!docs/*review*.md",
+    "!docs/*verify*.md",
+    "!docs/audiences.md"
   ],
   "engines": {
     "node": ">=20"
