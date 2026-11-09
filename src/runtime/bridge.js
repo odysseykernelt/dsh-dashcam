@@ -282,6 +282,11 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
   // （路径、URL、命令），toString/valueOf 里跑的是插件代码；若判定也在窗口内，
   // 插件就能在强转里发起任意调用而不进守卫链、不落账本。
   let callDepth = 0;
+  // R1（三视角审查）：插件回调进入重入窗口的公开入口（http/https options 的
+  // createConnection / 函数型 lookup / 自定义 agent / socketPath）已在
+  // installNet.guardRequest 一律拒绝；窗口本身的直通口径见 guardedEntry 注释
+  // （标准库内部链路与插件回调共用同一补丁入口，包装层无法区分，fail-closed
+  // 实测不可行）。
 
   function patchMethod(target, prop, maker, label) {
     if (!target) { unpatched.push({ prop, reason: 'target_missing' }); return false; }
@@ -290,7 +295,7 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     if (typeof original !== 'function') { unpatched.push({ prop, reason: 'not_function' }); return false; }
     // 交给 maker 的是「带重入窗口的原生调用」，判定代码因此始终在 callDepth === 0 下执行。
     const invokeOriginal = function invokeOriginal(...callArgs) {
-      // 先剥离陷阱再开窗：顺序不能反，否则剥离本身就发生在直通窗口里了。
+      // 先剥离陷阱再开窗：顺序不能反，否则剥离本身就发生在窗口里了。
       const safeArgs = stripArgTraps(callArgs);
       callDepth += 1;
       try {
@@ -301,6 +306,12 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
     };
     const inner = maker(invokeOriginal);
     const wrapped = function guardedEntry(...args) {
+      // 直通窗口是已知残余，且实测无法收成 fail-closed：Node 标准库自身的 JS
+      // 实现（如 readFileSync，node:fs:445）就经由模块导出对象再调 openSync，
+      // 与插件回调走同一条补丁入口，包装层无法区分两者。插件代码进入窗口的
+      // 公开入口已在 API 面切断：http/https 的 createConnection / 函数型
+      // lookup / 自定义 agent / socketPath 在 guardRequest 一律拒绝（R1），
+      // 对象型 options 的函数值由 function_options 静态扫描拒绝（R5-4）。
       if (callDepth > 0) return original.apply(this, args);
       return inner.apply(this, args);
     };
@@ -725,25 +736,67 @@ function createBridge({ guard, ledger, plugin = null, autoSweep = false, globBat
   function installNet() {
     function guardRequest(args, protocol) {
       const target = parseRequestTarget(args, protocol);
-      guard.enforce('net.outbound', { host: target.host, port: target.port || 443 });
+      const defaultPort = target.port || (protocol === 'https:' ? 443 : 80);
+      const options = args.length > 1 && args[1] && typeof args[1] === 'object' && !(args[1] instanceof URL)
+        ? args[1]
+        : null;
+      if (options) {
+        // R1：这三类 options 会把插件回调送进原生重入窗口，一律 fail-closed 拒绝。
+        // （agent: undefined/false → 走内部默认 Agent，不受限。）
+        const deniedOption = options.createConnection ? 'createConnection'
+          : typeof options.lookup === 'function' ? 'lookup'
+            : options.agent ? 'agent'
+              : null;
+        if (deniedOption) {
+          const scope = { host: target.host, port: defaultPort, option: deniedOption };
+          recordBridgeDeny(
+            'net.outbound',
+            `http_${deniedOption}`,
+            `http/https 请求携带自定义 options.${deniedOption}：其回调会在原生重入窗口内执行，无法判定，已拒绝`,
+            scope,
+          );
+          throw new DashcamDenied(
+            `http/https 请求的自定义 options.${deniedOption} 已被拒绝（重入窗口风险）`,
+            { capability: 'net.outbound', scope, ruleId: `http_${deniedOption}` },
+          );
+        }
+        // Unix socket / 具名管道：与 net.connect 的 socket_path 同口径拒绝。
+        if (options.socketPath) {
+          const scope = { path: String(options.socketPath).slice(0, 200) };
+          recordBridgeDeny(
+            'net.outbound',
+            'socket_path',
+            'net 出站仅支持 TCP（host:port）：Unix socket / 具名管道无法按 host:port 判定，与句柄层同口径拒绝',
+            scope,
+          );
+          throw new DashcamDenied(
+            'net 出站仅支持 TCP（host:port）：socketPath 无法判定，已拒绝',
+            { capability: 'net.outbound', scope, ruleId: 'socket_path' },
+          );
+        }
+      }
+      guard.enforce('net.outbound', { host: target.host, port: defaultPort });
     }
 
+    // net 家族补丁安装（http/https 的 options 加固见 guardRequest；内部建链链路
+    // Agent.addRequest → net.createConnection → Socket#connect → tls.connect → dns
+    // 由请求入口的判定覆盖，窗口内直通）。
     patchMethod(http, 'request', (original) => function wrappedHttpRequest(...args) {
-      guardRequest(args, 'http:');
-      return original.apply(this, args);
-    });
-    patchMethod(http, 'get', (original) => function wrappedHttpGet(...args) {
-      guardRequest(args, 'http:');
-      return original.apply(this, args);
-    });
-    patchMethod(https, 'request', (original) => function wrappedHttpsRequest(...args) {
-      guardRequest(args, 'https:');
-      return original.apply(this, args);
-    });
-    patchMethod(https, 'get', (original) => function wrappedHttpsGet(...args) {
-      guardRequest(args, 'https:');
-      return original.apply(this, args);
-    });
+        guardRequest(args, 'http:');
+        return original.apply(this, args);
+      });
+      patchMethod(http, 'get', (original) => function wrappedHttpGet(...args) {
+        guardRequest(args, 'http:');
+        return original.apply(this, args);
+      });
+      patchMethod(https, 'request', (original) => function wrappedHttpsRequest(...args) {
+        guardRequest(args, 'https:');
+        return original.apply(this, args);
+      });
+      patchMethod(https, 'get', (original) => function wrappedHttpsGet(...args) {
+        guardRequest(args, 'https:');
+        return original.apply(this, args);
+      });
 
     function guardSocket(args) {
       // M1（1.10.9）：Unix socket / 具名管道走 options.path 或字符串路径形态，

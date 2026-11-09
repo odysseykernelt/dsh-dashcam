@@ -31,24 +31,46 @@ function defaultPortFor(protocol) {
 }
 
 function parseRequestTarget(args, defaultProtocol = 'http:') {
+  // R3（三视角审查）：Node 的 http.request(url, options) 语义是 options 字段
+  // **覆盖** URL 的对应字段——只判 args[0] 会「连 B 记 A」。这里按 Node 语义
+  // 先合并再返回，判定对象就是真实建连对象。
   const first = args[0];
+  const options = args.length > 1 && args[1] && typeof args[1] === 'object' && !(args[1] instanceof URL)
+    ? args[1]
+    : null;
+  let protocol = defaultProtocol;
+  let host = 'localhost';
+  let port;
   if (typeof first === 'string' || first instanceof URL) {
     const url = first instanceof URL ? first : new URL(first, `${defaultProtocol}//localhost`);
-    return {
-      host: url.hostname,
-      port: url.port ? Number(url.port) : defaultPortFor(url.protocol),
-      protocol: url.protocol,
-    };
+    protocol = url.protocol;
+    host = url.hostname;
+    port = url.port ? Number(url.port) : undefined;
+  } else if (first && typeof first === 'object') {
+    protocol = first.protocol || defaultProtocol;
+    host = first.hostname || first.host || 'localhost';
+    port = first.port !== undefined ? Number(first.port) : undefined;
   }
-  if (first && typeof first === 'object') {
-    const protocol = first.protocol || defaultProtocol;
-    return {
-      host: first.hostname || first.host || 'localhost',
-      port: first.port ? Number(first.port) : defaultPortFor(protocol),
-      protocol,
-    };
+  if (options) {
+    if (options.protocol) protocol = options.protocol;
+    if (options.host || options.hostname) {
+      host = options.host || options.hostname;
+    }
+    if (options.port !== undefined) port = Number(options.port);
   }
-  return { host: 'localhost', port: defaultPortFor(defaultProtocol), protocol: defaultProtocol };
+  // host 允许 'host:port' 复合形态（IPv6 除外）；显式 port 优先于复合形态里的端口。
+  if (port === undefined && typeof host === 'string') {
+    const at = host.lastIndexOf(':');
+    if (at > 0 && !host.includes(']')) {
+      const maybePort = Number(host.slice(at + 1));
+      if (Number.isInteger(maybePort) && maybePort > 0) {
+        port = maybePort;
+        host = host.slice(0, at);
+      }
+    }
+  }
+  if (port === undefined || port === null) port = defaultPortFor(protocol);
+  return { host, port, protocol };
 }
 
 /**
