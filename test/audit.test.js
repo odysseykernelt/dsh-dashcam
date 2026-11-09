@@ -11,6 +11,7 @@ const { OneSealStore } = require('../src/runtime/one-seal');
 const { createGuardChain } = require('../src/runtime/guards');
 const { LocalHost } = require('../src/host/local-host');
 const { spawnSync } = require('node:child_process');
+const os = require('node:os');
 
 function record(overrides = {}) {
   return {
@@ -287,6 +288,106 @@ test('CLI verify-ledger：脱离宿主进程验链，篡改行报非零退出', 
   const badParsed = JSON.parse(bad.stdout);
   assert.equal(badParsed.ok, false);
   assert.ok(badParsed.errors.some((error) => error.code === 'hash_mismatch'));
+  cleanup(dir);
+});
+
+test('N5：rotate 归档旧段、新段以 segment-rotate 链接记录开头，链可验', () => {
+  const dir = tempDir('audit-rotate-');
+  const file = path.join(dir, 'ledger.jsonl');
+  const ledger = new Ledger(file);
+  ledger.append(record());
+  ledger.append(record({ decision: 'deny', ruleId: 'not_granted', reason: '宿主未授予' }));
+  const before = new Ledger(file);
+  const firstHash = before.records()[0].hash;
+  const lastHash = before.records()[1].hash;
+
+  const result = ledger.rotate();
+  assert.ok(result.archivedPath.endsWith('.jsonl'), result.archivedPath);
+  assert.ok(fs.existsSync(result.archivedPath), '旧段应保留');
+  assert.equal(result.records, 2);
+  assert.equal(result.lastSeq, 2);
+  assert.equal(result.firstHash, firstHash);
+  assert.equal(result.lastHash, lastHash);
+
+  // 新段：链接记录 seq=1，scope 携带旧段首尾 hash（basename，不带绝对路径）。
+  const fresh = new Ledger(file);
+  const link = fresh.append({
+    plugin: 'dsh-dashcam',
+    pluginVersion: 'test',
+    capability: 'telemetry',
+    action: 'segment-rotate',
+    scope: {
+      archived: path.basename(result.archivedPath),
+      records: result.records,
+      lastSeq: result.lastSeq,
+      prevSegmentFirstHash: result.firstHash,
+      prevSegmentLastHash: result.lastHash,
+    },
+    decision: 'allow',
+    ruleId: 'rotate',
+    reason: '账本轮转：新段从此开始',
+    intercepted: false,
+  });
+  assert.equal(link.seq, 1);
+  assert.equal(new Ledger(file).verify().ok, true);
+  // 旧段归档后仍可独立验链。
+  assert.equal(new Ledger(result.archivedPath).verify().ok, true);
+  // 坏账拒绝轮转。
+  const brokenFile = path.join(dir, 'broken.jsonl');
+  const broken = new Ledger(brokenFile);
+  broken.append(record());
+  const lines = fs.readFileSync(brokenFile, 'utf8').split('\n').filter(Boolean);
+  const forged = JSON.parse(lines[0]);
+  forged.reason = '篡改';
+  fs.writeFileSync(brokenFile, `${stableStringify(forged)}\n`, 'utf8');
+  assert.throws(() => new Ledger(brokenFile).rotate(), /拒绝轮转/);
+  cleanup(dir);
+});
+
+test('N5：_recover 尾读——超过尾窗的大账本仍能正确续写（seq/hash 接上）', () => {
+  const dir = tempDir('audit-tail-');
+  const file = path.join(dir, 'ledger.jsonl');
+  const ledger = new Ledger(file);
+  // >64KB 尾窗：每条约 200B，写 500 条。
+  for (let index = 0; index < 500; index += 1) {
+    ledger.append(record({ reason: `填充记录 ${index}，padding`.padEnd(160, 'x') }));
+  }
+  const all = new Ledger(file).records();
+  assert.equal(all.length, 500);
+  assert.equal(all[499].seq, 500);
+  // 尾读之后继续追加：seq 与 prevHash 必须接上（append 内部断言 prevHash 一致性）。
+  const next = new Ledger(file).append(record({ reason: '尾读后续写' }));
+  assert.equal(next.seq, 501);
+  assert.equal(new Ledger(file).verify().ok, true);
+  cleanup(dir);
+});
+
+test('N5：redact 折叠 home 为 $HOME、保留归属字段，输出为可验的新链', () => {
+  const dir = tempDir('audit-redact-');
+  const file = path.join(dir, 'ledger.jsonl');
+  const ledger = new Ledger(file);
+  const homePath = path.join(os.homedir(), 'secret-project', 'token.pem');
+  ledger.append(record({ plugin: 'p1', reason: `读取 ${homePath} 失败`, scope: { paths: [homePath] } }));
+  ledger.append(record({ plugin: 'p2', decision: 'deny', ruleId: 'not_declared', reason: '宿主未授予' }));
+
+  const bin = path.join(__dirname, '..', 'bin', 'dsh-dashcam.js');
+  const out = path.join(dir, 'redacted.jsonl');
+  const run = spawnSync(process.execPath, [bin, 'redact', file, '--out', out], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const summary = JSON.parse(run.stdout);
+  assert.equal(summary.records, 2);
+  assert.ok(summary.replacements >= 2, `至少折叠 home 两次：${JSON.stringify(summary)}`);
+
+  const redacted = new Ledger(out);
+  assert.equal(redacted.verify().ok, true, '脱敏副本自身应是完整可验的新链');
+  const rows = redacted.records();
+  assert.ok(!JSON.stringify(rows).includes(os.homedir()), '不得残留 home 前缀');
+  assert.ok(rows[0].scope.paths[0].includes('$HOME'));
+  // 归属字段原样保留：谁干的不能被脱敏抹掉。
+  assert.equal(rows[0].plugin, 'p1');
+  assert.equal(rows[1].plugin, 'p2');
+  assert.equal(typeof rows[0].profiled, 'boolean');
+  assert.equal(rows[1].manifestHash, rows[1].profiled ? rows[1].manifestHash : null);
   cleanup(dir);
 });
 

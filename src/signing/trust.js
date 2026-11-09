@@ -1,5 +1,24 @@
 'use strict';
 
+const crypto = require('node:crypto');
+
+/**
+ * N2：SPKI SHA-256 指纹（前后 8 位）。trust.json 里的 keyId 是自己起的名，
+ * 指纹才绑定密钥本体——报告展示 keyId 的同时给指纹，别人核对信任根时
+ * 对的是密钥材料，不是起名水平。
+ */
+function spkiFingerprint(publicKeyPem) {
+  const body = String(publicKeyPem || '')
+    .replace(/-----BEGIN PUBLIC KEY-----/, '')
+    .replace(/-----END PUBLIC KEY-----/, '')
+    .replace(/\s+/g, '');
+  if (!body) return null;
+  const der = Buffer.from(body, 'base64');
+  if (der.length === 0) return null;
+  const hex = crypto.createHash('sha256').update(der).digest('hex');
+  return `${hex.slice(0, 8)}…${hex.slice(-8)}`;
+}
+
 /** 信任表中的 key 可以同时承担发布者与审核者角色。 */
 function normalizeKey(entry) {
   const roles = Array.isArray(entry.roles) ? entry.roles : [entry.role].filter(Boolean);
@@ -7,6 +26,9 @@ function normalizeKey(entry) {
     keyId: entry.keyId,
     roles,
     publicKey: entry.publicKey,
+    // 指纹随归一化一起算：任何拿到 trust 对象的展示面（gates 报告、CLI）
+    // 都能直接给出「这把钥匙长什么样」，不需要各处重复实现。
+    fingerprint: spkiFingerprint(entry.publicKey),
     status: entry.status || 'active',
     notAfter: entry.notAfter || null,
   };
@@ -65,4 +87,4 @@ function keysForRole(trust, role) {
   return trust.keys.filter((key) => key.roles.includes(role) && key.status !== 'revoked');
 }
 
-module.exports = { createTrust, findKey, upsertKey, rotateKey, retireKey, revokeKey, keysForRole, normalizeKey };
+module.exports = { createTrust, findKey, upsertKey, rotateKey, retireKey, revokeKey, keysForRole, normalizeKey, spkiFingerprint };

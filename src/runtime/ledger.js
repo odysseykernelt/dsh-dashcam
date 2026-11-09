@@ -12,6 +12,7 @@ const { stableStringify, sha256 } = require('../util/stable');
 const REAL_OPEN_SYNC = fs.openSync;
 const REAL_WRITE_SYNC = fs.writeSync;
 const REAL_CLOSE_SYNC = fs.closeSync;
+const REAL_READ_SYNC = fs.readSync;
 const REAL_MKDIR_SYNC = fs.mkdirSync;
 const REAL_READ_FILE_SYNC = fs.readFileSync;
 const REAL_EXISTS_SYNC = fs.existsSync;
@@ -19,6 +20,7 @@ const REAL_STAT_SYNC = fs.statSync;
 const REAL_FSTAT_SYNC = fs.fstatSync;
 const REAL_TRUNCATE_SYNC = fs.truncateSync;
 const REAL_FSYNC_SYNC = fs.fsyncSync;
+const REAL_RENAME_SYNC = fs.renameSync;
 
 /**
  * 进程内同一路径共享的账本状态（H6）。
@@ -262,20 +264,49 @@ class Ledger {
 
   _recover() {
     if (!REAL_EXISTS_SYNC(this.file)) return;
-    // 必须带 'utf8' 读：Node 的 readFileSync 在 utf8 快路径走 C++ 直读，不经
-    // openSync；不带 encoding 的 Buffer 路径会经 fs.openSync 属性——bridge
-    // 在装时（如宿主进程内的 readLedger/新实例构造）会被自身守卫拦下。
-    let raw = REAL_READ_FILE_SYNC(this.file, 'utf8');
+    const statBefore = REAL_STAT_SYNC(this.file);
+    if (statBefore.size === 0) return;
+    // N5：构造器只需要「从哪条完整行之后续写」，不需要全部历史——只读
+    // 文件尾部窗口（默认 64KB），账本越长省得越多。窗口里找不到任何换行
+    // 就翻倍再读（单行超长的极端账本），封顶 4MB。seq 单调递增，最后一条
+    // 完整行必然是最大 seq；被篡改的历史由 verify() 负责精确报告。
+    // 必须用 openSync + readSync + closeSync：readFileSync 在 bridge 补丁表里
+    //（宿主进程内构造新实例会经自身守卫），readSync 与 open/write/close
+    // 同级，不属于被包装的原语。
+    let windowBytes = 64 * 1024;
+    let buf = null;
+    let start = 0;
+    for (;;) {
+      start = Math.max(0, statBefore.size - windowBytes);
+      const len = statBefore.size - start;
+      buf = Buffer.alloc(len);
+      const fd = REAL_OPEN_SYNC(this.file, 'r');
+      try {
+        let readTotal = 0;
+        while (readTotal < len) {
+          const n = REAL_READ_SYNC(fd, buf, readTotal, len - readTotal, start + readTotal);
+          if (n <= 0) break;
+          readTotal += n;
+        }
+      } finally {
+        REAL_CLOSE_SYNC(fd);
+      }
+      if (start === 0 || buf.includes(0x0a) || windowBytes >= 4 * 1024 * 1024) break;
+      windowBytes *= 2;
+    }
     // 半行恢复（H6）：宿主崩溃会让最后一行只剩半截（没有换行结尾）。
     // 直接续写会把残骸和新行焊成一段坏 JSON，seq 也对不上；截到最后一个
     // 换行再落盘，哈希链从最后一条完整行无损续写。换行字节（0x0a）不会
-    // 出现在 UTF-8 多字节序列内部，文本级 lastIndexOf('\n') 即字节级截断点；
-    // truncate 的参数是字节数，用 Buffer.byteLength 从文本长度换算。
-    if (raw.length > 0 && raw.charCodeAt(raw.length - 1) !== 0x0a) {
+    // 出现在 UTF-8 多字节序列内部，缓冲区级 lastIndexOf(0x0a) 即字节级
+    // 截断点；truncate 的参数是字节数，直接用窗口内偏移换算绝对字节位。
+    const raw = buf.toString('utf8');
+    let tailText = raw;
+    if (raw.charCodeAt(raw.length - 1) !== 0x0a) {
+      const newlineIndex = buf.lastIndexOf(0x0a);
       // B1：整个文件连一个换行都没有时，「截到最后一个换行」等于把账本清零。
       // 清零不可接受——拒绝打开，让宿主显式处置（人工取证或删除重建），
       // 而不是在构造器里静默销毁审计记录。
-      if (!raw.includes('\n')) {
+      if (newlineIndex === -1) {
         throw new Error(
           `账本损坏：${this.file} 只有残缺的半行（无任何完整记录），已拒绝打开以避免整文件清零。请人工确认后删除或归档该文件`,
         );
@@ -283,12 +314,10 @@ class Ledger {
       // N1：truncate 前后各取样一次 size+mtime。两次取样之间磁盘变了，
       // 说明有写入者正在写这半行——此时截断等于「修复动作自己在删别人的
       // 数据」，宁可拒绝打开，让宿主先停掉另一个写入者。
-      const beforeTruncate = REAL_STAT_SYNC(this.file);
-      const keepText = raw.slice(0, raw.lastIndexOf('\n') + 1);
-      const keep = Buffer.byteLength(keepText, 'utf8');
+      const keep = start + newlineIndex + 1;
       const afterRead = REAL_STAT_SYNC(this.file);
-      if (afterRead.size !== beforeTruncate.size
-        || afterRead.mtime.getTime() !== beforeTruncate.mtime.getTime()) {
+      if (afterRead.size !== statBefore.size
+        || afterRead.mtime.getTime() !== statBefore.mtime.getTime()) {
         throw new Error(
           `账本 ${this.file} 尾部存在活动写入（读取期间 size/mtime 发生变化），`
           + '已拒绝截断半行：先停掉其他写入者进程，或使用分实例账本路径',
@@ -302,9 +331,9 @@ class Ledger {
         REAL_CLOSE_SYNC(fd);
       }
       this.state.size = keep;
-      raw = keepText;
+      tailText = raw.slice(0, newlineIndex + 1);
     }
-    const lines = raw.split(/\r?\n/).filter(Boolean);
+    const lines = tailText.split(/\r?\n/).filter(Boolean);
     if (lines.length === 0) return;
     for (const line of lines) {
       try {
@@ -394,6 +423,39 @@ class Ledger {
   /** 实际拦截的未声明 API 调用（离线审计与月度度量共用的口径）。 */
   interceptions() {
     return this.records().filter((record) => record && record.intercepted === true);
+  }
+
+  /**
+   * N5：轮转当前段——现有账本改名归档，本路径重新从 GENESIS 开始。
+   * 前提是当前段完整可验：验不过就拒绝轮转（封存坏账是人工决定，
+   * 不是程序决定）。返回归档摘要（首尾 hash、行数、归档路径），调用方
+   * 负责在新段里落一条 segment-rotate 链接记录——账本没有 plugin 身份，
+   * 不替任何人签名。
+   */
+  rotate() {
+    const report = this.verify({});
+    if (!report.ok) {
+      throw new Error(
+        `账本存在 ${report.errors.length} 处校验失败，拒绝轮转：先人工取证（verify-ledger），再决定归档或删除`,
+      );
+    }
+    const records = this.records();
+    if (records.length === 0) return null;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const archivedPath = `${String(this.file).replace(/\.jsonl$/i, '')}.${stamp}.jsonl`;
+    REAL_RENAME_SYNC(this.file, archivedPath);
+    // 归档后本路径重开：重置共享基准，下一个 append 从 GENESIS 起链。
+    // 共享状态按路径键控，这里整体换新，避免残留旧段的 seq/size/lastHash。
+    const fresh = { seq: 0, lastHash: 'GENESIS', size: 0, written: false };
+    SHARED_LEDGER_STATE.set(this.file, fresh);
+    this.state = fresh;
+    return {
+      archivedPath,
+      records: records.length,
+      lastSeq: records[records.length - 1].seq,
+      firstHash: records[0].hash,
+      lastHash: records[records.length - 1].hash,
+    };
   }
 
   /**

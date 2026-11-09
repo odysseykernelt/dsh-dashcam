@@ -3,6 +3,7 @@
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { loadPolicy } = require('../src/policy');
 const { loadManifest } = require('../src/contract/manifest');
@@ -18,6 +19,8 @@ const { checkCircuitBreaker } = require('../src/governance/rollout');
 const { LocalHost, resolveLedgerMacKey } = require('../src/host/local-host');
 const { Ledger } = require('../src/runtime/ledger');
 const { summarizeIngress, findIngressMatches } = require('../src/runtime/ingress');
+const { buildBehaviorReport } = require('../src/governance/behavior');
+const { stableStringify, sha256: sha256Hex } = require('../src/util/stable');
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -50,6 +53,54 @@ function parseArgs(argv) {
 
 function output(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * N5 --redact-paths：分享账本前的路径脱敏。把 home 前缀（含正反斜杠两种
+ * 形态）折叠成 $HOME，深度遍历 scope 与 reason 里的一切字符串。
+ * 归属字段（plugin/pluginVersion/profiled/manifestHash）原样保留——
+ * 「谁干的」是取证核心维度，脱敏不能把责任主体一起抹掉。
+ * 输出是新链：逐条重算 seq/prevHash/hash（不带 mac）——脱敏改了内容，
+ * 旧 hash 必然对不上，与其留一份验不过的副本，不如诚实地立一条新链。
+ */
+function redactValue(value, pairs, counter) {
+  if (typeof value === 'string') {
+    let result = value;
+    for (const [from, to] of pairs) {
+      if (!result.includes(from)) continue;
+      counter.n += result.split(from).length - 1;
+      result = result.split(from).join(to);
+    }
+    return result;
+  }
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, pairs, counter));
+  if (value && typeof value === 'object') {
+    const copy = {};
+    for (const key of Object.keys(value)) copy[key] = redactValue(value[key], pairs, counter);
+    return copy;
+  }
+  return value;
+}
+
+function redactLedger(inputPath, outputPath) {
+  const home = os.homedir().replace(/[\\/]+$/, '');
+  const pairs = home
+    ? [[home, '$HOME'], [home.replace(/\\/g, '/'), '$HOME']]
+    : [];
+  const counter = { n: 0 };
+  const source = new Ledger(inputPath);
+  const records = source.records();
+  const target = new Ledger(outputPath);
+  for (const record of records) {
+    const { hash, mac, prevHash, ...keep } = record;
+    const redacted = {
+      ...keep,
+      scope: redactValue(keep.scope || null, pairs, counter),
+      reason: typeof keep.reason === 'string' ? redactValue(keep.reason, pairs, counter) : keep.reason,
+    };
+    target.append(redacted);
+  }
+  return { records: records.length, homeFolded: home ? '$HOME' : null, replacements: counter.n };
 }
 
 /**
@@ -108,6 +159,9 @@ async function main() {
       '  sign <pluginDir> --plugin <id> --version <v> --publisher-key <pem> --publisher-key-id <id> --reviewer-key <pem> --reviewer-key-id <id>',
       '  verify <pluginDir> --trust <trust.json>',
       '  verify-ledger <ledger.jsonl> [--mac-key <key> | --mac-key-file <path> | --mac-key-env <NAME>] [--anchor anchor.json]',
+      '  rotate <ledger.jsonl> [--max-bytes <N>] [--mac-key-file <path> | --mac-key-env <NAME>]',
+      '  redact <ledger.jsonl> --out <file.jsonl> [--mac-key-file <path> | --mac-key-env <NAME>]',
+      '  behavior <ledger.jsonl> [--manifest <pluginDir>] [--mac-key-file <path> | --mac-key-env <NAME>]',
       '  gates <pluginDir> [--channel consumer|enterprise] [--policy policy.json] [--trust trust.json] [--skip-signature] [--host]',
       '  portrait <pluginDir> [--channel consumer|enterprise] [--policy policy.json] [--trust trust.json]',
       '  autopsy <pluginDir> [--profile profile.json] [--patch patch.json] [--policy policy.json] [--no-signature]',
@@ -199,10 +253,84 @@ async function main() {
     return;
   }
 
+  if (command === 'rotate') {
+    // N5：账本轮转。当前段改名归档（旧段保留、不删不改），新段第一行写
+    // 上一段的首尾 hash——跨段也能锚定。--max-bytes 只做门槛判断：
+    // 体积没超就不动账本（轮转是维护动作，不是自动行为）。
+    const ledgerPath = path.resolve(rest[1]);
+    if (!fs.existsSync(ledgerPath)) {
+      process.stderr.write(`账本不存在：${ledgerPath}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const limit = Number(flags['max-bytes']);
+    const size = fs.statSync(ledgerPath).size;
+    if (Number.isFinite(limit) && limit > 0 && size <= limit) {
+      output({ rotated: false, file: ledgerPath, size, maxBytes: limit, reason: '体积未超上限，未轮转' });
+      return;
+    }
+    const ledger = loadVerifiedLedger(ledgerPath, flags);
+    if (!ledger) return;
+    const result = ledger.rotate();
+    if (!result) {
+      output({ rotated: false, file: ledgerPath, reason: '空账本，无需轮转' });
+      return;
+    }
+    // 新段链接记录：归档文件只记 basename——新账本不该带着旧段的绝对路径。
+    const link = ledger.append({
+      plugin: 'dsh-dashcam',
+      pluginVersion: require('../package.json').version,
+      capability: 'telemetry',
+      action: 'segment-rotate',
+      scope: {
+        archived: path.basename(result.archivedPath),
+        records: result.records,
+        lastSeq: result.lastSeq,
+        prevSegmentFirstHash: result.firstHash,
+        prevSegmentLastHash: result.lastHash,
+      },
+      decision: 'allow',
+      ruleId: 'rotate',
+      reason: '账本轮转：新段从此开始；上一段首尾 hash 见 scope，验链时可用作跨段锚点',
+      intercepted: false,
+      profiled: false,
+      manifestHash: null,
+    });
+    output({
+      rotated: true,
+      file: ledgerPath,
+      archived: result.archivedPath,
+      records: result.records,
+      lastSeq: result.lastSeq,
+      prevSegmentFirstHash: result.firstHash,
+      prevSegmentLastHash: result.lastHash,
+      linkSeq: link.seq,
+    });
+    return;
+  }
+
+  if (command === 'redact') {
+    // N5：分享账本前的路径脱敏（home 前缀折叠成 $HOME）。源账本必须先验过：
+    // 在校验不过的账本上脱敏，等于帮篡改者洗数据。
+    const input = path.resolve(rest[1]);
+    if (!fs.existsSync(input)) {
+      process.stderr.write(`账本不存在：${input}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const ledger = loadVerifiedLedger(input, flags);
+    if (!ledger) return;
+    const out = path.resolve(flags.out || `${input}.redacted.jsonl`);
+    const summary = redactLedger(input, out);
+    output({ redacted: true, input, out, ...summary });
+    return;
+  }
+
   if (command === 'gates') {
     const pluginDir = path.resolve(rest[1]);
     const policy = flags.policy ? readJson(flags.policy) : loadPolicy({});
-    const trust = flags.trust ? createTrust(readJson(flags.trust).keys || readJson(flags.trust)) : null;
+    const trustJson = flags.trust ? readJson(flags.trust) : null;
+    const trust = trustJson ? createTrust(trustJson.keys || trustJson) : null;
     const host = flags.host ? new LocalHost({ policy }) : null;
     const result = await runInstallPipeline({
       pluginDir,
@@ -213,8 +341,36 @@ async function main() {
       invocation: flags.invocation || 'ping',
       skipSignature: flags['skip-signature'] === true || flags.signature === false,
     });
+    // N2：信任根整体哈希随报告落盘——「这份报告是按哪份信任表验的」可核对，
+    // keyId 之外再给 SPKI 指纹（归一化时已算进 keys），对的是密钥材料本身。
+    if (trustJson) {
+      result.trustRoot = {
+        file: path.basename(flags.trust),
+        hash: sha256Hex(stableStringify(trustJson)),
+        keys: (trust.keys || []).map((key) => ({ keyId: key.keyId, fingerprint: key.fingerprint, status: key.status })),
+      };
+    }
     output(result);
     if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  if (command === 'behavior') {
+    // 行为画像报告：把账本记录按插件聚合成「实际读了什么/连了哪里/跑了什么」。
+    // 与 portrait（声明侧画像）互补——一个来自 manifest，一个来自账本。
+    const ledger = loadVerifiedLedger(rest[1], flags);
+    if (!ledger) return;
+    let manifest = null;
+    if (flags.manifest) {
+      const loaded = loadManifest(path.resolve(flags.manifest));
+      manifest = loaded.manifest;
+      if (!manifest) {
+        process.stderr.write(`无法读取清单：${flags.manifest}（${loaded.errors.map((error) => error.message).join('；')}）\n`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+    output(buildBehaviorReport(ledger.records(), { manifest }));
     return;
   }
 

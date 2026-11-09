@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { readFileSync, statSync, existsSync, appendFileSync, mkdirSync, renameSync } from 'node:fs';
+import { basename } from 'node:path';
 import { attachIngress } from './ingress.js';
 import { registerPanelRoutes } from './panel.js';
 
@@ -690,6 +691,16 @@ export function apply(ctx, config = {}) {
 
   // 遗留 P4（1.10.10 报告）：挂载事件落账本——桌面版看不到 stdout，
   // 「判定链是否挂载」从此可以直接从账本文件判断。
+  // N2：宿主可通过 config.trustFile 声明信任根，整体哈希进 mount 记录——
+  // 「这台机器按哪份信任表办入职」从账本可查，对的是文件内容不是文件名。
+  let trustInfo = null;
+  if (config.trustFile) {
+    try {
+      trustInfo = { file: basename(config.trustFile), hash: sha256(readFileSync(config.trustFile, 'utf8')) };
+    } catch (error) {
+      console.warn(`[dsh-dashcam] 信任表读取失败（mount 记录不携带 trust 字段）：${error.message}`);
+    }
+  }
   appendAuxRecord({
     capability: 'telemetry',
     action: 'mount',
@@ -702,6 +713,7 @@ export function apply(ctx, config = {}) {
       requests: normalizedRequests.length,
       grants: normalizedGrants.length,
       ledgerPath,
+      ...(trustInfo ? { trust: trustInfo } : {}),
     },
     decision: 'allow',
     ruleId: 'mount',

@@ -119,9 +119,15 @@ $ node bin/dsh-dashcam.js gates examples/negative-plugin --skip-signature
 ```bash
 npm test          # 全量用例：契约、运行时、绕过、门禁、签名、画像、诊断、治理、审计、准入
 node bin/dsh-dashcam.js help
+node bin/dsh-dashcam.js verify-ledger ~/.dsh/dsh-dashcam/ledger.jsonl   # 离线验链（不依赖宿主进程）
+node bin/dsh-dashcam.js behavior ~/.dsh/dsh-dashcam/ledger.jsonl        # 行为画像：各插件实际读了什么/连了哪里/跑了什么
+node bin/dsh-dashcam.js rotate ~/.dsh/dsh-dashcam/ledger.jsonl --max-bytes 52428800   # 归档当前段，新段以首尾 hash 链接
+node bin/dsh-dashcam.js redact ~/.dsh/dsh-dashcam/ledger.jsonl --out share.jsonl      # 分享前把 home 折叠成 $HOME（保留归属字段）
 node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --session <id>
 node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --find "状态栏"
 ```
+
+> **分享账本前**：记录里含绝对路径与命令元数据。先跑 `redact`——home 前缀折叠成 `$HOME`，重算成一条全新可验的链；`plugin` / `pluginVersion` / `profiled` 原样保留——谁干的留下，你住哪抹掉。
 
 ## 核心模型
 

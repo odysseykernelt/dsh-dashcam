@@ -111,9 +111,15 @@ Key semantics:
 ```bash
 npm test          # Full suite: contracts, runtime, bypasses, gates, signing, portraits, autopsy, governance, audit, admission
 node bin/dsh-dashcam.js help
+node bin/dsh-dashcam.js verify-ledger ~/.dsh/dsh-dashcam/ledger.jsonl   # offline chain re-verification (host process not required)
+node bin/dsh-dashcam.js behavior ~/.dsh/dsh-dashcam/ledger.jsonl        # per-plugin behavior portrait: what was actually read / contacted / run
+node bin/dsh-dashcam.js rotate ~/.dsh/dsh-dashcam/ledger.jsonl --max-bytes 52428800   # archive the current segment, link the new one via head/tail hashes
+node bin/dsh-dashcam.js redact ~/.dsh/dsh-dashcam/ledger.jsonl --out share.jsonl      # fold $HOME paths before sharing (attribution fields preserved)
 node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --session <id>
 node bin/dsh-dashcam.js ingress ~/.dsh/dsh-dashcam/ledger.jsonl --find "状态栏"
 ```
+
+> **Sharing the ledger**: records contain absolute paths (and command metadata). Run `redact` before sharing; it folds your home prefix to `$HOME` and rebuilds the chain as a fresh verifiable ledger while keeping `plugin` / `pluginVersion` / `profiled` — who did it stays, where you live does not.
 
 ## Core model
 
