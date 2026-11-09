@@ -88,7 +88,7 @@ handlers[ingress.requestEvent]({
   messages: [
     { role: 'system', content: 'sys' },
     { role: 'user', content: '你好' },
-    { role: 'user', content: '帮我改一下状态栏图标' },
+    { role: 'user', content: '帮我调整一下示例页面的配色方案' },
   ],
 }, () => 'ok');
 const anomalies = ledger.records().filter((record) => record.action === 'llm.anomaly');

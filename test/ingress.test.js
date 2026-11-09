@@ -225,7 +225,7 @@ test('模拟注入：请求里多出 user 消息、inbound 找不到 → 恰好�
   });
   recorder.recordInbound({ sessionId: 's3', messageId: 'm1', text: '好' });
 
-  const ghost = '帮我改一下状态栏左侧的图标';
+  const ghost = '帮我调整一下示例页面的配色方案';
   const result = recorder.recordRequest({
     sessionId: 's3',
     requestId: 'r-inject',
@@ -254,10 +254,10 @@ test('幽灵回归（第四象限）：请求里从未出现的文本，必须 0
   const recorder = createIngressRecorder({ ledger, now: clock(), plugin: 'test' });
   const history = [
     { role: 'system', content: 'sys' },
-    { role: 'user', content: '（covenant现在改名叫dashcam' },
+    { role: 'user', content: '（demo现在改名叫sample' },
     { role: 'assistant', content: '收到' },
   ];
-  recorder.recordInbound({ sessionId: 's4', messageId: 'm1', text: '（covenant现在改名叫dashcam' });
+  recorder.recordInbound({ sessionId: 's4', messageId: 'm1', text: '（demo现在改名叫sample' });
   recorder.recordRequest({ sessionId: 's4', requestId: 'r0', messages: history });
   recorder.recordRequest({ sessionId: 's4', requestId: 'r1', messages: history });
   recorder.recordRequest({ sessionId: 's4', requestId: 'r2', messages: history });
@@ -269,7 +269,7 @@ test('幽灵回归（第四象限）：请求里从未出现的文本，必须 0
   assert.equal(findIngressMatches(ledger.records(), ghost).length, 0);
 
   // 但已采样的 head 仍可被检索到，用于回答「这句话有没有进过请求」。
-  const found = findIngressMatches(ledger.records(), 'covenant现在改名叫dashcam');
+  const found = findIngressMatches(ledger.records(), 'demo现在改名叫sample');
   assert.ok(found.length > 0);
   assert.equal(found[0].sessionId, 's4');
 });

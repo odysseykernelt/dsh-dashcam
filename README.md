@@ -279,6 +279,11 @@ fs.readSync(fd, ...);            // TypeError: 这个方法不存在
   以及**上线前的宿主责任清单**（TOCTOU / 原生扩展 / 账本可写性 / 密钥托管 / 沙箱模式，逐项可勾）。
 - [docs/COMPLIANCE.md](docs/COMPLIANCE.md)：Charter 字段、默认值、Sieve 判定与通道策略。
 
+> 🥚 **彩蛋**：[docs/ghost-in-the-llm/](docs/ghost-in-the-llm/) 是 1.12.0 ingress 审计的动机档案——
+> 一次真实的「来源不明的用户消息」事件（幽灵消息）的完整取证、两轮自我推翻的复盘、
+> 第三方复核，以及由它催生的 ingress 设计。全部标识符、消息原文与内部组件名/路径均已
+> 脱敏为占位符，读完 SPEC 之后再去看，会对「为什么要有对账记录」多一层体感。
+
 ## 1.10.12 修复（1.10.12 复核 F5 后半：metrics 口径排除 telemetry 附加记录）
 
 来自 `handoff/dsh-dashcam-review-1.10.12-2026-11-06.md` 的遗留项（核心侧）。此前宿主
