@@ -14,6 +14,7 @@ const { normalizeGrant } = require('../src/contract/capabilities');
 const { OneSealStore } = require('../src/runtime/one-seal');
 const { createGuardChain } = require('../src/runtime/guards');
 const { createBridge } = require('../src/runtime/bridge');
+const { Ledger } = require('../src/runtime/ledger');
 
 // 记账型假账本：只收集记录，不落盘。
 function fakeLedger() {
@@ -267,5 +268,62 @@ test('R7：createReadStream 写 flags 归一——flags r+ 未授 fs.write 时�
   } finally {
     runtime.bridge.uninstall();
     cleanup(runtime.dir);
+  }
+});
+
+// ── Fix4 / B1·A3：账本完整性 fail-open 三处收口 ──────────────────
+
+test('B1：verify() 账本文件不存在返回 ok:false（ledger_missing），不再默认通过', () => {
+  const dir = tempDir('three-lens-ledger-missing-');
+  try {
+    const ledger = new Ledger(path.join(dir, 'absent.jsonl'));
+    const report = ledger.verify();
+    assert.equal(report.ok, false, '「从未记账」不得与「记账且完好」混同');
+    assert.equal(report.count, 0);
+    assert.ok(report.errors.some((e) => e.code === 'ledger_missing'));
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('B1：账本只剩无换行半行时拒绝打开，不做整文件清零', () => {
+  const dir = tempDir('three-lens-ledger-halfline-');
+  try {
+    const file = path.join(dir, 'ledger.jsonl');
+    const debris = '{"v":2,"seq":1,"plugin":"com.example.x","reason":"半行';
+    fs.writeFileSync(file, debris, 'utf8');
+    assert.throws(
+      () => new Ledger(file),
+      /拒绝打开/,
+      '无任何完整记录时必须拒绝打开而不是 TRUNCATE 清零',
+    );
+    assert.equal(fs.readFileSync(file, 'utf8'), debris, '残骸必须原样保留，供人工取证');
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test('B1：磁盘账本比进程内基准小时构造告警 ledger_rollback', () => {
+  const dir = tempDir('three-lens-ledger-rollback-');
+  const warnings = [];
+  const originalWarn = console.warn;
+  try {
+    const file = path.join(dir, 'ledger.jsonl');
+    const first = new Ledger(file);
+    first.append({ plugin: 'com.example.rollback', decision: 'allow', capability: 'fs.read', action: 'fs.read' });
+    first.append({ plugin: 'com.example.rollback', decision: 'deny', capability: 'fs.write', action: 'fs.write', ruleId: 'not_granted' });
+    // 外部把账本截小：哈希链的前缀依然自洽，verify 发现不了回滚，
+    // 构造时的 ledger_rollback 告警是唯一线索。截断点保留第一条完整行
+    // （砍掉无换行半行会走「拒绝打开」路径，那是另一个用例的事）。
+    const content = fs.readFileSync(file, 'utf8');
+    fs.truncateSync(file, content.indexOf('\n') + 1);
+    console.warn = (message) => warnings.push(String(message));
+    new Ledger(file);
+    const rollback = warnings.find((message) => message.includes('ledger_rollback'));
+    assert.ok(rollback, '账本变小必须发出 ledger_rollback 告警');
+    assert.ok(rollback.includes('回滚') || rollback.includes('截断'), '告警必须说明回滚/截断风险');
+  } finally {
+    console.warn = originalWarn;
+    cleanup(dir);
   }
 });

@@ -200,7 +200,13 @@ class Ledger {
       // 现状——审计必须能打开账本跑 verify，不能在门口就被挡死；但外部
       // 写入必须可见（macKey 缺席时哈希链可被重算，可见性是最后的线索）。
       // 活跃实例（不重新构造）在 append 时仍会精确抛「并发写入」。
-      if (state.written && diskSize > state.size) {
+      // B1：磁盘比基准小不是普通的外部写入——前缀被砍掉的哈希链依然自洽，
+      // verify 发现不了回滚，告警是唯一的线索，必须与追加写区分口径。
+      if (state.written && diskSize < state.size) {
+        console.warn(
+          `[dsh-dashcam] ledger_rollback：账本比进程内基准小（期望 ${state.size} 字节，实际 ${diskSize} 字节，${this.file}）。文件可能被截断或整体回滚，被砍掉的内容无法由 verify() 证明。`,
+        );
+      } else if (state.written && diskSize > state.size) {
         console.warn(
           `[dsh-dashcam] 账本在 Ledger 实例之外被写入：期望 ${state.size} 字节，实际 ${diskSize} 字节（${this.file}）。verify() 可定位被动的行。`,
         );
@@ -231,6 +237,14 @@ class Ledger {
     // 出现在 UTF-8 多字节序列内部，文本级 lastIndexOf('\n') 即字节级截断点；
     // truncate 的参数是字节数，用 Buffer.byteLength 从文本长度换算。
     if (raw.length > 0 && raw.charCodeAt(raw.length - 1) !== 0x0a) {
+      // B1：整个文件连一个换行都没有时，「截到最后一个换行」等于把账本清零。
+      // 清零不可接受——拒绝打开，让宿主显式处置（人工取证或删除重建），
+      // 而不是在构造器里静默销毁审计记录。
+      if (!raw.includes('\n')) {
+        throw new Error(
+          `账本损坏：${this.file} 只有残缺的半行（无任何完整记录），已拒绝打开以避免整文件清零。请人工确认后删除或归档该文件`,
+        );
+      }
       const keepText = raw.slice(0, raw.lastIndexOf('\n') + 1);
       const keep = Buffer.byteLength(keepText, 'utf8');
       const fd = REAL_OPEN_SYNC(this.file, 'r+');
@@ -342,9 +356,17 @@ class Ledger {
    *   传入外部锚点时额外检测「尾部被截断 / 追加」——纯哈希链发现不了这一类。
    */
   verify({ anchor = null } = {}) {
-    const lines = REAL_EXISTS_SYNC(this.file)
-      ? REAL_READ_FILE_SYNC(this.file, 'utf8').split(/\r?\n/).filter(Boolean)
-      : [];
+    // B1：账本不存在不能默认成「空账本=验证通过」——ok:true 会把「从未记账」
+    // 与「记账且完好」混为一谈，宿主据此放行等于 fail-open。缺文件明确报错。
+    if (!REAL_EXISTS_SYNC(this.file)) {
+      return {
+        ok: false,
+        count: 0,
+        head: 'GENESIS',
+        errors: [{ line: 0, code: 'ledger_missing', detail: `账本文件不存在（${this.file}）：没有可验证的审计记录` }],
+      };
+    }
+    const lines = REAL_READ_FILE_SYNC(this.file, 'utf8').split(/\r?\n/).filter(Boolean);
     let expectedPrev = 'GENESIS';
     const errors = [];
     // 是否已经出现过带 mac 的行。出现之后再冒出低版本行，就是「降版本绕过 mac」。
