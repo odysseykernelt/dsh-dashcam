@@ -1,177 +1,177 @@
 # dsh-dashcam-host
 
-把 [dsh-dashcam](../README.md) 的判定链接入 DeepSeek Harness（cordos 宿主）。本目录自 1.10.12 起并入主仓库（git subtree，历史完整保留）。
+**English** | [中文](README.zh-CN.md)
 
-- 入口：DSH 核心的 `tools/pre-execute` waterfall（`(exec, next)` 签名；放行必须 `return next()`）。
-- 默认 **advisory**：映射到的调用逐条走 `guard.check` 记账（含 deny 明细）但放行；
-  `enforce: true` 后判定不允许即拦截。
-- 定位边界：判定链是**入口策略门**（拦工具参数），工具执行后的真实副作用由
-  `patchBuiltins: true`（Bridge，默认关闭）看护进程内调用。
+![version](https://img.shields.io/badge/version-1.14.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-## 配置键（cordis 插件 config）
+Wires the judgment chain of [dsh-dashcam](../README.md) into DeepSeek Harness (the cordos host). This directory merged into the main repository as of 1.10.12 (git subtree, history fully preserved).
 
-| 键 | 默认 | 说明 |
+- Entry point: the DSH core's `tools/pre-execute` waterfall (`(exec, next)` signature; passing through must `return next()`).
+- Defaults to **advisory**: mapped calls each go through `guard.check` for bookkeeping (including deny details) but are allowed through; with `enforce: true`, a failed judgment blocks the call.
+- Scope boundary: the judgment chain is an **entry policy gate** (it judges tool arguments); the real side effects after tool execution are covered by `patchBuiltins: true` (the Bridge, off by default), which guards in-process calls.
+
+## Config keys (cordis plugin config)
+
+| Key | Default | Description |
 | --- | --- | --- |
-| `enforce` | `false` | `true` 时判定不允许即拦截；授权见「Two-Key」 |
-| `enforceUnmapped` | `false` | F6：enforce 默认只覆盖映射表；开此键后未映射工具**每次调用**都按 fail-closed 拒绝（1.10.13 复核 P1：拦截不受遥测去重影响）。computer-use / workflow / subagent / MCP 均在映射表外，需靠它兜底 |
-| `unmappedAllowlist` | `[]` | L6（1.10.13）：enforceUnmapped 的豁免清单，支持全名与前缀通配（`mcp__demo__*` / `memory_*`）。**开 enforceUnmapped 前必须先配**——否则 `compress` / `workflow` / `subagent` / `send_meme` / `present` / `memory_*` / `mcp__*` 这些宿主/MCP 工具会被全部打死。**非数组（如误写成逗号分隔字符串）fail-fast 拒绝挂载**（R3，1.10.14），不会静默按空数组拦掉全部 |
-| `commandlineArchive` | `'hash'` | F4：`'hash'`（默认）只存整条命令的 SHA-256 + 长度，不含明文；`'full'` 落打码后文本（Bearer / `sk-` / `ghp_` / `password=` 等替换为 `***`，best-effort）。per-挂载生效（L2），多挂载不互串 |
-| `ledgerPath` | `~/.dsh/dsh-dashcam/ledger.jsonl` | 账本文件路径；测试 profile 必须独立（如 `ledger-dashcam-test.jsonl`） |
-| `ledgerMacKey` / `ledgerMacKeyFile` / `ledgerMacKeyEnv` | 空 | F1/1.10.11 D4：账本 HMAC 密钥（≥32 字节）。**启用前必读下节** |
-| `patchBuiltins` | `false` | 进程内 Bridge 补丁；Electron 主进程开启会接管应用自身 fs/net，慎开 |
-| `ingress` | `{}`（默认启用） | 1.12.0：LLM 请求/入站消息的元数据审计。见下节 |
-| `panel` | `{}`（默认启用） | 1.13.0：浏览器面板（Agent Dashcam）。`{ enabled: false }` 关闭 `/api/dsh-dashcam/*` 路由。见下节 |
-| `requests` / `grants` | `[]` | Two-Key：能力声明（对象数组，写成字符串会在 mount 时 fail-fast） |
+| `enforce` | `false` | With `true`, a failed judgment blocks the call; authorization see "Two-Key" |
+| `enforceUnmapped` | `false` | F6: enforce by default only covers the mapping table; with this key on, unmapped tools are rejected **on every call** fail-closed (1.10.13 recheck P1: interception is not affected by telemetry dedupe). computer-use / workflow / subagent / MCP are all outside the mapping table and rely on this key as the fallback |
+| `unmappedAllowlist` | `[]` | L6 (1.10.13): the exemption list for enforceUnmapped, supporting exact names and prefix wildcards (`mcp__demo__*` / `memory_*`). **Must be configured before enabling enforceUnmapped** — otherwise the host/MCP tools `compress` / `workflow` / `subagent` / `send_meme` / `present` / `memory_*` / `mcp__*` will all be blocked. A non-array value (e.g. accidentally a comma-separated string) **fails fast and refuses the mount** (R3, 1.10.14) instead of silently treating it as an empty array and blocking everything |
+| `commandlineArchive` | `'hash'` | F4: `'hash'` (default) stores only the SHA-256 + length of the whole command, no plaintext; `'full'` stores masked text (Bearer / `sk-` / `ghp_` / `password=` etc. replaced with `***`, best-effort). Effective per-mount (L2); multiple mounts don't cross-talk |
+| `ledgerPath` | `~/.dsh/dsh-dashcam/ledger.jsonl` | Ledger file path; test profiles must be isolated (e.g. `ledger-dashcam-test.jsonl`) |
+| `ledgerMacKey` / `ledgerMacKeyFile` / `ledgerMacKeyEnv` | empty | F1/1.10.11 D4: ledger HMAC key (>= 32 bytes). **Read the next section before enabling** |
+| `patchBuiltins` | `false` | In-process Bridge patch; enabling it in the Electron main process takes over the app's own fs/net — be careful |
+| `ingress` | `{}` (enabled by default) | 1.12.0: metadata audit of LLM requests / inbound messages. See the section below |
+| `panel` | `{}` (enabled by default) | 1.13.0: browser panel (Agent Dashcam). `{ enabled: false }` disables the `/api/dsh-dashcam/*` routes. See the section below |
+| `requests` / `grants` | `[]` | Two-Key: capability declarations (object arrays; strings fail fast at mount time) |
 
-### ingress 审计（1.12.0）
+### ingress audit (1.12.0)
 
-把「发往模型的 messages」与「进入会话的输入」摘要进账本，用于回答「这条消息是进来的还是编出来的」。
-只记元数据，不落正文；不判定、不拦截；记录失败 fail-open。
+Summarizes "the messages sent to the model" and "the inputs that actually entered the session" into the ledger, to answer "did this message come in, or was it fabricated?".
+Metadata only, no message bodies; no judgment, no blocking; recording failures are fail-open.
 
-| 子键 | 默认 | 说明 |
+| Sub-key | Default | Description |
 | --- | --- | --- |
-| `enabled` | `true` | 关闭时写一条 `telemetry/ingress-disabled`，不静默消失 |
-| `requestEvent` | `llm/stream` | 请求出口 waterfall（`dsh-llm` 的 `streamWithRegistration`），载荷即完整请求。已按本机 `resources/app.asar` 核对 |
-| `inboundEvent` | `session/event` | 只取 `event.type === 'user/message'`，与会话日志同源。已按本机 asar 核对 |
-| `headBytes` | `80` | 每条消息保留的前 N 字；`0` = 只存长度与 sha256 |
-| `maxSample` | `32` | 单条请求记录最多带多少条新增消息样本 |
-| `maxLineBytes` | `8192` | 单条记录体积上限，超出先砍样本再砍 coverage |
-| `inboundWindow` | `500` | 每 session 保留的 inbound 匹配窗口 |
-| `inboundTtlMs` | `3600000` | inbound 匹配窗口的存活时间 |
-| `maskSecrets` | `true` | head 打码（Bearer / `sk-` / `ghp_` / `password=`，best-effort） |
-| `whitelistKinds` | `runtime-context` 等 | 不要求出现在 inbound 的 `source.kind`；**按 kind 不按 role** |
+| `enabled` | `true` | When disabled, writes a `telemetry/ingress-disabled` record instead of vanishing silently |
+| `requestEvent` | `llm/stream` | Request egress waterfall (`streamWithRegistration` of `dsh-llm`); the payload is the full request. Verified against the local `resources/app.asar` |
+| `inboundEvent` | `session/event` | Only takes `event.type === 'user/message'`, same source as session logs. Verified against the local asar |
+| `headBytes` | `80` | Keep the first N bytes of each message; `0` = only length and sha256 |
+| `maxSample` | `32` | Maximum number of new-message samples carried per request record |
+| `maxLineBytes` | `8192` | Size cap per record; samples are trimmed first, then coverage |
+| `inboundWindow` | `500` | Inbound matching window kept per session |
+| `inboundTtlMs` | `3600000` | Lifetime of the inbound matching window |
+| `maskSecrets` | `true` | Mask heads (Bearer / `sk-` / `ghp_` / `password=`, best-effort) |
+| `whitelistKinds` | `runtime-context` etc. | `source.kind` values not required to appear in inbound; **by kind, not by role** |
 
-判据：`inbound 无 + request 有` = 注入；`inbound 无 + request 无` = 模型自造（**不告警**，必须有用例守住）。
-`llm.anomaly` 只记录，`decision` 仍是 `allow`、`intercepted` 仍是 `false`。
+Test: "absent in inbound + present in request" = injection; "absent in inbound + absent in request" = model-fabricated (**no alert**, must be guarded by a test case).
+`llm.anomaly` records only; `decision` stays `allow` and `intercepted` stays `false`.
 
-已知边界：本地只能看到客户端发出去的 messages。服务端在客户端之后追加的前缀不在覆盖范围；
-`ingress --find` 只搜已采样的 head，搜不到不等于没发生。
-接线位置必须在 messages **定型之后**（任何 trim / 重写 / 模板展开之前会与 inbound 指纹对不上，
-产生 `added_user_without_inbound` 误报）。
+Known boundaries: locally we can only see the messages the client sent out. Server-side prefixes appended after the client are not covered;
+`ingress --find` searches only sampled heads — a failed search does not mean it didn't happen.
+The wiring point must be **after the messages are final** (hooking before any trim / rewrite / template expansion will mismatch inbound fingerprints,
+producing `added_user_without_inbound` false positives).
 
-## 浏览器面板（Agent Dashcam，1.14.0）
+## Browser panel (Agent Dashcam, 1.14.0)
 
-注入 DSH Web（桌面与网页同源）的只读仪表盘：右下角悬浮 **REC 徽章**（已录时长走秒），
-可拖拽换位置（按住拖动即可，位置记忆在 localStorage），点击或 `Ctrl+Shift+D` 打开弹窗面板。
-三个视图，全部消费真实账本：
+A read-only dashboard injected into DSH Web (same origin for desktop and web): a floating **REC badge** in the bottom-right corner
+(elapsed recording time ticks live), draggable to reposition (hold and drag; position is remembered in localStorage), click or `Ctrl+Shift+D`
+to open the popup panel. Three views, all consuming the real ledger:
 
-- **实时录制**：指标卡（运行时长 = 判定链挂载至今 / 纳管调用 / 改动文件 / 异常）、
-  实时事件流（增量轮询，事件行与状态窗口都封顶 400 条，DOM 只增不减会拖垮长开会话）、
-  当前步骤、判定链状态（模式 / 旁路命中 / 未纳管调用 / 版本 / 会话 / 模型 / 拦截占比）。
-- **回放**：任一录像段时间轴画布（类型刻度 + 播放头 + 悬浮提示）、播放/暂停/1×·10×·60×、
-  事件列表联动、事件详情（路径 / 命令 / 决策 / 规则）。空格播放暂停、←/→ 逐事件、Esc 关面板。
-  超过 2000 条的录像段明确标注「已截断」。
-- **录像历史**：按「相邻记录间隔 > 15 分钟」聚合成段（`S-xxxx`），搜索 + 状态过滤，
-  点击进入该段回放。
+- **Live recording**: metric cards (uptime = since the judgment chain mounted / judged calls / files changed / anomalies),
+  live event stream (incremental polling; event rows and the status window both cap at 400 entries — an ever-growing DOM would drag down long-open sessions),
+  current step, and judgment-chain status (mode / bypass hits / unmapped calls / version / session / model / interception ratio).
+- **Replay**: a timeline canvas for any recording segment (type ticks + playhead + hover tooltips), play/pause/1×·10×·60×,
+  linked event list, event details (path / command / decision / rule). Space toggles playback, ←/→ step through events, Esc closes the panel.
+  Segments over 2000 entries are explicitly labeled "truncated".
+- **Recording history**: aggregated into segments by "gap between adjacent records > 15 minutes" (`S-xxxx`), with search + status filter;
+  click a segment to enter its replay.
 
-面板口径（1.14.0 复核修正）：
+Panel semantics (corrected in the 1.14.0 recheck):
 
-- **异常卡片只算真异常**：`intercepted=true` 或 ingress anomaly。advisory 下
-  `decision=deny` 但未拦截的是**旁路命中**（guards.js 口径：旁路照样落 deny 账），
-  单独以灰色行展示——否则旁路模式下红色常亮，失去警示作用。录像段「异常」列同口径。
-- **纳管/未纳管分开计数**：`judgments` 只覆盖映射表内五类 capability；
-  MCP / workflow / subagent 等映射表外工具走 `telemetry/unmapped-tool`，
-  计入「未纳管调用」单独展示——否则 MCP 重的会话「工具调用」恒为 0。
-- **records 游标不丢记录**：`lastSeq` 只取实际返回的最后一条 seq（此前对整个文件取
-  max，首屏 limit 截断时游标直接跳到文件尾部，中间记录永久丢失）；
-  超出 limit 回 `truncated: true`。
-- **尾部解析缓存**：status/records 共用 size+mtime 键的 10s 缓存（同 history），
-  轮询不再每 2–3 秒重读重解析 4MB 账本。
+- **The anomaly card counts only real anomalies**: `intercepted=true` or an ingress anomaly. Under advisory,
+  `decision=deny` without interception is a **bypass hit** (guards.js semantics: bypasses still land a deny entry),
+  shown separately as gray rows — otherwise advisory mode would keep the red warning permanently lit and it would lose its meaning. The "anomalies" column of recording segments uses the same scope.
+- **Mapped/unmapped counted separately**: `judgments` only covers the five capability categories inside the mapping table;
+  MCP / workflow / subagent and other out-of-table tools go through `telemetry/unmapped-tool` and are shown separately as "unmapped calls" —
+  otherwise MCP-heavy sessions would show "tool calls" as a constant 0.
+- **The records cursor drops no records**: `lastSeq` takes only the seq of the last record actually returned (previously the max over the whole
+  file, so when the first screen was truncated by limit, the cursor jumped straight to the file tail and middle records were lost forever);
+  beyond the limit it returns `truncated: true`.
+- **Tail-parse cache**: status/records share a 10s cache keyed on size+mtime (like history),
+  so polling no longer re-reads and re-parses a 4MB ledger every 2–3 seconds.
 
-实现（与 dsh-deepseek-tan-pet 同款姿势）：
+Implementation (same approach as dsh-deepseek-tan-pet):
 
-- 宿主半侧 [lib/panel.js](lib/panel.js)：`GET /api/dsh-dashcam/status|records|history`
-  三条路由，环回 Host 校验、`no-store`、optional-safe（webServer 缺席只丢面板，
-  判定链与账本不受影响）。
-- 浏览器半侧 `lib/client.js`（由 `npm run build` 从 `src/client/` 拼装）：
-  `window.__ModuleLoader__.load` 包，`package.json` 的 `dsh.client` 声明注入
-  `ui-renderer / ui-slots / shortcuts`；面板直挂 `document.body`（dsh-app:// 下
-  iframe 会 404），只用 right/bottom 定位；单例 + generation 防级联。
-- **脱敏口径**：只透出粗粒度事实（路径 / 命令首词 / 主机 / 计数 / 决策 / reason）；
-  `llm.request` 的 sample（消息 head 样本）与哈希链字段（hash/prevHash/mac）不透出；
-  `llm.inbound` 只透出截断 48 字的 head。历史聚类全量读带 10s 缓存。
+- Host half [lib/panel.js](lib/panel.js): three routes `GET /api/dsh-dashcam/status|records|history`,
+  loopback Host validation, `no-store`, optional-safe (a missing webServer only loses the panel; the judgment chain and ledger are unaffected).
+- Browser half `lib/client.js` (assembled from `src/client/` by `npm run build`):
+  wrapped in `window.__ModuleLoader__.load`; `package.json`'s `dsh.client` declares injection into
+  `ui-renderer / ui-slots / shortcuts`; the panel mounts directly on `document.body` (iframes 404 under
+  dsh-app://), positioned only with right/bottom; singleton + generation guards against cascades.
+- **Redaction scope**: only coarse-grained facts are exposed (paths / command first word / host / counts / decision / reason);
+  the `llm.request` sample (message head samples) and hash-chain fields (hash/prevHash/mac) are not exposed;
+  `llm.inbound` exposes only a head truncated to 48 bytes. History clustering reads fully with a 10s cache.
 
-改前端后：`npm run build` 重新生成 `lib/client.js`，重启 DSH 生效（桌面版当前
-运行的进程仍加载旧包）。
+After changing the frontend: run `npm run build` to regenerate `lib/client.js`, then restart DSH (the currently running desktop
+process still loads the old bundle).
 
-## 工具映射表（1.10.13）
+## Tool mapping table (1.10.13)
 
-公开名先剥 `ops_` 前缀再按裸名匹配（`ops_bash → bash`）：
+The public name has its `ops_` prefix stripped first, then matched by bare name (`ops_bash → bash`):
 
-| 工具（裸名） | 判定 |
+| Tool (bare name) | Judgment |
 | --- | --- |
-| `pwsh` / `bash` / `sh` / `zsh` / `cmd` | `proc.spawn`（**首词**口径）+ 命令行哈希存档；`script_path` 整串 |
-| `read` / `read_file` / `read_files` / `read_table` / `read_docx` / `read_pdf` / `read_image` / `inspect_local_file` | `fs.read` 逐 path（凭证路径自动升级 `cred.read`） |
-| `glob` / `grep` | `fs.read`；path 是目录时判 `dir/**`（F3）；缺 path 落 `unjudgeable` 遥测 |
-| `stat` / `diff` | `fs.read`；目录同上转子树形态 |
-| `write` / `write_file` / `edit` / `edit_file` / `replace` | `fs.write`（`dryRun: true` 降级 `fs.read`）；replace 基目录转子树形态 |
-| `copy` | `fs.read`(源) + `fs.write`(目标)；目标为已存在目录时判 `to/**` |
-| `move` | `fs.read`(源) + **`fs.delete`(源：目录时节点+子树两条，M1)** + `fs.write`(目标) |
-| `remove` | `fs.delete`；目标是目录时 **节点 + 子树两条都判**（M1） |
-| `batch` | `operations[]` 逐条展开（同 copy/move/remove 口径，上限 512）；缺 operations 落 `unjudgeable` |
-| `web_fetch` / `fetch` | `net.outbound`（host:port） |
-| `discover_tools` / `result` | 不映射不遥测（无副作用） |
-| 其余 | 放行 + `telemetry/unmapped-tool`（console 点名与 allow 遥测同名只记一次）；`enforceUnmapped` 下**每次调用**拒绝且**每次都落 deny 账**（R2，1.10.14：审计不去重），`unmappedAllowlist` 命中的豁免放行 |
+| `pwsh` / `bash` / `sh` / `zsh` / `cmd` | `proc.spawn` (**first word** scope) + commandline hash archive; `script_path` judged as the whole string |
+| `read` / `read_file` / `read_files` / `read_table` / `read_docx` / `read_pdf` / `read_image` / `inspect_local_file` | `fs.read` per path (credential paths auto-escalate to `cred.read`) |
+| `glob` / `grep` | `fs.read`; when path is a directory, judged as `dir/**` (F3); missing path falls to `unjudgeable` telemetry |
+| `stat` / `diff` | `fs.read`; directories likewise turn into subtree form |
+| `write` / `write_file` / `edit` / `edit_file` / `replace` | `fs.write` (`dryRun: true` downgrades to `fs.read`); replace judged at base directory as subtree form |
+| `copy` | `fs.read`(source) + `fs.write`(destination); when the destination is an existing directory, judged as `to/**` |
+| `move` | `fs.read`(source) + **`fs.delete`(source: for directories, both node + subtree, M1)** + `fs.write`(destination) |
+| `remove` | `fs.delete`; when the target is a directory, **both node + subtree are judged** (M1) |
+| `batch` | expanded per entry of `operations[]` (same scope as copy/move/remove, cap 512); missing operations falls to `unjudgeable` |
+| `web_fetch` / `fetch` | `net.outbound` (host:port) |
+| `discover_tools` / `result` | not mapped, not telemetered (no side effects) |
+| everything else | allowed + `telemetry/unmapped-tool` (the console callout and allow telemetry are recorded once per name); under `enforceUnmapped` **every call** is rejected and **every one lands a deny entry** (R2, 1.10.14: audit does not dedupe); entries hit by `unmappedAllowlist` are exempted and allowed |
 
-无法判定的调用（batch 缺 operations、glob 缺 path、copy/move 缺 to）：
-advisory 落 `telemetry/unjudgeable-tool`（allow）放行；enforce 落 deny 账后拒绝（F2：审计先于执行）。
+Unjudgeable calls (batch missing operations, glob missing path, copy/move missing to):
+advisory records `telemetry/unjudgeable-tool` (allow) and passes; enforce lands a deny entry then rejects (F2: audit precedes execution).
 
-**M1（1.10.13）目录删除的授权口径**：`remove(目录)` / `move(目录, …)` 删的是
-**节点本身 + 整棵子树**，按节点（`fs.delete{dir}`，需显式授权 dir 本身）与子树
-（`fs.delete{dir/**}`）两条判定，enforce 下都要过——仅授 `dir/**` 不放行，
-与 SPEC「`dir/**` 不含 dir 本身」一致；删除目录节点请同时授权 `dir` 与 `dir/**`。
+**M1 (1.10.13) authorization scope for directory deletion**: `remove(directory)` / `move(directory, …)` deletes
+**the node itself + the whole subtree**, judged as two entries — the node (`fs.delete{dir}`, requiring explicit authorization of dir itself)
+and the subtree (`fs.delete{dir/**}`); under enforce both must pass — granting only `dir/**` does not allow it, consistent with the SPEC's
+"`dir/**` does not include dir itself"; to delete a directory node, authorize both `dir` and `dir/**`.
 
-## MAC 启用与账本迁移（F1，1.10.12 起有防呆）
+## MAC enablement and ledger migration (F1, guardrails since 1.10.12)
 
-**不要在既有 v2 账本上原地开 MAC。** 生产账本（190 行）全是 v2 无 mac 记录，
-开启后 `Ledger.verify()` 会把全部历史判成 `mac_missing`、`ok=false`，
-而 dashcam 的 metrics 先校验后统计，直接非零退出。宿主已加防呆：
-配置了 MAC 密钥且账本存在无 mac 历史行 → **拒绝挂载**并打印迁移步骤。
-拒绝挂载会在账本旁留 side 日志 `<ledgerPath>.guard.log`（L3，桌面版看不到
-stdout 也能事后查）；`ledgerMacKeyEnv` 指向的环境变量未设置时报
-`stage=mac-env-missing`（L1，独立文案，不冒充「不能原地启用」）。
+**Do not enable MAC in place on an existing v2 ledger.** The production ledger (190 lines) is all v2 records without mac;
+once enabled, `Ledger.verify()` would judge all history as `mac_missing` with `ok=false`, and dashcam's metrics verify
+before computing, exiting non-zero immediately. The host now has a guardrail: with a MAC key configured and the ledger containing
+mac-less history rows → **refuses the mount** and prints the migration steps. A refused mount leaves a side log next to the ledger
+(`<ledgerPath>.guard.log`, L3 — the desktop build cannot see stdout, but you can check afterwards); an unset environment variable
+pointed to by `ledgerMacKeyEnv` reports `stage=mac-env-missing` (L1, distinct message, not masquerading as "can't enable in place").
 
-迁移步骤（换新账本 + 归档，不要原地开关）：
+Migration steps (use a new ledger + archive; do not toggle in place):
 
-1. 归档旧账：`mv ~/.dsh/dsh-dashcam/ledger.jsonl ~/.dsh/dsh-dashcam/ledger-v2-archive.jsonl`
-   （文件名标注 v2-无-mac，勿再追加）。
-2. 保持 `ledgerMacKey`（或 `ledgerMacKeyFile` / `ledgerMacKeyEnv`）配置，重启 DSH——
-   判定链会在新文件上从 v3 起账，mount 记录即带 mac。
-3. 归档文件如需核对，用无密钥 `new Ledger(path).verify()`：`ok=false / mac_missing`
-   是预期结果（历史本就无 mac），不代表账本损坏。
-4. 密钥管理：≥32 字节随机串；不进仓库。推荐 `ledgerMacKeyFile` 指向权限受控的文件，
-   或 `ledgerMacKeyEnv: 'DSH_DASHCAM_MAC_KEY'`。
+1. Archive the old ledger: `mv ~/.dsh/dsh-dashcam/ledger.jsonl ~/.dsh/dsh-dashcam/ledger-v2-archive.jsonl`
+   (the filename marks v2-without-mac; do not append to it again).
+2. Keep the `ledgerMacKey` (or `ledgerMacKeyFile` / `ledgerMacKeyEnv`) config and restart DSH —
+   the judgment chain starts a v3 ledger on the new file, and the mount record carries a mac.
+3. If the archive needs auditing, use a keyless `new Ledger(path).verify()`: `ok=false / mac_missing` is the expected result
+   (history genuinely has no mac) and does not indicate corruption.
+4. Key management: a random string >= 32 bytes; never commit it to the repository. Recommended: point `ledgerMacKeyFile`
+   at a permission-controlled file, or use `ledgerMacKeyEnv: 'DSH_DASHCAM_MAC_KEY'`.
 
-存档哈希说明：命令行存档的 `commandLineHash` 是**原文**的 SHA-256（非打码后文本），
-用于离线对账时验证「账上哈希 == 实际执行过的命令」，不含明文。
+Archive hash note: the commandline archive's `commandLineHash` is the SHA-256 of the **original text** (not the masked text),
+used for offline reconciliation to verify "the hash on the ledger == the command actually executed"; it contains no plaintext.
 
-## 已知边界
+## Known boundaries
 
-- **F5（口径，已闭合）**：telemetry 附加记录不再计入 metrics 的判定口径——核心
-  dsh-dashcam 1.10.12 起 `computeMetrics` / `monthlyMetrics` 只收
-  `capability !== 'telemetry'` 的记录，telemetry 数量另列 `telemetryRecords` /
-  `telemetryDenies` 并列读数（见核心 docs/ROLLOUT.md 第 6 节）。本宿主附加记录
-  （mount / unmapped-tool / unjudgeable-tool / commandline-audit）的 capability
-  固定为 `telemetry`，勿改。
-- 命令判定口径 = 首词；`bash -c "…"` 套娃内部副作用不在入口门覆盖范围。
-- `replace` 以基目录为审计粒度，glob 命中的实际文件不逐个展开。
-- `dir/**` 授权不含 `dir` 本身是 SPEC 契约（docs/SPEC.md 77）；宿主对**只读/子树写**
-  语义转 `dir/**` 对齐，**破坏性删除保持节点判定**（M1）。
-- **L4（TOCTOU）**：目录探测**正结果**带 30s TTL 缓存、**负结果不缓存**（R1，1.10.14：
-  负缓存会让「文件→目录」30s 窗口内的删除跳过子树判定绕过 M1，属 fail-open，已修；
-  正缓存方向相反——目录被换成文件后仍多判一条子树，是 fail-closed，可接受）。
-  判定与工具执行之间仍存在竞态窗口，入口门不承诺原子性，真拦截靠 Bridge。
-- `patchBuiltins: true` 与宿主入口门叠加时，目录探测会产生额外 fs 记录；建议二选一。
+- **F5 (semantics, closed)**: telemetry-side records no longer count toward the metrics judgment scope — since core
+  dsh-dashcam 1.10.12, `computeMetrics` / `monthlyMetrics` only accept records with
+  `capability !== 'telemetry'`; telemetry counts are reported side by side as `telemetryRecords` /
+  `telemetryDenies` (see core docs/ROLLOUT.md section 6). This host's side records
+  (mount / unmapped-tool / unjudgeable-tool / commandline-audit) have their capability
+  fixed at `telemetry` — do not change it.
+- Command judgment scope = first word; side effects nested inside `bash -c "…"` are not covered by the entry gate.
+- `replace` audits at base-directory granularity; the actual files matched by the glob are not expanded individually.
+- `dir/**` grants not including `dir` itself is the SPEC contract (docs/SPEC.md 77); the host maps **read-only / subtree-write**
+  semantics to `dir/**` for alignment, while **destructive deletion keeps the node judgment** (M1).
+- **L4 (TOCTOU)**: directory probes cache **positive results** with a 30s TTL and **do not cache negative results** (R1, 1.10.14:
+  a negative cache would let a deletion within the 30s "file→directory" window skip the subtree judgment and bypass M1 — fail-open, now fixed;
+  positive caching is the reverse — a directory swapped to a file still gets an extra subtree judgment, which is fail-closed and acceptable).
+  A race window between judgment and tool execution remains; the entry gate does not promise atomicity — real interception relies on the Bridge.
+- With `patchBuiltins: true` stacked on the host entry gate, directory probes produce extra fs records; pick one or the other.
 
-## 验证
+## Verification
 
 ```powershell
-npm run smoke   # 96 + 15 + 43 项断言，全过（含 panel 路由/脱敏/聚类/游标口径）
-npm run build   # 重新生成 lib/client.js（改 src/client 后必须跑）
-# 主仓库回归：cd ..; npm test   # 241 例，0 fail
+npm run smoke   # 96 + 15 + 43 assertions, all passing (including panel routes/redaction/clustering/cursor semantics)
+npm run build   # regenerate lib/client.js (required after changing src/client)
+# Main repo regression: cd ..; npm test   # 241 tests, 0 fail
 ```
 
-部署确认（F8）：重启 DSH 桌面后，账本新 mount 记录应为
-`pluginVersion: "1.14.0"`、`scope.mode` 与配置一致，右下角出现 REC 徽章、
-`Ctrl+Shift+D` 可开面板；**部署侧暂保持 advisory 观察，
-勿急着开 enforce / enforceUnmapped**（开 enforceUnmapped 前先按上表配 unmappedAllowlist）。
+Deployment confirmation (F8): after restarting the DSH desktop build, new mount records in the ledger should show
+`pluginVersion: "1.14.0"` with `scope.mode` matching the config, the REC badge in the bottom-right corner,
+and `Ctrl+Shift+D` opens the panel; **on the deployment side, stay in advisory observation for now —
+don't rush to enable enforce / enforceUnmapped** (configure unmappedAllowlist per the table above before enabling enforceUnmapped).
