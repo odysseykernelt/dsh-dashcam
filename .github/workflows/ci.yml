@@ -27,6 +27,7 @@ jobs:
           node-version: 20
       - name: Rebuild lib/client.js and diff against committed artifact
         run: |
+          PLUGIN_NAME=$(node -p "require('./package.json').name")
           cp -r dsh-dashcam-host /tmp/hostbuild
-          cd /tmp/hostbuild && node build.mjs
+          cd /tmp/hostbuild && node build.mjs "$PLUGIN_NAME"
           diff -q --strip-trailing-cr /tmp/hostbuild/lib/client.js "$GITHUB_WORKSPACE/dsh-dashcam-host/lib/client.js"

@@ -4,15 +4,29 @@
 //   1) 丢掉 import 行（源内互相引用靠拼接顺序保证）；
 //   2) `export function/const` 去掉 export 前缀；
 //   3) client.body.js 的 exports.* 赋值保留，作为模块出口。
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
+
 // 注册 id 必须等于**插件包**（根包）的包名：DSH 的 client-modules 按包名建行，
 // 加载完 bundle 后只认 id 与行 id 相同的注册。本目录是宿主适配层，包名
 // dsh-dashcam-host 与插件身份不同，不能拿它当注册 id（2.0.0/2.0.1 的崩溃即此）。
-const pkg = JSON.parse(readFileSync(join(root, '..', 'package.json'), 'utf8'));
+// CI 会把本目录单独拷到工作区外重建，所以包名可就地读仓库根，也可由参数/环境给出。
+function pluginPackageName() {
+  const fromArgv = process.argv.slice(2).find((arg) => !arg.startsWith('-'));
+  if (fromArgv) return fromArgv;
+  if (process.env.DSH_PLUGIN_NAME) return process.env.DSH_PLUGIN_NAME;
+  const rootManifest = join(root, '..', 'package.json');
+  if (existsSync(rootManifest)) {
+    const pkg = JSON.parse(readFileSync(rootManifest, 'utf8'));
+    if (pkg.name && pkg.dsh) return pkg.name;
+  }
+  throw new Error('无法确定插件包名：请在仓库内构建，或传 <plugin-name> / 设置 DSH_PLUGIN_NAME');
+}
+
+const pluginName = pluginPackageName();
 
 function toBody(file) {
   const source = readFileSync(join(root, file), 'utf8');
@@ -31,7 +45,7 @@ const bodies = [
 ];
 
 const bundle = `window.__ModuleLoader__.load({
-  id: ${JSON.stringify(pkg.name)},
+  id: ${JSON.stringify(pluginName)},
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
