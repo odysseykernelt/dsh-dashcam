@@ -13,7 +13,8 @@ You can also reach the maintainer via a Discussion in the *Ideas* category if th
 
 | Version | Supported |
 | --- | --- |
-| 1.12.x | yes |
+| 2.0.x | yes |
+| 1.12.x | security fixes only |
 | < 1.12 | no (see the 1.11.0 rename migration notes in the README) |
 
 ## Known boundaries (please read before relying on this project)

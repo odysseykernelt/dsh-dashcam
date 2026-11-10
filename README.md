@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![npm](https://img.shields.io/npm/v/dsh-dashcam) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
+![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![npm](https://img.shields.io/npm/v/dsh-dashcam) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
 **dsh-dashcam is a dashcam for your AI plugins — it records what they actually do, it does not decide what they may do.**
 
@@ -222,6 +222,8 @@ Every observed tool call then lands in `~/.dsh/dsh-dashcam/ledger.jsonl` (fields
 ```jsonl
 {"v":4,"plugin":"dsh-dashcam-host","pluginVersion":"1.14.0","capability":"fs","action":"fs.read","scope":{"path":"C:/repo/src/app.ts"},"decision":"allow","ruleId":"unprofiled","profiled":false,"manifestHash":null,"seq":1,"ts":"2026-11-09T14:09:14.822Z","prevHash":"GENESIS","hash":"b504c225…"}
 ```
+
+`pluginVersion` records the host adapter (1.14.0 throughout 2.0.x), not the npm package — the adapter ships inside `dsh-dashcam` and is no longer versioned separately, so `1.14.0` next to `dsh-dashcam@2.0.3` is expected.
 
 The chain can be re-verified offline at any time — no host process required:
 
@@ -627,7 +629,10 @@ The core package and the host adapter version independently — the adapter trac
 | --- | --- | --- |
 | 1.10.12 | 1.10.12 | host adapter merged into this repo as a git subtree |
 | 1.11.0 | 1.11.0 | rename dsh-covenant → dsh-dashcam |
-| 1.12.0 | 1.14.0 (current) | core adds ingress audit; adapter adds ingress wiring and the Agent Dashcam panel |
+| 1.12.0 | 1.14.0 | core adds ingress audit; adapter adds ingress wiring and the Agent Dashcam panel |
+| 2.0.0 – 2.0.3 | 1.14.0 (current) | single-package distribution; the 2.0.x fixes are client-loader defects, 2.0.3 is metadata only |
+
+Since 2.0.0 the host adapter ships inside the root package and no longer has a release line of its own; the adapter version above is what `pluginVersion` records in the ledger.
 
 Going forward, each release tag's annotation states the matching host adapter version.
 

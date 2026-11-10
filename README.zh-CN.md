@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![npm](https://img.shields.io/npm/v/dsh-dashcam) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey) ![status](https://img.shields.io/badge/status-WIP-orange)
+![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![npm](https://img.shields.io/npm/v/dsh-dashcam) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
 **dsh-dashcam 是给 AI 插件装的行车记录仪——它记录插件实际做了什么，不替你决定插件能做什么。**
 
@@ -236,6 +236,8 @@ dsh plugin --profile web add dsh-dashcam      # 或：dsh plugin --profile deskt
 ```jsonl
 {"v":4,"plugin":"dsh-dashcam-host","pluginVersion":"1.14.0","capability":"fs","action":"fs.read","scope":{"path":"C:/repo/src/app.ts"},"decision":"allow","ruleId":"unprofiled","profiled":false,"manifestHash":null,"seq":1,"ts":"2026-11-09T14:09:14.822Z","prevHash":"GENESIS","hash":"b504c225…"}
 ```
+
+`pluginVersion` 记的是宿主适配层（2.0.x 全程为 1.14.0），不是 npm 包版本——适配层已经随 `dsh-dashcam` 一起发布、不再独立编号，所以 `dsh-dashcam@2.0.3` 的账本里写 `1.14.0` 是正常的。
 
 整条链随时可离线复验——不需要宿主进程：
 
@@ -837,7 +839,10 @@ new LocalHost({ policy: { limits: { fetchTimeoutMs: 5000 }, enforcement: { stric
 | --- | --- | --- |
 | 1.10.12 | 1.10.12 | 宿主适配包以 git subtree 方式并入本仓库 |
 | 1.11.0 | 1.11.0 | 改名 dsh-covenant → dsh-dashcam |
-| 1.12.0 | 1.14.0（当前） | 核心新增 ingress 审计；适配包接入 ingress 接线与 Agent Dashcam 面板 |
+| 1.12.0 | 1.14.0 | 核心新增 ingress 审计；适配包接入 ingress 接线与 Agent Dashcam 面板 |
+| 2.0.0 – 2.0.3 | 1.14.0（当前） | 单包分发；2.0.x 修的是客户端加载器缺陷，2.0.3 仅元数据 |
+
+2.0.0 起宿主适配层随根包发布，不再有自己的版本线；上表中的适配包版本就是账本里 `pluginVersion` 记的值。
 
 今后每次打 release tag，annotation 中注明对应的宿主适配包版本。
 
