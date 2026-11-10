@@ -140,6 +140,19 @@ manifest 声明 ─┐
 - **已知边界**：本地 egress 只能证明「客户端发出去的 messages 里有没有 X」。服务端在客户端之后
   追加的前缀不在观测范围；`coverage.unknown` 只是辅助信号，不能当实锤。
 
+## 2.0.x：单包分发
+
+2.0.0 把插件身份移到包根，一个 npm 包即可装出完整插件（`dsh plugin --profile web add dsh-dashcam`）；1.x 需要两个包（核心 + 宿主适配层）。2.0.x 随后修掉客户端加载器的两处缺陷，2.0.3 只改元数据与文档。
+
+| 版本 | 变更 |
+| --- | --- |
+| 2.0.0 | 插件身份（`main` / `exports` / `dsh`）移到根包；宿主适配层作为 `dsh-dashcam-host/` 随包发布 |
+| 2.0.1 | 嵌套的宿主 `package.json` 不再重复声明客户端 —— 第二个 `exports["./client"]` 让同一份 bundle 被注册两次 |
+| 2.0.2 | 客户端 bundle 改为按**包名**注册；id 不一致会被当作未注册而再执行一次，最终以 `duplicate factory registration` 崩掉 DSH web boot |
+| 2.0.3 | **仅元数据与文档变更** —— npm description / keywords / 安装说明。核心 `src/` 无改动，行为与 2.0.2 完全一致 |
+
+从 1.x 升级：账本原地保留（`~/.dsh/dsh-dashcam/ledger.jsonl`）；若当初用 `pnpm link` 安装，先摘掉链接，见[安装](#安装dsh-宿主)。
+
 ## 快速开始
 
 ```bash

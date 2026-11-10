@@ -127,6 +127,19 @@ Key semantics:
 - **First request builds the baseline**: when the host is attached mid-session, all historical messages count as "added" with no inbound to compare against, so the first request does not alert.
 - **Known boundary**: local egress can only prove "does X exist in the messages the client sent out". Server-side prefixes appended after the client are out of observation scope; `coverage.unknown` is an auxiliary signal only, not proof.
 
+## 2.0.x: single-package distribution
+
+2.0.0 moves the plugin identity to the package root, so one npm package installs the whole plugin (`dsh plugin --profile web add dsh-dashcam`); 1.x needed a second package for the host adapter. The 2.0.x line then fixed two client-loader defects, and 2.0.3 is metadata and documentation only.
+
+| Version | Change |
+| --- | --- |
+| 2.0.0 | Plugin identity (`main` / `exports` / `dsh`) moves to the root package; the host adapter ships inside it as `dsh-dashcam-host/` |
+| 2.0.1 | The nested host `package.json` stops restating the client declaration — a second `exports["./client"]` made the same bundle register twice |
+| 2.0.2 | The client bundle registers under the **package name**; a mismatched id is treated as unregistered and the bundle runs a second time, which crashes DSH web boot with `duplicate factory registration` |
+| 2.0.3 | **Metadata and documentation only** — npm description / keywords / install notes. No `src/` change; behaviour is identical to 2.0.2 |
+
+Upgrading from 1.x: the ledger stays where it is (`~/.dsh/dsh-dashcam/ledger.jsonl`); if you installed with `pnpm link`, remove the link first — see [Install](#install-dsh-host).
+
 ## Quick start
 
 ```bash
