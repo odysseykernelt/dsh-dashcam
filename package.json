@@ -1,7 +1,7 @@
 {
   "name": "dsh-dashcam",
-  "version": "2.0.2",
-  "description": "Plugin dashcam for DSH: capability manifests, runtime guards, and a tamper-evident audit ledger (formerly dsh-covenant).",
+  "version": "2.0.3",
+  "description": "Tamper-evident audit ledger for DeepSeek Harness (DSH) plugins — zero-config dashcam recording what your AI plugins actually do.",
   "homepage": "https://github.com/odysseykernelt/dsh-dashcam#readme",
   "repository": {
     "type": "git",
@@ -11,14 +11,12 @@
     "url": "https://github.com/odysseykernelt/dsh-dashcam/discussions/categories/ideas"
   },
   "keywords": [
-    "dsh",
     "dsh-plugin",
-    "agent-security",
-    "audit-log",
-    "capability-guard",
-    "runtime-governance",
-    "llm",
-    "ai-agents"
+    "deepseek-harness",
+    "audit-ledger",
+    "tamper-evident",
+    "ai-agents",
+    "llm"
   ],
   "main": "dsh-dashcam-host/lib/index.js",
   "type": "commonjs",
@@ -64,6 +62,7 @@
     "!docs/*verify*.md",
     "!docs/audiences.md",
     "!docs/*checklist*.md",
+    "!docs/*suggestions*.md",
     "dsh-dashcam-host/lib/",
     "dsh-dashcam-host/package.json",
     "./cordis.patch.yml"
