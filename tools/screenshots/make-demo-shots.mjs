@@ -30,7 +30,11 @@ const LEDGER_PATH = join(OUT, 'demo-ledger.jsonl');
 
 // 1028×816 让面板正好是 980×720（CSS 里是 min(980px, 100vw-48px) 这类写法）。
 const VIEWPORT = { width: 1028, height: 816 };
-const DEMO_NOW = Date.parse('2026-11-13T11:24:00+08:00');
+// 抓帧像素密度：1.5 更清晰，但每帧要 300–400ms，GIF 只有 2–3fps，动效会跳。
+// 1.0 能到 8–10fps；缩到 900px 宽后文字略软，动图里连贯更值钱。
+const DPR = Number(process.env.SHOT_DPR || 1);
+const SHOT_QUALITY = Number(process.env.SHOT_QUALITY || 88);
+const DEMO_NOW = Date.parse('2026-11-13T19:42:00+08:00');
 
 const { clusterSessions, computeStatus, sanitizeRecord } = await import(
   pathToFileURL(join(ROOT, 'dsh-dashcam-host', 'lib', 'panel.js')).href
@@ -92,11 +96,22 @@ const iso = (baseMs, offsetSec) => new Date(baseMs + offsetSec * 1000).toISOStri
 
 let SEQ = 104;
 
+// 2.2.0 的实时流按「对话窗口」分组：账本 v4 的 session 字段（tools/pre-execute
+// 落账）或 scope.sessionId（ingress 自带）。withSession() 给一段记录打上当前窗口，
+// 这样一次截图里能同时出现三个窗口的标题。
+let CURRENT_SESSION = null;
+function withSession(sid, fn) {
+  const previous = CURRENT_SESSION;
+  CURRENT_SESSION = sid;
+  try { fn(); } finally { CURRENT_SESSION = previous; }
+}
+
 function record(ts, capability, action, scope, extra = {}) {
   return {
     v: 4,
     seq: SEQ++,
     ts,
+    ...(CURRENT_SESSION ? { session: CURRENT_SESSION } : {}),
     plugin: 'dsh-demo-tools',
     pluginVersion: '0.4.2',
     capability,
@@ -131,45 +146,90 @@ const inbound = (t, head, sessionId) => record(t, 'llm.ingress', 'llm.inbound', 
 const anomaly = (t, kind, sessionId) => record(t, 'llm.ingress', 'llm.anomaly', { sessionId, kind, count: 1 }, { ruleId: 'ingress-anomaly' });
 const unmapped = (t, tool) => record(t, 'telemetry', 'unmapped-tool', { tool });
 
-// 特色会话：11-13 上午，手工编排成「改面板 → 跑测试 → 顺手改 README」的一条线，
-// 末尾带一次凭证路径的旁路拒绝和一条入站异常。截图的主场。
+// 三个「对话窗口」同时在动：2.2.0 的实时流按窗口分组，标题来自 /sessions 目录。
+const S_MAIN = '01JCE7F3X2'; // 面板 2.2.0：分组与筛选
+const S_DOCS = '01JCF8Q2N4'; // README 首屏改版
+const S_REL = '01JCG3M1K7'; // release v2.2.0 打包
+
+// 特色会话：11-13 晚上，手工编排成「改面板 → 改 README → 打包 → 跑测试」的一条线，
+// 中间夹一次凭证路径的旁路拒绝和一条入站异常，另有两个窗口插进来。截图的主场。
 function featuredSession() {
   // 会话贴着 DEMO_NOW 收尾，面板里的「刚刚 / 秒前」才说得通
   const base = DEMO_NOW - (8 * 60 + 50) * 1000;
-  const sid = '01JCE7F3X2';
-  const rows = [
-    mount(iso(base, 0)),
-    inbound(iso(base, 12), '把面板里的拒绝事件标红', sid),
-    request(iso(base, 18), 12, 2, 0, sid),
-    read(iso(base, 26), 'dsh-dashcam-host/src/client/dashcam-panel.js'),
-    read(iso(base, 41), 'dsh-dashcam-host/src/client/dashcam-css.js'),
-    request(iso(base, 63), 15, 1, 0, sid),
-    write(iso(base, 80), 'dsh-dashcam-host/src/client/dashcam-panel.js'),
-    bash(iso(base, 112), 'pnpm test'),
-    read(iso(base, 130), 'test/panel.test.js'),
-    write(iso(base, 154), 'test/panel.test.js'),
-    bash(iso(base, 182), 'node --test test/panel.test.js'),
-    request(iso(base, 211), 19, 3, 1, sid),
-    net(iso(base, 213), 'api.deepseek.com'),
-    read(iso(base, 242), 'README.md'),
-    write(iso(base, 280), 'README.md'),
-    bash(iso(base, 311), 'git diff --stat'),
-    commandLine(iso(base, 312), 'git diff --stat'),
-    inbound(iso(base, 340), '顺手把首屏也压短一点', sid),
-    read(iso(base, 365), 'C:/Users/dev/.aws/credentials', {
-      cred: true,
-      decision: 'deny',
-      ruleId: 'scope_mismatch',
-      reason: '授予存在但不覆盖请求范围：cred.read (paths: C:/Users/dev/.aws/credentials)',
-    }),
-    read(iso(base, 380), 'docs/SPEC.md'),
-    request(iso(base, 404), 24, 5, 2, sid),
-    write(iso(base, 422), 'docs/SPEC.md'),
-    unmapped(iso(base, 441), 'mcp__github__get_file_contents'),
-    anomaly(iso(base, 458), 'inbound_changed', sid),
-    bash(iso(base, 478), 'pnpm test'),
-    request(iso(base, 500), 27, 1, 0, sid),
-  ];
+  const rows = [];
+
+  // mount 是宿主启动事件，不属于任何对话窗口——面板归到「系统」组。
+  rows.push(mount(iso(base, 0)));
+
+  withSession(S_MAIN, () => {
+    rows.push(
+      inbound(iso(base, 12), '把面板里的拒绝事件标红', S_MAIN),
+      request(iso(base, 18), 12, 2, 0, S_MAIN),
+      read(iso(base, 26), 'dsh-dashcam-host/src/client/dashcam-panel.js'),
+      read(iso(base, 41), 'dsh-dashcam-host/src/client/dashcam-css.js'),
+      request(iso(base, 63), 15, 1, 0, S_MAIN),
+      write(iso(base, 80), 'dsh-dashcam-host/src/client/dashcam-panel.js'),
+      bash(iso(base, 112), 'pnpm test'),
+      read(iso(base, 130), 'dsh-dashcam-host/test/panel-host.mjs'),
+    );
+  });
+
+  withSession(S_DOCS, () => {
+    rows.push(
+      read(iso(base, 135), 'README.md'),
+      write(iso(base, 150), 'README.md'),
+      bash(iso(base, 162), 'git diff --stat'),
+      commandLine(iso(base, 163), 'git diff --stat'),
+      inbound(iso(base, 170), '首屏加一行对比表口牙', S_DOCS),
+    );
+  });
+
+  withSession(S_MAIN, () => {
+    rows.push(
+      request(iso(base, 180), 19, 3, 1, S_MAIN),
+      write(iso(base, 196), 'dsh-dashcam-host/src/client/dashcam-css.js'),
+      request(iso(base, 210), 22, 4, 0, S_MAIN),
+      bash(iso(base, 223), 'node --test dsh-dashcam-host/test/panel-host.mjs'),
+      read(iso(base, 240), 'dsh-dashcam-host/src/client/dashcam-engine.js'),
+    );
+  });
+
+  withSession(S_REL, () => {
+    rows.push(
+      bash(iso(base, 246), 'npm pack --pack-destination .build/release'),
+      commandLine(iso(base, 247), 'npm pack --pack-destination .build/release'),
+      net(iso(base, 252), 'registry.npmjs.org'),
+      read(iso(base, 258), 'package.json'),
+      write(iso(base, 266), '.build/release/SHA256SUMS'),
+    );
+  });
+
+  withSession(S_MAIN, () => {
+    rows.push(
+      inbound(iso(base, 275), '顺手把拒绝那条也标红', S_MAIN),
+      read(iso(base, 286), 'C:/Users/dev/.aws/credentials', {
+        cred: true,
+        decision: 'deny',
+        ruleId: 'scope_mismatch',
+        reason: '授予存在但不覆盖请求范围：cred.read (paths: C:/Users/dev/.aws/credentials)',
+      }),
+      read(iso(base, 300), 'docs/SPEC.md'),
+      request(iso(base, 314), 24, 5, 2, S_MAIN),
+      write(iso(base, 330), 'docs/SPEC.md'),
+      unmapped(iso(base, 345), 'mcp__github__get_file_contents'),
+      anomaly(iso(base, 358), 'inbound_changed', S_MAIN),
+      bash(iso(base, 372), 'pnpm test'),
+      inbound(iso(base, 384), '中文那份也一起改', S_MAIN),
+      request(iso(base, 396), 27, 1, 0, S_MAIN),
+      read(iso(base, 404), 'README.zh-CN.md'),
+      write(iso(base, 420), 'README.zh-CN.md'),
+      bash(iso(base, 445), 'git diff --stat'),
+      commandLine(iso(base, 446), 'git diff --stat'),
+      inbound(iso(base, 462), '这次先不 tag，等发版再说', S_MAIN),
+      request(iso(base, 492), 31, 6, 3, S_MAIN),
+    );
+  });
+
   return { records: rows, startedAt: base };
 }
 
@@ -201,8 +261,29 @@ function randomSession({ start, minutes, count, seed }) {
     }
   }
   rows.push(request(iso(base, Math.min(total, at + 12)), 12 + rows.length, 1, 0, sid));
+  // 同一个窗口里跑了一整段：非 mount 的记录都归到这条会话。
+  for (const rec of rows) if (rec.action !== 'mount') rec.session = sid;
   return { records: rows, startedAt: base };
 }
+
+// 会话标题：面板按 /sessions 目录把同一个窗口的记录标题出来（「系统」给 mount）。
+// 这里给每条假会话一个像人话的标题，截图里才能看出「哪个窗口在动」。
+const SESSION_TITLES = {
+  [S_MAIN]: '面板 2.2.0：分组与筛选',
+  [S_DOCS]: 'README 首屏改版',
+  [S_REL]: 'release v2.2.0 打包',
+  '01JC001013': '修复 live 视图滚动跳动',
+  '01JC001012': 'release 说明草稿',
+  '01JC001011': '快速看看测试挂了没有',
+  '01JC001010': 'session 归属去重',
+  '01JC001009': 'README 英文版润色',
+  '01JC001008': '加一个 denied 类型过滤',
+  '01JC001007': '账本轮转策略',
+  '01JC001006': '插件页截图方案',
+  '01JC001005': 'CI 在 Windows 上的坑',
+  '01JC001004': '先看看日志',
+  '01JC001003': '初始化仓库',
+};
 
 function buildLedger() {
   const featured = featuredSession();
@@ -224,13 +305,14 @@ function buildLedger() {
   all.sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
   all.push(...featured.records);
   all.forEach((rec, index) => { rec.seq = 104 + index; });
-  return { all, featured };
+  const sessionDirectory = { ...SESSION_TITLES };
+  return { all, featured, sessionDirectory };
 }
 
 // ---------------------------------------------------------------- 组装数据
 
 function buildFixture() {
-  const { all, featured } = buildLedger();
+  const { all, featured, sessionDirectory } = buildLedger();
   const sessions = clusterSessions(all, DEMO_NOW);
   const bySession = new Map();
   for (const session of sessions) {
@@ -240,17 +322,18 @@ function buildFixture() {
   const featuredRows = featured.records.map(sanitizeRecord).filter(Boolean);
   // 每条状态都按「前 N 条」重算，这样直播视图的计数器随事件流一起长。
   const statuses = featuredRows.map((_, index) => computeStatus(featured.records.slice(0, index + 1), {
-    version: '2.0.3',
+    version: '2.2.0',
     ledgerPath: 'C:\\Users\\dev\\.dsh\\dsh-dashcam\\ledger.jsonl',
   }));
   const featuredRow = sessions.find((session) => session.from === featured.records[0].seq);
   return {
     ledgerText: all.map((rec) => JSON.stringify(rec)).join('\n') + '\n',
     fixture: {
-      live: { records: featuredRows, statuses, preload: 12, stepMs: 380, elapsedSec: 8 * 60 + 41 },
+      live: { records: featuredRows, statuses, preload: 12, stepMs: 300, elapsedSec: 8 * 60 + 41 },
       replay: { session: sessions[1], records: bySession.get(sessions[1].id) || [] },
       history: { sessions },
       featured: featuredRow,
+      sessionDirectory,
       records: Object.fromEntries(bySession),
     },
   };
@@ -295,6 +378,9 @@ function buildHtml(fixture) {
 <div class="ddc-demo-flag">DEMO · <b>模拟账本</b><br>not a real session</div>
 <script>
 (function () {
+  // 面板挑语言是先读 localStorage['ddc-lang'] 再看 navigator.language；headless 的
+  // navigator 是 en-US，不先钉住整块 UI 会变英文。
+  try { localStorage.setItem('ddc-lang', 'zh'); } catch (e) {}
   var t0 = ${DEMO_NOW};
   var p0 = performance.now();
   var R = Date;
@@ -321,42 +407,68 @@ ${toBody('dsh-dashcam-host/src/client/dashcam-panel.js')}
   var fx = window.__DEMO__;
   var view = new URLSearchParams(location.search).get('view') || 'live';
   var style = document.createElement('style');
-  style.textContent = DASHCAM_CSS;
+  // renderStream 每次整表重画，.ddc-ev 的入场动画会跟着重播；真机 1–3 秒一条时
+  // 只是偶尔闪，假账本 0.3 秒一条就变成整块闪烁。截图里关掉入场动画，拍「稳定态」。
+  style.textContent = DASHCAM_CSS + ' .ddc-ev{animation:none} .ddc-root{animation:none}';
   document.head.appendChild(style);
+
+  function q(sel) { return panel.el.querySelector(sel); }
 
   var panel = createDashcamPanel({
     api: {
       loadSession: function (session) {
         panel.startReplay(session, fx.records[session.id] || [], false);
         setTimeout(function () {
-          var speed = panel.el.querySelector('.ddc-spd[data-ddc-spd="60"]');
+          var speed = q('.ddc-spd[data-ddc-spd="60"]');
           if (speed) speed.click();
-          var play = panel.el.querySelector('.ddc-play');
+          var play = q('.ddc-play');
           if (play) play.click();
         }, 500);
       },
     },
+    // 实时流搜索：真机是 engine 拿查询词去 /search，只在账本里翻；这里在假账本里翻。
+    onLiveSearch: function (query) {
+      if (view !== 'live') return;
+      var needle = query.toLowerCase();
+      var hits = [];
+      for (var k = live.records.length - 1; k >= 0; k -= 1) {
+        if (JSON.stringify(live.records[k]).toLowerCase().indexOf(needle) >= 0) hits.push(live.records[k]);
+      }
+      panel.showLiveSearch({ ok: true, query: query, records: hits, total: hits.length, truncated: false });
+    },
     onClose: function () {},
   });
   document.body.appendChild(panel.el);
-  panel.el.style.display = 'flex'; // 真机是 flex：换成 block 会把 .ddc-root 的列布局压扁
+  // 真机打开面板是 display=''（CSS 的 .ddc-root{display:flex} 生效）；写成 block 会压扁布局。
+  panel.el.style.display = '';
+  panel.updateSessionDirectory(new Map(Object.entries(fx.sessionDirectory || {})));
 
-  requestAnimationFrame(function () {
-    requestAnimationFrame(function () { window.__DEMO_READY__ = true; });
-  });
+  var live = fx.live;
+  var timers = [];
+  function at(ms, fn) { timers.push(setTimeout(fn, ms)); }
+  function clickType(key) {
+    var chip = q('.ddc-chip[data-ddc-lf="' + key + '"]');
+    if (chip) chip.click();
+  }
+  function clickWindow(label) {
+    var chips = panel.el.querySelectorAll('.ddc-dynchips[data-ddc-dyn="session"] .ddc-chip');
+    for (var k = 0; k < chips.length; k += 1) {
+      if (chips[k].textContent.trim() === label) { chips[k].click(); return; }
+    }
+  }
 
   if (view === 'live') {
-    var live = fx.live;
     // 运行时长按「打开页面时已经跑了 8 分 41 秒」算，否则会显示成真实时钟差。
     var startedAt = new Date(Date.now() - live.elapsedSec * 1000).toISOString();
     for (var k = 0; k < live.statuses.length; k += 1) live.statuses[k].startedAt = startedAt;
     var preload = live.preload;
     panel.updateLive(live.statuses[preload - 1], live.records.slice(0, preload));
     panel.tickClock(true);
+
     var i = preload;
-    var t0 = performance.now();
+    var streamT0 = performance.now();
     (function tick() {
-      var due = preload + Math.floor((performance.now() - t0) / live.stepMs);
+      var due = preload + Math.floor((performance.now() - streamT0) / live.stepMs);
       while (i < Math.min(due, live.records.length)) {
         panel.updateLive(live.statuses[i], [live.records[i]]);
         i += 1;
@@ -364,21 +476,73 @@ ${toBody('dsh-dashcam-host/src/client/dashcam-panel.js')}
       panel.tickClock(true);
       if (i < live.records.length) requestAnimationFrame(tick);
     })();
+
+    // 演示顺序：先按类型筛一次 → 复位 → 搜「credentials」→ 清空 → 按窗口筛一次。
+    at(2000, function () { clickType('think'); });
+    at(3200, function () { clickType('all'); });
+    at(3600, function () {
+      var input = q('.ddc-lsearch');
+      if (!input) return;
+      var text = 'credentials';
+      var step = 0;
+      var typer = setInterval(function () {
+        step += 1;
+        input.value = text.slice(0, step);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        if (step >= text.length) clearInterval(typer);
+      }, 70);
+      timers.push({ cancel: function () { clearInterval(typer); } });
+    });
+    at(5600, function () {
+      var input = q('.ddc-lsearch');
+      if (!input) return;
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.blur();
+    });
+    at(6600, function () { clickWindow(fx.sessionDirectory['01JCF8Q2N4'] || 'README 首屏改版'); });
   } else if (view === 'replay') {
     panel.startReplay(fx.replay.session, fx.replay.records, false);
-    setTimeout(function () {
-      var speed = panel.el.querySelector('.ddc-spd[data-ddc-spd="60"]');
+    at(600, function () {
+      var speed = q('.ddc-spd[data-ddc-spd="60"]');
       if (speed) speed.click();
-      var play = panel.el.querySelector('.ddc-play');
+      var play = q('.ddc-play');
       if (play) play.click();
-    }, 600);
+    });
   } else if (view === 'history') {
     panel.showHistory(fx.history.sessions);
     panel.setView('history');
-    var chips = panel.el.querySelectorAll('.ddc-chip');
-    setTimeout(function () { if (chips[1]) chips[1].click(); }, 900);
-    setTimeout(function () { if (chips[0]) chips[0].click(); }, 2100);
+    at(700, function () {
+      var chip = q('.ddc-chip[data-ddc-hf="recording"]');
+      if (chip) chip.click();
+    });
+    at(1900, function () {
+      var chip = q('.ddc-chip[data-ddc-hf="all"]');
+      if (chip) chip.click();
+    });
+    // 列表比一屏长：慢慢往下滚，让「更早的录像」也露一下脸。
+    at(2500, function () {
+      var list = q('.ddc-hlist');
+      var box = list && list.parentElement;
+      if (!box) return;
+      var from = box.scrollTop;
+      var to = Math.min(box.scrollHeight - box.clientHeight, from + 240);
+      if (to <= from) return;
+      var t0 = performance.now();
+      (function glide() {
+        var p = Math.min(1, (performance.now() - t0) / 1400);
+        box.scrollTop = from + (to - from) * (0.5 - Math.cos(Math.PI * p) / 2);
+        if (p < 1) requestAnimationFrame(glide);
+      })();
+    });
   }
+
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () {
+      // 首帧必须已经画完再让抓帧脚本开工，否则第一帧是空白。
+      window.__DEMO_READY__ = true;
+    });
+  });
 })();
 </script>
 </body>
@@ -412,7 +576,7 @@ async function launchEdge(port, profileDir, url) {
     '--hide-scrollbars',
     '--no-first-run',
     '--no-default-browser-check',
-    '--force-device-scale-factor=2',
+    '--force-device-scale-factor=' + DPR,
     `--window-size=${VIEWPORT.width},${VIEWPORT.height}`,
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profileDir}`,
@@ -477,7 +641,7 @@ async function capture(view, framesDir, { durationMs, fpsCap }) {
     await client.send('Emulation.setDeviceMetricsOverride', {
       width: VIEWPORT.width,
       height: VIEWPORT.height,
-      deviceScaleFactor: 1.5,
+      deviceScaleFactor: DPR,
       mobile: false,
     });
     const box = await client.send('Runtime.evaluate', {
@@ -500,7 +664,8 @@ async function capture(view, framesDir, { durationMs, fpsCap }) {
     while (performance.now() - start < durationMs) {
       const shot = await client.send('Page.captureScreenshot', {
         format: 'jpeg',
-        quality: 90,
+        quality: SHOT_QUALITY,
+        optimizeForSpeed: true,
         captureBeyondViewport: false,
       });
       const at = performance.now() - start;
@@ -530,15 +695,28 @@ function run(cmd, args) {
 
 async function encode(framesDir, outFile) {
   const timing = JSON.parse(readFileSync(join(framesDir, 'timing.json'), 'utf8'));
+  // 抓帧能到 7fps，但 60 帧的 GIF 要 1.6MB——README 首屏放三张就 5MB，太重了。
+  // 每 200ms 留一帧（5fps）体量减半，播放按真实间隔排，看起来还是连续在动。
+  const GIF_FPS = Number(process.env.GIF_FPS || 5);
+  const kept = [];
+  let lastAt = -Infinity;
+  for (const frame of timing) {
+    if (frame.at - lastAt >= 1000 / GIF_FPS - 1) {
+      kept.push(frame);
+      lastAt = frame.at;
+    }
+  }
+  if (kept[kept.length - 1] !== timing[timing.length - 1]) kept.push(timing[timing.length - 1]);
+
   const lines = [];
-  for (let i = 0; i < timing.length; i += 1) {
-    const next = timing[i + 1] ? timing[i + 1].at : timing[i].at + 1000 / 8;
-    // 采样率低于真实时间，按 6–14 帧/秒重排，播放速度快约 2–3 倍但顺滑
-    const duration = Math.min(0.14, Math.max(0.07, (next - timing[i].at) / 1000));
-    lines.push(`file '${timing[i].name}'`);
+  for (let i = 0; i < kept.length; i += 1) {
+    const next = kept[i + 1] ? kept[i + 1].at : kept[i].at + 1000 / GIF_FPS;
+    // 时长按真实间隔排（0.07 是 GIF 下限，0.25 防止某帧卡太久）
+    const duration = Math.min(0.25, Math.max(0.07, (next - kept[i].at) / 1000));
+    lines.push(`file '${kept[i].name}'`);
     lines.push(`duration ${duration.toFixed(3)}`);
   }
-  lines.push(`file '${timing[timing.length - 1].name}'`);
+  lines.push(`file '${kept[kept.length - 1].name}'`);
   writeFileSync(join(framesDir, 'list.txt'), lines.join('\n') + '\n');
   await run('ffmpeg', [
     '-y', '-hide_banner', '-loglevel', 'error',
@@ -549,12 +727,16 @@ async function encode(framesDir, outFile) {
     outFile,
   ]);
   const size = readFileSync(outFile).length;
-  console.log(`[encode] ${outFile.replace(ROOT + '\\', '')} (${(size / 1024 / 1024).toFixed(2)} MB)`);
+  console.log(`[encode] ${outFile.replace(ROOT + '\\', '')} (${kept.length} 帧, ${(size / 1024 / 1024).toFixed(2)} MB)`);
 }
 
 // ---------------------------------------------------------------- main
 
 const args = new Set(process.argv.slice(2));
+// --only=live,replay,history：只跑其中几个视图（调一张图时省时间）。
+const onlyArg = [...args].find((arg) => arg.startsWith('--only='));
+const ONLY = onlyArg ? new Set(onlyArg.slice('--only='.length).split(',').map((s) => s.trim())) : null;
+const wants = (view) => !ONLY || ONLY.has(view);
 
 async function main() {
   mkdirSync(BUILD, { recursive: true });
@@ -571,14 +753,14 @@ async function main() {
   if (args.has('--html-only')) return;
 
   if (!args.has('--encode-only')) {
-    await capture('live', join(BUILD, 'frames', 'live'), { durationMs: 9600, fpsCap: 30 });
-    await capture('replay', join(BUILD, 'frames', 'replay'), { durationMs: 11000, fpsCap: 30 });
-    await capture('history', join(BUILD, 'frames', 'history'), { durationMs: 5200, fpsCap: 30 });
+    if (wants('live')) await capture('live', join(BUILD, 'frames', 'live'), { durationMs: 8600, fpsCap: 30 });
+    if (wants('replay')) await capture('replay', join(BUILD, 'frames', 'replay'), { durationMs: 11000, fpsCap: 30 });
+    if (wants('history')) await capture('history', join(BUILD, 'frames', 'history'), { durationMs: 5200, fpsCap: 30 });
   }
 
-  await encode(join(BUILD, 'frames', 'live'), join(OUT, 'live.gif'));
-  await encode(join(BUILD, 'frames', 'replay'), join(OUT, 'replay.gif'));
-  await encode(join(BUILD, 'frames', 'history'), join(OUT, 'history.gif'));
+  if (wants('live')) await encode(join(BUILD, 'frames', 'live'), join(OUT, 'live.gif'));
+  if (wants('replay')) await encode(join(BUILD, 'frames', 'replay'), join(OUT, 'replay.gif'));
+  if (wants('history')) await encode(join(BUILD, 'frames', 'history'), join(OUT, 'history.gif'));
 }
 
 main().catch((error) => {
