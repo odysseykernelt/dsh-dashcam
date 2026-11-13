@@ -95,6 +95,9 @@ The plugin declares, you grant, and both must match before a call goes through; 
 - **Never in your way** — if recording itself breaks, your tasks keep running; it warns loudly and marks the failure in the ledger.
 - **Verify without the host** — the `verify-ledger` tool re-checks the whole chain offline, no DeepSeek Harness install needed.
 - **Panels on desktop and web** — live view, replay, and session history; the panel itself speaks Chinese and English (switch in the panel header).
+- **Grouped by conversation window** — the live stream is organized by chat window and day, with one-click filters by event type, window, or date.
+- **Whole-ledger search** — one keyword surfaces past events by plugin, message, path, command, host, or rule.
+- **Opens instantly** — the panel starts from the latest events and backfills the rest quietly, so big ledgers never block the view.
 
 ## Honesty and limits
 

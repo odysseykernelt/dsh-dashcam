@@ -55,6 +55,7 @@ function rec(seq, ts, capability, action, extra = {}) {
     ts,
     plugin: 'dsh-dashcam-host',
     pluginVersion: '1.13.0',
+    ...(extra.session ? { session: extra.session } : {}),
     capability,
     action,
     decision: extra.decision || 'allow',
@@ -120,6 +121,20 @@ function rec(seq, ts, capability, action, extra = {}) {
     mount.type === 'tel' && mount.titleKey === 'ev.mount'
     && JSON.stringify(mount.detailParts) === JSON.stringify([{ k: 'evd.mountMode', v: { mode: 'advisory' } }]),
     JSON.stringify(mount));
+
+  // 2.2.0 会话归属：v4 可选 session 字段优先，回退 scope.sessionId，两者皆无则缺省
+  const attributed = sanitizeRecord(rec(7, '2026-11-09T01:00:06.000Z', 'fs.read', 'fs.read', {
+    ruleId: 'r', session: 'win-uuid-1', scope: { paths: ['C:/a.txt'] },
+  }));
+  check('sanitize: session 字段透出（窗口归属）', attributed.session === 'win-uuid-1', JSON.stringify(attributed.session));
+  const fallback = sanitizeRecord(rec(8, '2026-11-09T01:00:07.000Z', 'llm.ingress', 'llm.inbound', {
+    ruleId: 'ingress-inbound', scope: { kind: 'user', sessionId: 'session-x' },
+  }));
+  check('sanitize: scope.sessionId 兜底（ingress 记录）', fallback.session === 'session-x', JSON.stringify(fallback.session));
+  const orphan = sanitizeRecord(rec(9, '2026-11-09T01:00:08.000Z', 'fs.read', 'fs.read', {
+    ruleId: 'r', scope: { paths: ['C:/a.txt'] },
+  }));
+  check('sanitize: 无归属 → session 缺省（面板归系统组）', !('session' in orphan), JSON.stringify(orphan.session));
 }
 
 // ---------- 2) computeStatus：运行段聚合（纳管/未纳管/旁路口径） ----------
@@ -186,7 +201,8 @@ function rec(seq, ts, capability, action, extra = {}) {
   fs.writeFileSync(ledgerPath, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
 
   const dispose = registerPanelRoutes(ws, { ledgerPath, version: '1.13.0' });
-  check('routes: 三条路由注册', ws.routes.length === 3, String(ws.routes.length));
+  check('routes: 五条路由注册', ws.routes.length === 5, String(ws.routes.length));
+  check('routes: sessions/search 已挂载', Boolean(ws.find('GET', '/api/dsh-dashcam/sessions')) && Boolean(ws.find('GET', '/api/dsh-dashcam/search')));
 
   // 环回门禁
   {
@@ -231,6 +247,83 @@ function rec(seq, ts, capability, action, extra = {}) {
     // 旧实现此处 records 为空（游标已跳到 3，第 3 条实际还会返回；但 limit 截断
     // 场景下中间记录会被永久跳过）——修后按游标续拉，不丢记录。
     check('records: 游标续拉不丢记录', body.records.length === 1 && body.records[0].seq === 3 && body.lastSeq === 3 && body.truncated === false, res.body);
+  }
+  // tail（2.2.0 静默加载）：取窗口内最后 N 条，升序返回
+  {
+    const { req, res } = makeReqRes('GET', '/api/dsh-dashcam/records?tail=2');
+    await ws.find('GET', '/api/dsh-dashcam/records').handler(req, res);
+    const body = jsonBody(res);
+    check('records: tail=2 → 最后 2 条升序 + lastSeq=最新',
+      body.records.length === 2 && body.records[0].seq === 2 && body.records[1].seq === 3 && body.lastSeq === 3 && body.truncated === false,
+      res.body);
+    const { req: req2, res: res2 } = makeReqRes('GET', '/api/dsh-dashcam/records?tail=5&to=2');
+    await ws.find('GET', '/api/dsh-dashcam/records').handler(req2, res2);
+    const body2 = jsonBody(res2);
+    check('records: tail 与 to 组合（回放向前补齐游标）',
+      body2.records.length === 2 && body2.records[0].seq === 1 && body2.records[1].seq === 2,
+      res2.body);
+  }
+  // sessions（2.2.0 会话索引）：账本聚合 + 活会话标题注入 + 无归属聚 null
+  {
+    const ws2 = makeWebServer();
+    const ledger2 = path.join(RESULTS, 'panel-sessions.jsonl');
+    const sBase = Date.parse('2026-11-13T02:00:00.000Z');
+    const lines2 = [
+      rec(1, new Date(sBase).toISOString(), 'fs.read', 'fs.read', { ruleId: 'r', session: 'win-a', scope: { paths: ['C:/a.txt'] } }),
+      rec(2, new Date(sBase + 1000).toISOString(), 'fs.write', 'fs.write', { ruleId: 'r', session: 'win-a', scope: { paths: ['C:/a.txt'] } }),
+      rec(3, new Date(sBase + 2000).toISOString(), 'proc.spawn', 'proc.spawn', { ruleId: 'r', session: 'win-b', scope: { commands: ['curl'] } }),
+      rec(4, new Date(sBase + 3000).toISOString(), 'llm.ingress', 'llm.inbound', { ruleId: 'ingress-inbound', scope: { kind: 'user', sessionId: 'win-b', head: '部署到测试环境' } }),
+      rec(5, new Date(sBase + 4000).toISOString(), 'telemetry', 'mount', { ruleId: 'mount', scope: { mode: 'advisory' } }),
+    ];
+    fs.writeFileSync(ledger2, lines2.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    const dispose2 = registerPanelRoutes(ws2, {
+      ledgerPath: ledger2,
+      version: '2.2.0',
+      sessionDirectory: () => [{ id: 'win-a', title: '调试会话窗口' }],
+    });
+    {
+      const { req, res } = makeReqRes('GET', '/api/dsh-dashcam/sessions');
+      await ws2.find('GET', '/api/dsh-dashcam/sessions').handler(req, res);
+      const body = jsonBody(res);
+      const byId = new Map(body.sessions.map((s) => [s.id, s]));
+      check('sessions: 聚合出 3 组（win-a / win-b / 系统null）',
+        body.sessions.length === 3 && byId.has('win-a') && byId.has('win-b') && byId.has(null), res.body);
+      check('sessions: win-a 计数与标题注入',
+        byId.get('win-a').count === 2 && byId.get('win-a').title === '调试会话窗口' && byId.get('win-a').firstTs === new Date(sBase).toISOString(),
+        JSON.stringify(byId.get('win-a')));
+      check('sessions: scope.sessionId 兜底聚到 win-b',
+        byId.get('win-b').count === 2 && byId.get('win-b').title === null, JSON.stringify(byId.get('win-b')));
+      check('sessions: 无归属记录聚系统组', byId.get(null).count === 1, JSON.stringify(byId.get(null)));
+    }
+    // search（2.2.0 全账本搜索）：路径/命令/入站 head/插件名/规则 ID 命中
+    {
+      const hit = async (q) => {
+        const { req, res } = makeReqRes('GET', `/api/dsh-dashcam/search?q=${encodeURIComponent(q)}`);
+        await ws2.find('GET', '/api/dsh-dashcam/search').handler(req, res);
+        return jsonBody(res);
+      };
+      const byPath = await hit('C:/a.txt');
+      check('search: 路径命中 + 新→旧 + 脱敏形状',
+        byPath.ok === true && byPath.records.length === 2 && byPath.records[0].seq === 2 && byPath.records[0].titleKey === 'ev.edit' && byPath.total === 2 && byPath.truncated === false,
+        JSON.stringify(byPath));
+      const byCmd = await hit('curl');
+      check('search: 命令命中', byCmd.total === 1 && byCmd.records[0].seq === 3, JSON.stringify(byCmd));
+      const byHead = await hit('测试环境');
+      check('search: 入站消息 head 命中', byHead.total === 1 && byHead.records[0].seq === 4, JSON.stringify(byHead));
+      const byPlugin = await hit('dsh-dashcam-host');
+      check('search: 插件名命中全部 5 条', byPlugin.total === 5, String(byPlugin.total));
+      const byMount = await hit('mount');
+      check('search: 规则 ID 命中', byMount.total === 1 && byMount.records[0].seq === 5, JSON.stringify(byMount));
+      const none = await hit('不存在的关键词xyz');
+      check('search: 无命中 → 空结果不炸', none.total === 0 && none.records.length === 0, JSON.stringify(none));
+      const { req: req3, res: res3 } = makeReqRes('GET', '/api/dsh-dashcam/search?q=');
+      await ws2.find('GET', '/api/dsh-dashcam/search').handler(req3, res3);
+      check('search: 空 q → 空结果', jsonBody(res3).total === 0, res3.body);
+      // 大小写不敏感
+      const ci = await hit('C:/A.TXT');
+      check('search: 大小写不敏感', ci.total === 2, String(ci.total));
+    }
+    dispose2();
   }
   // history：3 秒间隔不切段，1 段
   {
@@ -306,7 +399,7 @@ function rec(seq, ts, capability, action, extra = {}) {
   };
   const ledgerPath = path.join(RESULTS, 'apply-inject.jsonl');
   apply(ctx, { ledgerPath });
-  check('apply: ctx.inject 路径下路由挂载', ws.routes.length === 3, String(ws.routes.length));
+  check('apply: ctx.inject 路径下路由挂载', ws.routes.length === 5, String(ws.routes.length));
   for (const fn of effects) {
     try { const cleanup = fn(); if (typeof cleanup === 'function') cleanup(); } catch {}
   }
@@ -416,6 +509,21 @@ function rec(seq, ts, capability, action, extra = {}) {
     }
     getBoundingClientRect() { return { width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 }; }
     scrollIntoView() {}
+    scrollTop = 0;
+    replaceChildren(...nodes) {
+      for (const c of [...this.childNodes]) { markTree(c, false); c.parentNode = null; }
+      this.childNodes = [];
+      for (const n of nodes) {
+        if (!n) continue;
+        if (n.nodeType === 'fragment') {
+          const kids = [...n.childNodes];
+          n.childNodes = [];
+          for (const c of kids) this.appendChild(c);
+        } else {
+          this.appendChild(n);
+        }
+      }
+    }
     querySelector(sel) { return queryAll(this, sel)[0] || null; }
     querySelectorAll(sel) { return queryAll(this, sel); }
   }
@@ -506,6 +614,7 @@ function rec(seq, ts, capability, action, extra = {}) {
   const docListeners = {};
   const documentStub = {
     createElement: (tag) => new StubElement(tag),
+    createDocumentFragment: () => { const f = new StubElement('#fragment'); f.nodeType = 'fragment'; return f; },
     body: stubBody,
     addEventListener(type, fn) { (docListeners[type] = docListeners[type] || []).push(fn); },
     removeEventListener(type, fn) { const l = docListeners[type]; if (l) { const i = l.indexOf(fn); if (i >= 0) l.splice(i, 1); } },
@@ -579,7 +688,7 @@ function rec(seq, ts, capability, action, extra = {}) {
       && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-detail').textContent === '2 paths total'
       && rootEl.querySelector('.ddc-stream-meta').textContent === '1 entries'
       && rootEl.querySelector('.ddc-play').textContent === 'Play'
-      && rootEl.querySelector('.ddc-search').getAttribute('placeholder') === 'Search ID / date…'
+      && rootEl.querySelector('.ddc-hsearch').getAttribute('placeholder') === 'Search ID / date…'
       && rootEl.querySelector('.ddc-lang').textContent === '中文'
       && langStore.get('ddc-lang') === 'en',
       JSON.stringify({ sub: rootEl.querySelector('.ddc-sub').textContent, lang: langStore.get('ddc-lang') }));
@@ -611,6 +720,111 @@ function rec(seq, ts, capability, action, extra = {}) {
       panel2.el.querySelector('.ddc-sub').textContent === 'Judgment ledger · live recording & replay'
       && [...panel2.el.querySelectorAll('.ddc-tab')].map((b) => b.textContent).join('|') === 'Live|Replay|History',
       JSON.stringify([...panel2.el.querySelectorAll('.ddc-tab')].map((b) => b.textContent)));
+
+    // ---------- 2.2.0：实时流会话分组 + 日期分隔 + 分类 chip + 搜索渲染 ----------
+    // 记录形状与 sanitizeRecord 输出一致（session 字段为 2.2.0 归属）。
+    const mkEv = (seq, ts, session, type, titleKey, target) => ({
+      seq, ts, session, type, titleKey, titleVars: { target }, titleText: type,
+      detailParts: [], denied: false, intercepted: false,
+    });
+    const day2 = '2026-11-12T09:00:00.000Z';
+    const day3 = '2026-11-13T10:00:00.000Z';
+    panel2.updateLive(null, [
+      mkEv(1, '2026-11-11T08:00:00.000Z', 'win-a', 'read', 'ev.read', 'C:/a.txt'),
+      mkEv(2, '2026-11-11T08:01:00.000Z', 'win-a', 'edit', 'ev.edit', 'C:/a.txt'),
+      mkEv(3, day2, 'win-a', 'bash', 'ev.command', 'git status'),
+      mkEv(4, day2, null, 'think', 'ev.inbound'),
+      mkEv(5, day3, 'win-b', 'net', 'ev.net', 'registry.npmjs.org'),
+    ]);
+    const groupHeads = [...panel2.el.querySelectorAll('.ddc-stream .ddc-ghead .ddc-gt')].map((n) => n.textContent);
+    const dateSeps = [...panel2.el.querySelectorAll('.ddc-stream .ddc-dsep')].map((n) => n.textContent);
+    check('group: 连续同会话聚一组，无归属归系统组（en pack）',
+      groupHeads.length === 3 && groupHeads[0] === 'Session win-b' && groupHeads.includes('System') && groupHeads.includes('Session win-a'),
+      JSON.stringify(groupHeads));
+    check('group: 跨天插日期分隔条（组内 11-11 → 11-12）', dateSeps.some((d) => d.includes('11')) && dateSeps.length >= 2, JSON.stringify(dateSeps));
+    check('group: 流仍按时间升序展示（新在上）',
+      [...panel2.el.querySelectorAll('.ddc-stream .ddc-ev .ddc-title')].map((n) => n.textContent)[0].length > 0
+      && panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length === 5,
+      String(panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length));
+
+    // 会话目录注入后，组头从「Session win-a」换成真实窗口标题
+    panel2.updateSessionDirectory(new Map([['win-a', '调试窗口'], ['win-b', null]]));
+    const heads2 = [...panel2.el.querySelectorAll('.ddc-stream .ddc-ghead .ddc-gt')].map((n) => n.textContent);
+    check('group: 目录标题注入（win-a → 窗口标题；win-b 无标题降级 id8）',
+      heads2.includes('调试窗口') && heads2.some((h) => h.includes('win-b')), JSON.stringify(heads2));
+
+    // 分类 chip：选「Command」只留 bash；「Intercepted only」不影响无 deny 数据（空）
+    const cmdChip = panel2.el.querySelector('.ddc-chip[data-ddc-lf="bash"]');
+    cmdChip.click();
+    const titlesAfterChip = [...panel2.el.querySelectorAll('.ddc-stream .ddc-ev .ddc-title')].map((n) => n.textContent);
+    check('chip: 类型过滤（bash 1 条，组头保留）',
+      panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length === 1 && titlesAfterChip[0] === 'Command git status',
+      JSON.stringify(titlesAfterChip));
+    panel2.el.querySelector('.ddc-chip[data-ddc-lf="all"]').click();
+    check('chip: 全部复位', panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length === 5,
+      String(panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length));
+
+    // 会话/日期 chip 行：从 state.live 派生、新→旧、点击过滤（与事件分类同款交互）
+    const sessChips0 = [...panel2.el.querySelectorAll('.ddc-dynchips[data-ddc-dyn="session"] .ddc-chip')];
+    const dateChips = [...panel2.el.querySelectorAll('.ddc-dynchips[data-ddc-dyn="date"] .ddc-chip')];
+    check('dyn chips: 会话行 3 个（目录标题已注入）+ 日期行 3 个',
+      sessChips0.length === 3 && sessChips0.map((c) => c.textContent).join('|') === 'Session win-b|System|调试窗口'
+      && dateChips.length === 3,
+      JSON.stringify({ s: sessChips0.map((c) => c.textContent), d: dateChips.map((c) => c.textContent) }));
+    sessChips0[2].click(); // 选中「调试窗口」
+    const afterSess = panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length;
+    const sessChipOn = [...panel2.el.querySelectorAll('.ddc-dynchips[data-ddc-dyn="session"] .ddc-chip')]
+      .filter((c) => c.classList.contains('on')).length;
+    check('dyn chips: 点会话 chip 只留该窗口 3 条且高亮',
+      afterSess === 3 && sessChipOn === 1,
+      JSON.stringify({ n: afterSess, on: sessChipOn }));
+    // 过滤到只剩一个窗口时，其他 chip 仍在（chip 派生自未过滤集合）
+    const still3 = panel2.el.querySelectorAll('.ddc-dynchips[data-ddc-dyn="session"] .ddc-chip').length;
+    check('dyn chips: 过滤中其余会话 chip 仍可见', still3 === 3, String(still3));
+    const sessChips = [...panel2.el.querySelectorAll('.ddc-dynchips[data-ddc-dyn="session"] .ddc-chip')];
+    sessChips[2].click(); // 再点取消
+    check('dyn chips: 再点取消恢复 5 条', panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length === 5,
+      String(panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length));
+    dateChips[0].click(); // 最新日期（Nov 13）只有 1 条
+    const afterDate = panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length;
+    check('dyn chips: 点日期 chip 过滤对应日期（1 条）', afterDate === 1, String(afterDate));
+    panel2.el.querySelector('.ddc-chip[data-ddc-lf="all"]').click();
+    check('dyn chips: 「全部」同时复位会话与日期',
+      panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length === 5
+      && [...panel2.el.querySelectorAll('.ddc-dynchips .ddc-chip')].filter((c) => c.classList.contains('on')).length === 0,
+      String([...panel2.el.querySelectorAll('.ddc-dynchips .ddc-chip')].filter((c) => c.classList.contains('on')).length));
+
+    // 搜索结果三层分组：窗口 → 日期 → 类型；接管流容器，新事件不冲掉结果
+    panel2.showLiveSearch({
+      ok: true, query: 'git', total: 2, truncated: false,
+      records: [mkEv(3, day2, 'win-a', 'bash', 'ev.command', 'git status'), mkEv(6, day2, 'win-a', 'bash', 'ev.command', 'git push')],
+    });
+    check('search: 结果接管流容器（2 条 + 计数文案）',
+      panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length === 2
+      && panel2.el.querySelector('.ddc-stream-meta').textContent.includes('2'),
+      panel2.el.querySelector('.ddc-stream-meta').textContent);
+    panel2.updateLive(null, [mkEv(7, day3, 'win-b', 'net', 'ev.net', 'example.org')]);
+    check('search: 搜索期间新事件只进 state 不动结果',
+      panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length === 2, 'live update during search');
+    // 清空搜索框 → 恢复事件流（含搜索期间收到的那条）
+    const lsearch = panel2.el.querySelector('.ddc-lsearch');
+    lsearch.value = '';
+    lsearch.listeners.input.forEach((fn) => fn());
+    check('search: 清空恢复事件流（6 条）',
+      panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length === 6,
+      String(panel2.el.querySelectorAll('.ddc-stream .ddc-ev').length));
+
+    // 回放静默补齐：prepend 不重复、时间轴重排
+    panel2.startReplay({ id: 'S-1', started: day2, from: 1, to: 3, events: 3, errors: 0, duration: 120, status: 'recording' }, [
+      mkEv(2, day2, 'win-a', 'bash', 'ev.command', 'git status'),
+      mkEv(3, day3, 'win-a', 'net', 'ev.net', 'registry.npmjs.org'),
+    ]);
+    const added = panel2.prependReplayEvents([mkEv(1, '2026-11-12T08:30:00.000Z', 'win-a', 'read', 'ev.read', 'C:/a.txt')]);
+    check('replay: 补齐 1 条且去重', added === 1 && panel2.prependReplayEvents([mkEv(1, '2026-11-12T08:30:00.000Z', 'win-a', 'read', 'ev.read', 'C:/a.txt')]) === 0,
+      String(added));
+    check('replay: 事件升序 + 时间轴跨度更新',
+      [...panel2.el.querySelectorAll('.ddc-evlist .ddc-ev')].length === 3, 'events merged');
+
     panel2.dispose();
     panel.dispose();
     langStore.delete('ddc-lang');

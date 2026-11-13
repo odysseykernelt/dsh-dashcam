@@ -97,6 +97,18 @@ export const DASHCAM_CSS = `
 .ddc-chips{display:flex;gap:6px}
 .ddc-chip{padding:8px 12px;border-radius:999px;border:1px solid var(--ddc-line);background:transparent;color:var(--ddc-text-2);font:500 12px/1 var(--ddc-font);cursor:pointer;transition:all var(--ddc-ease)}
 .ddc-chip.on{border-color:rgba(var(--ddc-accent-rgb),.45);color:var(--ddc-accent-soft);background:rgba(var(--ddc-accent-rgb),.08)}
+.ddc-livetool{display:flex;flex-direction:column;gap:8px;padding:0 0 8px;border-bottom:1px solid var(--ddc-line)}
+.ddc-livetool .ddc-search{flex:none}
+.ddc-livetool .ddc-chips{flex-wrap:wrap}
+.ddc-subchips{align-items:center;gap:6px}
+.ddc-chiplb{flex:none;font:500 10px/1 var(--ddc-font);color:var(--ddc-text-3);letter-spacing:.04em}
+.ddc-chip{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ddc-ghead{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:var(--ddc-r-sm);background:rgba(255,255,255,.04);border:1px solid var(--ddc-line);font:600 11px/1.2 var(--ddc-font);color:var(--ddc-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ddc-ghead .ddc-gt{font:600 12px/1.2 var(--ddc-font);color:var(--ddc-text);overflow:hidden;text-overflow:ellipsis}
+.ddc-ghead .ddc-gt.mute{color:var(--ddc-text-2)}
+.ddc-ghead .ddc-gtime{margin-left:auto;font:400 11px/1 var(--ddc-mono);color:var(--ddc-text-3);flex:none}
+.ddc-dsep{display:flex;align-items:center;gap:8px;margin:4px 0 0;color:var(--ddc-text-3);font:500 10px/1 var(--ddc-font);letter-spacing:.04em}
+.ddc-dsep::before,.ddc-dsep::after{content:'';flex:1;height:1px;background:var(--ddc-line)}
 .ddc-hlist{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:2px 4px 2px 2px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
 .ddc-hlist::-webkit-scrollbar{width:6px}
 .ddc-hlist::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}

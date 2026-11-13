@@ -116,7 +116,7 @@ function createGuardChain({
   }
 
   /**
-   * @param {{record?: boolean, advisory?: boolean}} options
+   * @param {{record?: boolean, advisory?: boolean, session?: string}} options
    *   record=false 时只判定、不写账本，供 enforceBatch 把成百上千个目标压成一条
    *   记录（判定仍然逐个做）。
    *   advisory=true 时：账本仍如实落 decision=deny（审计事实保留），但
@@ -124,10 +124,16 @@ function createGuardChain({
    *   deny.intercepted 也反映 false，供宿主层做二次决策与 metrics 区分。
    *   宿主（如 dsh-dashcam-host）advisory 模式下会自行忽略 deny 结果；
    *   进程内 Bridge 直接 pass-through 时不用这个选项。
+   *   session（2.2.0 可选）：宿主对话窗口的会话 id，落账时写入记录的可选
+   *   session 字段，供面板按对话窗口精确归属。
    */
   function check(operation, payload = {}, options = {}) {
     const record = options.record !== false;
     const advisory = options.advisory === true;
+    // 会话归属（2.2.0 可选）：宿主适配层把 exec.agent.session.id 透传进来，
+    // 落账时写到记录的可选 session 字段（见 ledger.buildRecord——向后兼容，
+    // 老账本不带该字段也能过验）。
+    const session = typeof options.session === 'string' && options.session ? options.session : null;
     stats.requests += 1;
     if (effectiveIntegrityEvery > 0 && hooks && ++integrityTicks >= effectiveIntegrityEvery) {
       integrityTicks = 0;
@@ -164,6 +170,7 @@ function createGuardChain({
         pluginVersion: manifest && manifest.version,
         profiled,
         manifestHash,
+        ...(session ? { session } : {}),
         capability: denial.capability,
         action: denial.action,
         scope: denial.scope,
@@ -242,6 +249,7 @@ function createGuardChain({
         pluginVersion: manifest && manifest.version,
         profiled,
         manifestHash,
+        ...(session ? { session } : {}),
         capability: denial.capability,
         action: denial.action,
         scope: denial.scope,
@@ -277,6 +285,7 @@ function createGuardChain({
         pluginVersion: manifest && manifest.version,
         profiled,
         manifestHash,
+        ...(session ? { session } : {}),
         capability: base.capability,
         action: base.action,
         scope: base.scope,

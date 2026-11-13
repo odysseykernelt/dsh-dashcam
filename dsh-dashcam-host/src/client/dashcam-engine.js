@@ -121,16 +121,38 @@ export function mountDashcam() {
   let connected = true;
   let failures = 0;
   let histCache = { at: 0, sessions: [] };
+  // 2.2.0 静默加载：首次进实时视图用 tail=400 取**最新**记录（此前 since=0
+  // 从窗口头部慢慢追，事件流永远落后）；之后按 since 增量。会话目录 30s 缓存。
+  let livePrimed = false;
+  let sessionDirCache = { at: 0, byId: new Map() };
 
   const panel = createDashcamPanel({
     api: {
+      // 回放首屏只取窗口尾部 200 条（秒开），更早的批次后台静默补齐：
+      // 游标向前推进（to=本批最早 seq-1），直到覆盖 session.from 或达 2000 上限。
       loadSession: async (session) => {
         try {
-          const data = await fetchJSON(
-            `/api/dsh-dashcam/records?since=${Math.max(0, session.from - 1)}&to=${session.to}&limit=2000`,
+          const first = await fetchJSON(
+            `/api/dsh-dashcam/records?since=${Math.max(session.from - 1, session.to - 200)}&to=${session.to}&limit=200`,
           );
           if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
-          panel.startReplay(session, data.records || [], data.truncated === true);
+          const records = first.records || [];
+          panel.startReplay(session, records, false);
+          let cursor = records.length ? records[0].seq - 1 : session.to;
+          let loaded = records.length;
+          while (cursor >= session.from && loaded < 2000) {
+            const batch = await fetchJSON(
+              `/api/dsh-dashcam/records?since=${Math.max(session.from - 1, cursor - 400)}&to=${cursor}&limit=400`,
+            );
+            if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
+            const older = batch.records || [];
+            if (!older.length) break;
+            panel.prependReplayEvents(older);
+            loaded += older.length;
+            cursor = older[0].seq - 1;
+          }
+          // 游标还没走到 session.from 说明被 2000 上限截断——如实标注。
+          if (cursor >= session.from) panel.setReplayTruncated(true);
         } catch (error) {
           panel.startReplay(session, [], false);
         }
@@ -138,6 +160,17 @@ export function mountDashcam() {
     },
     onClose: () => close(),
     onLanguageChange: () => { badge.title = badgeTitle(); },
+    // 实时流搜索：宿主 /search 路由全账本匹配，结果交给面板三层分组渲染。
+    onLiveSearch: async (query) => {
+      try {
+        const data = await fetchJSON(`/api/dsh-dashcam/search?q=${encodeURIComponent(query)}&limit=500`);
+        if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
+        if (!data || data.ok !== true) throw new Error('bad payload');
+        panel.showLiveSearch(data);
+      } catch {
+        // 搜索失败静默：事件流不受影响
+      }
+    },
   });
   document.body.appendChild(panel.el);
 
@@ -146,6 +179,7 @@ export function mountDashcam() {
     panel.el.style.display = '';
     refreshStatus(true);
     refreshRecords(true);
+    refreshSessionDirectory(true);
     if (currentView() === 'history') refreshHistory(true);
   }
   function close() {
@@ -161,6 +195,25 @@ export function mountDashcam() {
     return active ? active.dataset.ddcView : 'live';
   }
 
+  // 会话目录（id → 窗口标题）：实时流分组头与搜索结果分组用。
+  // 目录缺席（老宿主/服务不可用）静默降级——面板对没标题的会话显示 id 前 8 位。
+  async function refreshSessionDirectory(force) {
+    if (!force && Date.now() - sessionDirCache.at < 30000) return;
+    try {
+      const data = await fetchJSON('/api/dsh-dashcam/sessions');
+      if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
+      if (!data || data.ok !== true) return;
+      const byId = new Map();
+      for (const item of data.sessions || []) {
+        if (item && item.id != null) byId.set(String(item.id), item.title || null);
+      }
+      sessionDirCache = { at: Date.now(), byId };
+      panel.updateSessionDirectory(byId);
+    } catch {
+      // 目录拉不到不影响事件流
+    }
+  }
+
   async function refreshStatus(force) {
     try {
       const data = await fetchJSON('/api/dsh-dashcam/status');
@@ -172,6 +225,7 @@ export function mountDashcam() {
         panel.tickClock(true);
       }
       if (open || force) panel.updateLive(data, null);
+      if (open && currentView() === 'live') refreshSessionDirectory(false);
     } catch {
       if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
       failures += 1;
@@ -186,9 +240,20 @@ export function mountDashcam() {
   async function refreshRecords(force) {
     if ((!open || currentView() !== 'live') && !force) return;
     try {
-      const data = await fetchJSON(`/api/dsh-dashcam/records?since=${lastSeq}&limit=200`);
+      const url = livePrimed
+        ? `/api/dsh-dashcam/records?since=${lastSeq}&limit=200`
+        : `/api/dsh-dashcam/records?tail=400`;
+      const data = await fetchJSON(url);
       if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
       if (!data || data.ok !== true) throw new Error('bad payload');
+      if (!livePrimed) {
+        // 首屏：tail 返回的是最新 400 条，增量游标直接跳到最新（此前 since=0
+        // 会从账本窗口头部开始慢慢追，事件流永远落后）。
+        livePrimed = true;
+        lastSeq = Number.isFinite(data.lastSeq) ? data.lastSeq : 0;
+        panel.updateLive(null, data.records || []);
+        return;
+      }
       if (Number.isFinite(data.lastSeq) && data.lastSeq > lastSeq) lastSeq = data.lastSeq;
       if (open) panel.updateLive(null, data.records || []);
     } catch {

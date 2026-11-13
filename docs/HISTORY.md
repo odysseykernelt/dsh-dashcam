@@ -3,6 +3,32 @@
 > 本文件收录完整版本历史,含内部评审编号与原始措辞;面向用户的功能总览见 [README](../README.md)([中文](../README.zh-CN.md))。
 > This file keeps the complete version history, including internal review notes and original wording. For a user-facing overview, see the [README](../README.md).
 
+## 2.2.0 conversations, silent loading, and ledger-wide search
+
+The observation surface gets organized by what the user actually remembers — "which chat window did that happen in, and when".
+
+| Version | Change |
+| --- | --- |
+| 2.2.0 | Judged calls are attributed to the chat window they ran in; the live stream groups events per window with day separators; filters and ledger-wide search; first paint shows the latest tail and backfills silently |
+
+Key points:
+
+- **Optional `session` field on records (backward compatible)**: the host adapter reads `exec.agent.session.id` from the `tools/pre-execute` hook and passes it through `guard.check` / aux records; `ledger.buildRecord` writes it only when present, so old ledgers without the field verify unchanged and new/old lines coexist on one chain (`test/session-attribution.test.js` covers both).
+- **Live stream grouped by conversation window**: consecutive runs of one session get a header (window title via the `sessionTitle` service + `sessions.list()`, falling back to `Session <id8>`; unattributed records fall into a "System" group), and day boundaries inside a group get a date separator.
+- **Silent loading**: the panel no longer walks the ledger from the head — `records?tail=N` returns the latest slice for first paint, and replay fetches the tail of the segment first, then backfills older batches quietly (dedup, timeline rebase, no loading state).
+- **Filter chips**: event type (multi-select), an "intercepted only" toggle, plus dynamic chips derived from the loaded window for conversation and date — all dimensions compose, and "All" resets them.
+- **Ledger-wide search** (`GET /api/dsh-dashcam/search`): case-insensitive keyword match over plugin name / rule id / paths / commands / hosts / command line / tool name / inbound message head / model; results return newest-first in the same sanitized shape as `records`, grouped window → day → type. A full scan is the default; only when a scan is *measured* slower than 800ms does the route degrade to the most recent 8 MB (flagged `truncated`), retrying in full once the ledger grows by >1 MB.
+- **Session index** (`GET /api/dsh-dashcam/sessions`): coarse per-window aggregates (count / first+last seen / denied) with live titles injected when the services are available; missing services degrade to null titles.
+- **Sanitization unchanged**: both new routes reply through the same loopback guard and emit `sanitizeRecord` shapes or aggregates only — no hash-chain fields, no LLM request samples; the inbound head stays capped at 48 chars for display.
+
+## 2.1.0 the panel speaks English
+
+| Version | Change |
+| --- | --- |
+| 2.1.0 | Language switch (中文/English) in the panel header, persisted per browser |
+
+- The host sends structured event text (`titleKey` + `titleVars` + `detailParts`) instead of pre-assembled Chinese strings; the panel renders them per the current language, so adding a language no longer touches the host. Chinese wording is byte-identical to previous releases; a test asserts the zh/en dictionaries keep the same key set.
+
 ## 2.0.x: single-package distribution
 
 2.0.0 moves the plugin identity to the package root, so one npm package installs the whole plugin (`dsh plugin --profile web add dsh-dashcam`); 1.x needed a second package for the host adapter. The 2.0.x line then fixed two client-loader defects, and 2.0.3 is metadata and documentation only.

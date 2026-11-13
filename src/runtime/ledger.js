@@ -127,6 +127,10 @@ function buildRecord(record, seq, prevHash, ts, macKey) {
     // 缺省即「无契约」——这对零契约模式是如实记录，不是缺字段。
     profiled: record.profiled === true,
     manifestHash: typeof record.manifestHash === 'string' ? record.manifestHash : null,
+    // 会话归属（2.2.0 可选字段）：活动发生在哪个宿主对话窗口（宿主适配层从
+    // tools/pre-execute 的 exec.agent.session.id 取）。老账本无此字段——verify
+    // 只查必填清单，不拒额外字段；哈希按整行重算，带不带 session 都能过验。
+    ...(typeof record.session === 'string' && record.session ? { session: record.session } : {}),
     prevHash,
   };
   base.hash = sha256(stableStringify(base));

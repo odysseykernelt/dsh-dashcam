@@ -51,7 +51,7 @@ const { credentialCapabilityForPath } = require('../../src/contract/capabilities
 export const name = 'dsh-dashcam-host';
 export const inject = [];
 
-const PLUGIN_VERSION = '1.14.0';
+const PLUGIN_VERSION = '1.15.0';
 
 const MANIFEST = {
   id: 'dsh-dashcam-host',
@@ -668,8 +668,10 @@ export function apply(ctx, config = {}) {
   // activate() 返回最小 façade：guard 只有 check/enforce/coverage 只读面。
   const guard = runtime.guard;
 
-  /** 附加审计记录（遥测 / 命令行存档 / mount）直接落账本；失败只警告不阻断放行。 */
-  function appendAuxRecord(record) {
+  /** 附加审计记录（遥测 / 命令行存档 / mount）直接落账本；失败只警告不阻断放行。
+   *  sessionId（2.2.0 可选）：tools/pre-execute 处 exec.agent.session.id——写进
+   *  记录的可选 session 字段，面板据此把事件精确归到对话窗口。 */
+  function appendAuxRecord(record, sessionId = null) {
     if (!ledger) return;
     try {
       ledger.append({
@@ -677,6 +679,7 @@ export function apply(ctx, config = {}) {
         pluginVersion: PLUGIN_VERSION,
         profiled: profiledRequests,
         manifestHash,
+        ...(typeof sessionId === 'string' && sessionId ? { session: sessionId } : {}),
         ...record,
       });
     } catch (error) {
@@ -758,10 +761,32 @@ export function apply(ctx, config = {}) {
           hostCtx.effect(() => {
             const webServer =
               typeof hostCtx.get === 'function' ? hostCtx.get('webServer') : hostCtx.webServer;
+            // 会话目录（2.2.0）：活会话列表 + sessionTitle 的标题。两个服务都可能
+            // 缺席（老版本宿主 / 精简 profile）——任何一步失败都降级为空目录，
+            // 面板对没标题的会话显示「会话 + id 前 8 位」。
+            const sessionDirectory = () => {
+              const out = [];
+              try {
+                const sessionsSvc = hostCtx.get('sessions');
+                if (!sessionsSvc || typeof sessionsSvc.list !== 'function') return out;
+                const titleSvc = hostCtx.get('sessionTitle');
+                for (const session of sessionsSvc.list()) {
+                  if (!session || typeof session.id !== 'string') continue;
+                  let title = null;
+                  try {
+                    const snapshot = titleSvc && typeof titleSvc.get === 'function' ? titleSvc.get(session) : null;
+                    if (snapshot && typeof snapshot.title === 'string' && snapshot.title) title = snapshot.title;
+                  } catch { /* 标题服务缺席/会话已释放：标题留空 */ }
+                  out.push({ id: session.id, title });
+                }
+              } catch { /* sessions 服务缺席：空目录 */ }
+              return out;
+            };
             try {
               const dispose = registerPanelRoutes(webServer, {
                 ledgerPath,
                 version: PLUGIN_VERSION,
+                sessionDirectory,
                 log: (message) => console.info(message),
               });
               console.info(`[dsh-dashcam] 面板 API 已挂载（/api/dsh-dashcam/*，ledger=${ledgerPath}）`);
@@ -791,6 +816,15 @@ export function apply(ctx, config = {}) {
   // 是总闸，不开 allowlist 会把 compress/workflow/subagent/mcp__* 等宿主工具全打死。
   const seenUnmapped = new Set();
   ctx.on('tools/pre-execute', async (exec, next) => {
+    // 会话归属（2.2.0）：DSH 的 tools/pre-execute 事件带 exec.agent（见
+    // dsh-tools pipeline：`const { agent } = exec`），agent.session 是活的会话
+    // 对象（dsh-permission-presets：`permissionPresets.current(agent.session)`），
+    // 会话 id 在 session.id（dsh-session：`get id() { return this.header.id }`）。
+    // 取不到（无 agent / 字段变形）就落 null，面板归「系统」组。
+    const sessionId = exec && exec.agent && exec.agent.session
+      && typeof exec.agent.session.id === 'string'
+      ? exec.agent.session.id
+      : null;
     const mapped = mapToolRequests(exec, { commandlineArchive: commandlineArchiveMode });
     if (!mapped) {
       if (exec && typeof exec.name === 'string') {
@@ -817,7 +851,7 @@ export function apply(ctx, config = {}) {
               intercepted: false,
               ruleId: 'unprofiled',
               reason: '零契约模式：未映射工具按观测逐次记录（无声明清单，不做 Two-Key 判定）',
-            });
+            }, sessionId);
           }
           if (!seenUnmapped.has(lowered)) {
             // 去重只作用于日志与 allow 遥测；拦截判定每次都做（P1）。
@@ -838,7 +872,7 @@ export function apply(ctx, config = {}) {
                 reason: allowlisted
                   ? '未映射工具命中 unmappedAllowlist 豁免放行（不产生能力判定）'
                   : '未映射工具放行（不产生能力判定），如需纳管请补充映射表',
-              });
+              }, sessionId);
             }
           }
           if (denyUnmapped) {
@@ -852,7 +886,7 @@ export function apply(ctx, config = {}) {
               intercepted: true,
               ruleId: 'unmapped',
               reason: 'enforceUnmapped 开启：未映射工具按 fail-closed 拒绝（不在映射表内且不在 allowlist）',
-            });
+            }, sessionId);
             return {
               kind: 'deny',
               reason: `[dsh-dashcam] 未映射工具（enforceUnmapped）：${exec.name} 不在映射表内，按 fail-closed 拒绝`,
@@ -876,7 +910,7 @@ export function apply(ctx, config = {}) {
         reason: enforce
           ? `fail-closed 拒绝（无法判定）：${mapped.unjudgeable}`
           : `放行（无法判定，advisory）：${mapped.unjudgeable}`,
-      });
+      }, sessionId);
       if (enforce) {
         return {
           kind: 'deny',
@@ -906,9 +940,9 @@ export function apply(ctx, config = {}) {
           intercepted: false,
           ruleId: 'unprofiled',
           reason: '零契约模式：映射请求按观测记录（无声明清单，不做 Two-Key 判定）',
-        });
+        }, sessionId);
       }
-      for (const auxRecord of mapped.aux) appendAuxRecord(auxRecord);
+      for (const auxRecord of mapped.aux) appendAuxRecord(auxRecord, sessionId);
       return next();
     }
 
@@ -921,7 +955,7 @@ export function apply(ctx, config = {}) {
         // advisory 模式：告诉 guard 「我会自行放行」，让账本 decision=deny 但
         // intercepted=false——这样 metrics 与审计不会把「would-deny 放行」误算
         // 成真正的拦截（问题 2，1.10.8）。
-        decision = guard.check(req.operation, req.payload, { advisory });
+        decision = guard.check(req.operation, req.payload, { advisory, session: sessionId });
       } catch (error) {
         // check 正常不抛（derive 失败已折算成拒绝结果）；真抛了按模式兜底。
         console.warn(`[dsh-dashcam] 判定异常：${error.message}`);
@@ -938,7 +972,7 @@ export function apply(ctx, config = {}) {
         auxRecord.decision = denied && enforce ? 'deny' : 'allow';
         auxRecord.intercepted = Boolean(denied && enforce);
       }
-      appendAuxRecord(auxRecord);
+      appendAuxRecord(auxRecord, sessionId);
     }
 
     // enforce：多请求任一不允许即拒绝整次工具调用（整批按最严处置）。

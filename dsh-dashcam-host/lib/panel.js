@@ -4,7 +4,10 @@
 // bind 对齐，防 DNS rebinding 页面订阅）：
 //   GET /api/dsh-dashcam/status                     聚合快照（模式/计数/最近事件/会话）
 //   GET /api/dsh-dashcam/records?since=&to=&limit=  增量记录（已脱敏成展示形状）
+//                                                   ?tail=N 取窗口内最后 N 条（2.2.0 首屏）
 //   GET /api/dsh-dashcam/history                    会话聚类（时间间隔 > 15 分钟切段，短缓存）
+//   GET /api/dsh-dashcam/sessions                   会话索引（2.2.0：按对话窗口聚合 + 活会话标题）
+//   GET /api/dsh-dashcam/search?q=&limit=           全账本关键词搜索（2.2.0，实测卡顿降级最近 8MB）
 //
 // 安全姿势（与 dsh-deepseek-tan-pet 面板同款）：
 //   - 只读；只暴露粗粒度事实（路径/命令/主机名、计数、决策、reason）；
@@ -18,6 +21,8 @@ import { open, stat, readFile } from 'node:fs/promises';
 export const STATUS_PATH = '/api/dsh-dashcam/status';
 export const RECORDS_PATH = '/api/dsh-dashcam/records';
 export const HISTORY_PATH = '/api/dsh-dashcam/history';
+export const SESSIONS_PATH = '/api/dsh-dashcam/sessions';
+export const SEARCH_PATH = '/api/dsh-dashcam/search';
 
 const TAIL_MAX_BYTES = 4 * 1024 * 1024;
 const HISTORY_CACHE_TTL_MS = 10_000;
@@ -139,6 +144,12 @@ export function sanitizeRecord(record) {
     ruleId,
     extra: {},
   };
+  // 会话归属（2.2.0）：优先取 v4 可选 session 字段（tools/pre-execute 判定链落账），
+  // 回退 scope.sessionId（ingress 记录自带）。两者皆无 → null，面板归「系统」组。
+  const sessionId = typeof record.session === 'string' && record.session
+    ? record.session
+    : (typeof scope.sessionId === 'string' && scope.sessionId ? scope.sessionId : null);
+  if (sessionId) out.session = sessionId;
 
   const paths = capStrings(scope.paths, 8);
   const commands = capStrings(scope.commands, 4);
@@ -377,10 +388,14 @@ function parseQuery(req) {
   const since = Number(url.searchParams.get('since'));
   const toRaw = Number(url.searchParams.get('to'));
   const limit = Number(url.searchParams.get('limit'));
+  const tail = Number(url.searchParams.get('tail'));
   return {
     since: Number.isFinite(since) && since > 0 ? Math.floor(since) : 0,
     to: Number.isFinite(toRaw) && toRaw > 0 ? Math.floor(toRaw) : null,
     limit: Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), RECORDS_LIMIT_MAX) : RECORDS_LIMIT_DEFAULT,
+    // tail（2.2.0）：只要窗口内**最后** N 条——首屏静默加载用，避免「从账本
+    // 头开始慢慢追」。tail 与 since 互斥：给了 tail 就忽略 since。
+    tail: Number.isFinite(tail) && tail > 0 ? Math.min(Math.floor(tail), RECORDS_LIMIT_MAX) : 0,
   };
 }
 
@@ -396,8 +411,22 @@ async function serveStatus(req, res, deps) {
 }
 
 async function serveRecords(req, res, deps) {
-  const { since, to, limit } = parseQuery(req);
+  const { since, to, limit, tail } = parseQuery(req);
   const records = await readLedgerTailCached(deps.ledgerPath);
+  if (tail) {
+    // tail 口径：先按 to 过滤，再取窗口内最后 N 条（升序返回，面板拿
+    // records[0].seq - 1 当向前补齐的游标）。
+    const filtered = to ? records.filter((r) => (Number(r.seq) || 0) <= to) : records;
+    const out = filtered.slice(-tail).map(sanitizeRecord).filter(Boolean);
+    const body = JSON.stringify({ ok: true, lastSeq: out.length ? out[out.length - 1].seq : 0, truncated: false, records: out });
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'content-length': Buffer.byteLength(body),
+    });
+    res.end(body);
+    return;
+  }
   // 游标口径：lastSeq 只取**实际返回**的最后一条 seq（此前是对整个文件取 max，
   // 首屏 limit 截断时游标直接跳到文件尾部，中间的记录就永久丢了）。
   // 空结果回退 since——前端有 >lastSeq 守护，不会倒退。truncated 标记后面还有
@@ -460,6 +489,145 @@ async function serveHistory(req, res, deps) {
   res.end(body);
 }
 
+// ── 会话索引（2.2.0）────────────────────────────────────────────
+// 账本聚合：按记录的 session 字段（回退 scope.sessionId）聚出每个对话窗口的
+// 事件数/时间范围/拒绝数，再叠加 sessionDirectory() 提供的活会话标题。
+// 无归属的记录聚到 id=null（面板显示「系统」组）。响应不缓存——聚合在
+// tailCache 的解析结果上做，开销可忽略；活会话标题由调用方（deps）现取。
+async function serveSessions(req, res, deps) {
+  const records = await readLedgerTailCached(deps.ledgerPath);
+  const map = new Map();
+  for (const record of records) {
+    const scope = record.scope && typeof record.scope === 'object' ? record.scope : {};
+    const sid = typeof record.session === 'string' && record.session
+      ? record.session
+      : (typeof scope.sessionId === 'string' && scope.sessionId ? scope.sessionId : null);
+    let entry = map.get(sid);
+    if (!entry) {
+      entry = { id: sid, title: null, count: 0, denied: 0, intercepted: 0, firstTs: record.ts, lastTs: record.ts, firstSeq: Number(record.seq) || 0, lastSeq: Number(record.seq) || 0 };
+      map.set(sid, entry);
+    }
+    entry.count += 1;
+    if (record.decision === 'deny') entry.denied += 1;
+    if (record.intercepted === true) entry.intercepted += 1;
+    const seq = Number(record.seq) || 0;
+    if (seq < entry.firstSeq) { entry.firstSeq = seq; entry.firstTs = record.ts; }
+    if (seq >= entry.lastSeq) { entry.lastSeq = seq; entry.lastTs = record.ts; }
+  }
+  // 活会话标题：id 匹配就补上；查不到的保持 null（面板降级为「会话 + id 前 8 位」）。
+  if (typeof deps.sessionDirectory === 'function') {
+    try {
+      for (const item of deps.sessionDirectory()) {
+        const entry = item && item.id ? map.get(item.id) : null;
+        if (entry && typeof item.title === 'string' && item.title) entry.title = item.title;
+      }
+    } catch { /* 目录提供方异常：标题保持 null */ }
+  }
+  const sessions = [...map.values()].sort((a, b) => (b.lastSeq || 0) - (a.lastSeq || 0));
+  const body = JSON.stringify({ ok: true, sessions });
+  res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+// ── 全账本搜索（2.2.0）────────────────────────────────────────────
+// 关键词大小写不敏感的子串匹配，命中面：插件名、规则 ID、路径、命令、主机、
+// 命令行、工具名、入站消息 head、模型名、llm.request 的 sessionId。
+// 账本大小策略：全量扫（readLedgerAll）；只有上一次全量扫实测超过
+// SEARCH_DEGRADE_MS 才降级到最近 SEARCH_TAIL_BYTES（8MB）并回 truncated=true
+// 提示——「卡了才退」，不预先牺牲覆盖面。账本尺寸变化超过 1MB 后重试全量。
+const SEARCH_DEGRADE_MS = 800;
+const SEARCH_TAIL_BYTES = 8 * 1024 * 1024;
+const SEARCH_LIMIT_DEFAULT = 200;
+const SEARCH_LIMIT_MAX = 500;
+const searchState = new Map(); // ledgerPath -> { degraded: bool, sizeAtDegrade }
+
+function recordHaystacks(record) {
+  const scope = record.scope && typeof record.scope === 'object' ? record.scope : {};
+  const out = [];
+  const push = (value) => {
+    if (typeof value === 'string' && value) out.push(value);
+  };
+  push(record.plugin);
+  push(record.ruleId);
+  push(record.session);
+  push(scope.sessionId);
+  push(scope.host);
+  push(scope.commandLine);
+  push(scope.tool);
+  push(scope.head);
+  push(scope.model);
+  push(scope.provider);
+  for (const key of ['paths', 'commands', 'hosts']) {
+    if (Array.isArray(scope[key])) for (const item of scope[key]) push(item);
+  }
+  return out;
+}
+
+function parseSearchQuery(req) {
+  const url = new URL(req.url || '/', 'http://localhost');
+  const q = (url.searchParams.get('q') || '').trim();
+  const limit = Number(url.searchParams.get('limit'));
+  return {
+    q: q.toLowerCase(),
+    limit: Number.isFinite(limit) && limit > 0 ? Math.min(Math.floor(limit), SEARCH_LIMIT_MAX) : SEARCH_LIMIT_DEFAULT,
+  };
+}
+
+async function serveSearch(req, res, deps) {
+  const { q, limit } = parseSearchQuery(req);
+  if (!q) {
+    reply(res, 200, { ok: true, query: '', records: [], total: 0, truncated: false });
+    return;
+  }
+  let info;
+  try {
+    info = await stat(deps.ledgerPath);
+  } catch {
+    reply(res, 200, { ok: true, query: q, records: [], total: 0, truncated: false });
+    return;
+  }
+  const state = searchState.get(deps.ledgerPath) || { degraded: false, sizeAtDegrade: 0 };
+  searchState.set(deps.ledgerPath, state);
+  // 降级后账本明显增长（>1MB）说明又追加了新内容，重试一次全量看是否还卡。
+  let degraded = state.degraded && info.size - state.sizeAtDegrade < 1024 * 1024;
+  const startedAt = Date.now();
+  let records;
+  if (degraded) {
+    records = await readLedgerTail(deps.ledgerPath, SEARCH_TAIL_BYTES);
+  } else {
+    records = await readLedgerAll(deps.ledgerPath);
+    if (Date.now() - startedAt > SEARCH_DEGRADE_MS) {
+      state.degraded = true;
+      state.sizeAtDegrade = info.size;
+      degraded = true;
+    }
+  }
+  // 匹配从新往旧走：limit 截断保住的是最近的事件（回放/排查最常用）。
+  const out = [];
+  let total = 0;
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const record = records[i];
+    const haystacks = recordHaystacks(record);
+    if (!haystacks.some((text) => text.toLowerCase().includes(q))) continue;
+    total += 1;
+    if (out.length < limit) {
+      const sanitized = sanitizeRecord(record);
+      if (sanitized) out.push(sanitized);
+    }
+  }
+  const body = JSON.stringify({ ok: true, query: q, records: out, total, truncated: degraded });
+  res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
 function reply(res, code, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(code, {
@@ -500,7 +668,11 @@ export function registerPanelRoutes(webServer, deps) {
   disposers.push(webServer.register({ method: 'GET', path: STATUS_PATH, handler: guard(serveStatus) }));
   disposers.push(webServer.register({ method: 'GET', path: RECORDS_PATH, handler: guard(serveRecords) }));
   disposers.push(webServer.register({ method: 'GET', path: HISTORY_PATH, handler: guard(serveHistory) }));
-  if (deps.log) deps.log(`[dsh-dashcam] 面板 API 挂载完成：${STATUS_PATH} ${RECORDS_PATH} ${HISTORY_PATH}`);
+  disposers.push(webServer.register({ method: 'GET', path: SESSIONS_PATH, handler: guard(serveSessions) }));
+  disposers.push(webServer.register({ method: 'GET', path: SEARCH_PATH, handler: guard(serveSearch) }));
+  if (deps.log) {
+    deps.log(`[dsh-dashcam] 面板 API 挂载完成：${STATUS_PATH} ${RECORDS_PATH} ${HISTORY_PATH} ${SESSIONS_PATH} ${SEARCH_PATH}`);
+  }
 
   return () => {
     for (const dispose of disposers) {

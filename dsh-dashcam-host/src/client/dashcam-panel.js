@@ -49,6 +49,15 @@ const I18N = {
     'unit.windowed': '（窗口截断）',
     'kv.ledgerPath': '账本路径',
     'empty.stream': '等待账本记录…',
+    'group.system': '系统',
+    'group.session': '会话 {id}',
+    'chip.deniedOnly': '仅拦截',
+    'chip.window': '窗口',
+    'chip.date': '日期',
+    'live.search.ph': '搜索关键词（插件 / 消息 / 路径 / 命令 / 主机 / 规则）…',
+    'search.results': '{n} 条结果',
+    'search.empty': '没有匹配的事件',
+    'search.truncated': '账本较大，仅搜索了最近 8MB',
     'deny.prefix': '[拒绝] ',
     'rp.pick': '选择录像',
     'rp.sessionTitle': '{id} · {date}（{events} 事件 / {errors} 异常）',
@@ -155,6 +164,15 @@ const I18N = {
     'unit.windowed': ' (windowed)',
     'kv.ledgerPath': 'Ledger path',
     'empty.stream': 'Waiting for ledger entries…',
+    'group.system': 'System',
+    'group.session': 'Session {id}',
+    'chip.deniedOnly': 'Intercepted only',
+    'chip.window': 'Window',
+    'chip.date': 'Date',
+    'live.search.ph': 'Search (plugin / message / path / command / host / rule)…',
+    'search.results': '{n} results',
+    'search.empty': 'No matching events',
+    'search.truncated': 'Large ledger: only the most recent 8 MB searched',
     'deny.prefix': '[denied] ',
     'rp.pick': 'Select a recording',
     'rp.sessionTitle': '{id} · {date} ({events} events / {errors} errors)',
@@ -351,6 +369,10 @@ export function createDashcamPanel(options) {
     elapsedSec: null,
     hist: { sessions: [], filter: 'all', query: '' },
     rp: { session: null, events: [], dur: 0, t: 0, playing: false, speed: 1, active: -1, startStamp: 0, truncated: false },
+    // 2.2.0：实时视图会话归属 + 分类过滤 + 静默搜索
+    liveFilter: { types: new Set(), deniedOnly: false, sessions: new Set(), dates: new Set() },
+    sessionDir: new Map(), // sessionId -> 标题|null（null session 不入表）
+    liveSearch: { query: '', records: [], total: 0, truncated: false, active: false },
   };
   let rafId = 0;
   let tipEl = null;
@@ -389,6 +411,16 @@ export function createDashcamPanel(options) {
         <div class="ddc-split">
           <section class="ddc-card" style="display:flex;flex-direction:column;min-height:0">
             <div class="ddc-card-h"><h2>${t('card.stream')}</h2><span class="ddc-meta ddc-stream-meta">${tf('stream.count', { n: 0 })}</span></div>
+            <div class="ddc-livetool">
+              <input class="ddc-search ddc-lsearch" placeholder="${t('live.search.ph')}" />
+              <div class="ddc-chips">
+                <button class="ddc-chip on" data-ddc-lf="all">${t('chip.all')}</button>
+                ${TYPE_ORDER.map((type) => `<button class="ddc-chip" data-ddc-lf="${type}">${typeText(type)}</button>`).join('')}
+                <button class="ddc-chip" data-ddc-lf="denied">${t('chip.deniedOnly')}</button>
+              </div>
+              <div class="ddc-chips ddc-subchips"><span class="ddc-chiplb">${t('chip.window')}</span><span class="ddc-dynchips" data-ddc-dyn="session"></span></div>
+              <div class="ddc-chips ddc-subchips"><span class="ddc-chiplb">${t('chip.date')}</span><span class="ddc-dynchips" data-ddc-dyn="date"></span></div>
+            </div>
             <div class="ddc-body" style="flex:1;min-height:0">
               <div class="ddc-stream"></div>
             </div>
@@ -446,7 +478,7 @@ export function createDashcamPanel(options) {
 
       <section class="ddc-view" data-ddc-viewcard="history">
         <div class="ddc-toolbar">
-          <input class="ddc-search" placeholder="${t('search.placeholder')}" />
+          <input class="ddc-search ddc-hsearch" placeholder="${t('search.placeholder')}" />
           <div class="ddc-chips">
             <button class="ddc-chip on" data-ddc-hf="all">${t('chip.all')}</button>
             <button class="ddc-chip" data-ddc-hf="recording">${t('chip.recording')}</button>
@@ -493,8 +525,13 @@ export function createDashcamPanel(options) {
       evlist: $('.ddc-evlist'),
       rpMeta: $('.ddc-rp-meta'),
       rpDetail: $('.ddc-rp-detail'),
-      search: $('.ddc-search'),
-      chips: [...root.querySelectorAll('.ddc-chip')],
+      search: $('.ddc-hsearch'),
+      lsearch: $('.ddc-lsearch'),
+      histChips: [...root.querySelectorAll('.ddc-chip[data-ddc-hf]')],
+      liveChips: [...root.querySelectorAll('.ddc-chip[data-ddc-lf]')],
+      dynSession: root.querySelector('.ddc-dynchips[data-ddc-dyn="session"]'),
+      dynDate: root.querySelector('.ddc-dynchips[data-ddc-dyn="date"]'),
+      chips: [...root.querySelectorAll('.ddc-chip[data-ddc-hf]')],
       hlist: $('.ddc-hlist'),
       histMeta: $('.ddc-hist-meta'),
     };
@@ -572,13 +609,59 @@ export function createDashcamPanel(options) {
       state.hist.query = els.search.value || '';
       renderHistory();
     });
-    els.chips.forEach((chip) =>
+    els.histChips.forEach((chip) =>
       chip.addEventListener('click', () => {
         state.hist.filter = chip.dataset.ddcHf || 'all';
-        els.chips.forEach((c) => c.classList.toggle('on', c === chip));
+        els.histChips.forEach((c) => c.classList.toggle('on', c === chip));
         renderHistory();
       }),
     );
+    // 实时流搜索：输入停顿 400ms 后交给 engine（fetch /search），清空即恢复事件流。
+    let liveSearchTimer = 0;
+    els.lsearch.addEventListener('input', () => {
+      const query = (els.lsearch.value || '').trim();
+      if (liveSearchTimer) clearTimeout(liveSearchTimer);
+      if (!query) {
+        state.liveSearch = { query: '', records: [], total: 0, truncated: false, active: false };
+        renderStream();
+        return;
+      }
+      liveSearchTimer = setTimeout(() => {
+        liveSearchTimer = 0;
+        if (typeof options.onLiveSearch === 'function') options.onLiveSearch(query);
+      }, 400);
+    });
+    // 分类 chip：多选类型 + 独立的「仅拦截」。无选中类型 = 全部。
+    els.liveChips.forEach((chip) =>
+      chip.addEventListener('click', () => {
+        const key = chip.dataset.ddcLf || 'all';
+        if (key === 'all') {
+          // 「全部」复位所有维度：类型 + 会话 + 日期（仅拦截是独立开关，不动）。
+          state.liveFilter.types.clear();
+          state.liveFilter.sessions.clear();
+          state.liveFilter.dates.clear();
+        } else if (key === 'denied') {
+          state.liveFilter.deniedOnly = !state.liveFilter.deniedOnly;
+        } else if (state.liveFilter.types.has(key)) {
+          state.liveFilter.types.delete(key);
+        } else {
+          state.liveFilter.types.add(key);
+        }
+        syncLiveChips();
+        renderStream();
+      }),
+    );
+  }
+
+  function syncLiveChips() {
+    els.liveChips.forEach((chip) => {
+      const key = chip.dataset.ddcLf || 'all';
+      const on = key === 'all'
+        ? state.liveFilter.types.size === 0 && state.liveFilter.sessions.size === 0
+          && state.liveFilter.dates.size === 0 && !state.liveFilter.deniedOnly
+        : key === 'denied' ? state.liveFilter.deniedOnly : state.liveFilter.types.has(key);
+      chip.classList.toggle('on', on);
+    });
   }
 
   // 语言切换：同一 root 节点上原位重建 DOM（panel.el 身份不变，engine 侧
@@ -593,7 +676,9 @@ export function createDashcamPanel(options) {
     state.rp.playing = false;
     buildDom(true);
     els.search.value = state.hist.query;
+    els.lsearch.value = state.liveSearch.query;
     els.chips.forEach((c) => c.classList.toggle('on', (c.dataset.ddcHf || 'all') === state.hist.filter));
+    syncLiveChips();
     state.renderedSeq = 0;
     updateLive(null, null);
     if (state.rp.session || state.rp.events.length) renderReplayList();
@@ -713,27 +798,12 @@ export function createDashcamPanel(options) {
     if (Array.isArray(records) && records.length) {
       state.live = state.live.concat(records).slice(-400);
     }
-    const fresh = state.live.filter((e) => e.seq > state.renderedSeq);
-    if (fresh.length) {
-      const atTop = els.stream.querySelector('.ddc-ev');
-      for (const e of fresh) {
-        els.stream.insertBefore(evRow(e, clock(e.ts), false), atTop || null);
-      }
-      state.renderedSeq = fresh[fresh.length - 1].seq;
-      // DOM 与 state.live 的 400 条窗口对齐：流是新的在上，超窗口的旧行从尾部
-      // 移除——否则面板开一上午行数无限增长，「共 N 条」与屏幕也对不上。
-      const rows = els.stream.querySelectorAll('.ddc-ev');
-      for (let i = rows.length - 1; i >= 400; i -= 1) rows[i].remove();
-    }
-    els.streamMeta.textContent = tf('stream.count', { n: state.live.length });
-    if (!state.live.length && !els.stream.querySelector('.ddc-empty')) {
-      const empty = document.createElement('div');
-      empty.className = 'ddc-empty';
-      empty.textContent = t('empty.stream');
-      els.stream.appendChild(empty);
-    } else if (state.live.length) {
-      const empty = els.stream.querySelector('.ddc-empty');
-      if (empty) empty.remove();
+    // 2.2.0：流改为「会话分组 + 日期分隔」整体重画（scroll 位置保留）；搜索
+    // 结果接管流容器期间，事件只进 state 不动 DOM，避免打断查看。
+    if (state.liveSearch.active) {
+      els.streamMeta.textContent = tf('search.results', { n: state.liveSearch.total });
+    } else {
+      renderStream();
     }
 
     const last = state.live.length ? state.live[state.live.length - 1] : s && s.lastEvent ? s.lastEvent : null;
@@ -752,6 +822,198 @@ export function createDashcamPanel(options) {
     if (!els.stepAge.dataset.ddcTs) return;
     const age = Math.max(0, Math.floor((Date.now() - Date.parse(els.stepAge.dataset.ddcTs)) / 1000));
     els.stepAge.textContent = age < 60 ? `${age} ${t('time.secAgo')}` : `${Math.floor(age / 60)} ${t('time.minAgo')}`;
+  }
+
+  // ---------- 实时流分组（2.2.0） ----------
+  // 会话标签：目录里有标题用标题；没有标题降级「会话 + id 前 8 位」；
+  // 无归属（null）归「系统」组。
+  function sessionLabel(sid) {
+    if (!sid) return { label: t('group.system'), known: true };
+    const title = state.sessionDir.get(sid);
+    if (title) return { label: title, known: true };
+    return { label: tf('group.session', { id: sid.slice(0, 8) }), known: false };
+  }
+
+  function liveFilterPass(e) {
+    if (state.liveFilter.deniedOnly && !(e.denied || e.intercepted)) return false;
+    if (state.liveFilter.types.size && !state.liveFilter.types.has(e.type)) return false;
+    if (state.liveFilter.sessions.size && !state.liveFilter.sessions.has(e.session || '')) return false;
+    if (state.liveFilter.dates.size && !state.liveFilter.dates.has(dateKey(e.ts))) return false;
+    return true;
+  }
+
+  function dateKey(ts) {
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  function dateLabel(ts) {
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  // chip 行的紧凑日期文案（不带年份，避免行宽爆炸）
+  function chipDateLabel(ts) {
+    const d = new Date(ts);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // 会话/日期 chip 行：从 state.live 派生（用未过滤集合——过滤到 0 条时 chip
+  // 仍在，用户能点回别的窗口/日期）。行内新→旧；点击切换选中后整体重画。
+  function renderDynChips() {
+    const sessions = new Map(); // key(''=系统) -> { label, n }
+    const dates = new Map();    // dateKey -> { ts, n }
+    for (let i = state.live.length - 1; i >= 0; i -= 1) {
+      const e = state.live[i];
+      const sidKey = e.session || '';
+      if (!sessions.has(sidKey)) sessions.set(sidKey, { label: sessionLabel(e.session || null).label });
+      const dk = dateKey(e.ts);
+      if (dk && !dates.has(dk)) dates.set(dk, { ts: e.ts });
+    }
+    const mkChip = (label, on, onClick) => {
+      const chip = document.createElement('button');
+      chip.className = `ddc-chip${on ? ' on' : ''}`;
+      chip.textContent = label;
+      chip.addEventListener('click', onClick);
+      return chip;
+    };
+    els.dynSession.replaceChildren(...[...sessions.entries()].map(([key, s]) =>
+      mkChip(s.label, state.liveFilter.sessions.has(key), () => {
+        if (state.liveFilter.sessions.has(key)) state.liveFilter.sessions.delete(key);
+        else state.liveFilter.sessions.add(key);
+        syncLiveChips();
+        renderStream();
+      }),
+    ));
+    els.dynDate.replaceChildren(...[...dates.entries()].map(([dk, d]) =>
+      mkChip(chipDateLabel(d.ts), state.liveFilter.dates.has(dk), () => {
+        if (state.liveFilter.dates.has(dk)) state.liveFilter.dates.delete(dk);
+        else state.liveFilter.dates.add(dk);
+        syncLiveChips();
+        renderStream();
+      }),
+    ));
+  }
+
+  // 组头 = 窗口标题 + 起始时间；组内跨天插日期分隔条。整体重画但保留 scroll。
+  function renderStream() {
+    const scroller = els.stream;
+    const savedScroll = scroller.scrollTop;
+    const list = state.live.filter(liveFilterPass); // 升序
+    const frag = document.createDocumentFragment();
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ddc-empty';
+      empty.textContent = state.live.length ? t('search.empty') : t('empty.stream');
+      frag.appendChild(empty);
+    } else {
+      // 相邻同 session 的连续段为一组（state.live 升序，从旧到新扫）；
+      // 展示序仍是新在上：组按新→旧排，组内事件也新→旧。
+      const runs = [];
+      for (const e of list) {
+        const sid = e.session || null;
+        const lastRun = runs[runs.length - 1];
+        if (lastRun && lastRun.sid === sid) lastRun.items.push(e);
+        else runs.push({ sid, items: [e] });
+      }
+      for (let ri = runs.length - 1; ri >= 0; ri -= 1) {
+        const run = runs[ri];
+        const meta = sessionLabel(run.sid);
+        const head = document.createElement('div');
+        head.className = 'ddc-ghead';
+        head.innerHTML = `<span class="ddc-gt${meta.known ? '' : ' mute'}">${esc(meta.label)}</span>`
+          + `<span class="ddc-gtime">${esc(dateShort(run.items[0].ts))}</span>`;
+        frag.appendChild(head);
+        let prevDate = '';
+        for (let ii = run.items.length - 1; ii >= 0; ii -= 1) {
+          const e = run.items[ii];
+          const dk = dateKey(e.ts);
+          if (dk && dk !== prevDate) {
+            const sep = document.createElement('div');
+            sep.className = 'ddc-dsep';
+            sep.textContent = dateLabel(e.ts);
+            frag.appendChild(sep);
+            prevDate = dk;
+          }
+          frag.appendChild(evRow(e, clock(e.ts), false));
+        }
+      }
+    }
+    scroller.replaceChildren(frag);
+    scroller.scrollTop = savedScroll;
+    els.streamMeta.textContent = tf('stream.count', { n: state.live.length });
+    renderDynChips();
+  }
+
+  // 搜索结果接管流容器：按 窗口 → 日期 → 类型 三层组织。
+  function showLiveSearch(result) {
+    state.liveSearch = {
+      query: result.query || '',
+      records: Array.isArray(result.records) ? result.records : [],
+      total: Number(result.total) || 0,
+      truncated: result.truncated === true,
+      active: true,
+    };
+    const scroller = els.stream;
+    const savedScroll = scroller.scrollTop;
+    const frag = document.createDocumentFragment();
+    const records = state.liveSearch.records; // 新→旧
+    if (!records.length) {
+      const empty = document.createElement('div');
+      empty.className = 'ddc-empty';
+      empty.textContent = t('search.empty');
+      frag.appendChild(empty);
+    } else {
+      // 第一层：会话窗口（连续段；搜索结果按时间混排，同会话可能分段出现）
+      const runs = [];
+      for (const e of records) {
+        const sid = e.session || null;
+        const lastRun = runs[runs.length - 1];
+        if (lastRun && lastRun.sid === sid) lastRun.items.push(e);
+        else runs.push({ sid, items: [e] });
+      }
+      for (const run of runs) {
+        const meta = sessionLabel(run.sid);
+        const head = document.createElement('div');
+        head.className = 'ddc-ghead';
+        head.innerHTML = `<span class="ddc-gt${meta.known ? '' : ' mute'}">${esc(meta.label)}</span>`
+          + `<span class="ddc-gtime">${esc(dateShort(run.items[0].ts))}</span>`;
+        frag.appendChild(head);
+        let prevDate = '';
+        let prevType = '';
+        for (const e of run.items) {
+          const dk = dateKey(e.ts);
+          if (dk && dk !== prevDate) {
+            const sep = document.createElement('div');
+            sep.className = 'ddc-dsep';
+            sep.textContent = dateLabel(e.ts);
+            frag.appendChild(sep);
+            prevDate = dk;
+            prevType = '';
+          }
+          // 第二层内第三层：同类型连续块合并标题（类型 chip 行），不同类型插行
+          if (e.type !== prevType) {
+            const typeHead = document.createElement('div');
+            typeHead.className = 'ddc-dsep';
+            typeHead.textContent = typeText(e.type);
+            frag.appendChild(typeHead);
+            prevType = e.type;
+          }
+          frag.appendChild(evRow(e, clock(e.ts), false));
+        }
+      }
+      if (state.liveSearch.truncated) {
+        const note = document.createElement('div');
+        note.className = 'ddc-dsep';
+        note.textContent = t('search.truncated');
+        frag.appendChild(note);
+      }
+    }
+    scroller.replaceChildren(frag);
+    scroller.scrollTop = savedScroll;
+    els.streamMeta.textContent = tf('search.results', { n: state.liveSearch.total });
   }
 
   function tickClock(connected) {
@@ -1057,6 +1319,43 @@ export function createDashcamPanel(options) {
     els.histMeta.textContent = `${rows.length} / ${sessions.length} ${t('unit.sessions')}`;
   }
 
+  // ---------- 回放静默补齐（2.2.0） ----------
+  // 首屏只取了窗口尾部的 ~200 条，这里把更早的批次按 seq 升序并进去：
+  // 重算 t 时间轴、重画列表与时间轴（保持当前进度），不留 loading 态。
+  function prependReplayEvents(records) {
+    const rp = state.rp;
+    const known = new Set(rp.events.map((e) => e.seq));
+    const incoming = (Array.isArray(records) ? records : []).filter((e) => e && e.ts && !known.has(e.seq));
+    if (!incoming.length) return 0;
+    rp.events = rp.events.concat(incoming.map((e) => ({ ...e, t: 0 }))).sort((a, b) => a.seq - b.seq);
+    rebaseReplayTimeline();
+    if (state.view === 'replay') {
+      renderReplayList();
+      drawTimeline();
+    }
+    return incoming.length;
+  }
+
+  // 时间轴基点 = 最早事件的 ts；时长以数据跨度为准（比聚类估的 duration 更真）。
+  function rebaseReplayTimeline() {
+    const rp = state.rp;
+    if (!rp.events.length) return;
+    const startMs = Date.parse(rp.events[0].ts);
+    const endMs = Date.parse(rp.events[rp.events.length - 1].ts);
+    for (const e of rp.events) e.t = Math.max(0, (Date.parse(e.ts) - startMs) / 1000);
+    rp.dur = Math.max(1, (endMs - startMs) / 1000);
+  }
+
+  function setReplayTruncated(truncated) {
+    state.rp.truncated = truncated === true;
+    if (state.view === 'replay') renderReplayList();
+  }
+
+  function updateSessionDirectory(entries) {
+    state.sessionDir = entries instanceof Map ? entries : new Map();
+    if (!state.liveSearch.active) renderStream();
+  }
+
   // ---------- 全局接线 ----------
   // 挂在具体节点上的事件接线都在 wireEvents()（语言重建时对新节点重跑）；
   // 这里只放跨重建注册一次的监听。els / resizeObserver 是 let，闭包永远取当前值。
@@ -1107,7 +1406,11 @@ export function createDashcamPanel(options) {
     updateLive,
     tickClock,
     showHistory,
+    showLiveSearch,
     startReplay,
+    prependReplayEvents,
+    setReplayTruncated,
+    updateSessionDirectory,
     dispose,
   };
 }
