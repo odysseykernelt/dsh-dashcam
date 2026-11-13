@@ -41,8 +41,9 @@ export const DASHCAM_CSS = `
 .ddc-m .ddc-v{margin-top:8px;font:600 30px/1 var(--ddc-mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .ddc-m .ddc-u{font:600 13px/1 var(--ddc-font);color:var(--ddc-text-3);margin-left:4px}
 .ddc-m.accent .ddc-v{color:var(--ddc-accent-soft)}
-.ddc-split{flex:1;min-height:0;display:grid;grid-template-columns:1.7fr 1fr;gap:var(--ddc-gap)}
-.ddc-stack{display:flex;flex-direction:column;gap:var(--ddc-gap);min-height:0}
+.ddc-split{flex:1;min-height:0;display:grid;grid-template-columns:1.7fr 1fr;grid-template-rows:minmax(0,1fr);gap:var(--ddc-gap)}
+.ddc-stack{display:flex;flex-direction:column;gap:var(--ddc-gap);min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
+.ddc-stack>*{flex:none}
 .ddc-body{padding:var(--ddc-card-pad);display:flex;flex-direction:column;gap:10px}
 .ddc-stream{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:2px 4px 2px 2px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
 .ddc-stream::-webkit-scrollbar{width:6px}
