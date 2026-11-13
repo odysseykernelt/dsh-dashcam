@@ -51,6 +51,7 @@
     "src/",
     "bin/",
     "docs/",
+    "!docs/screenshots/",
     "examples/",
     "test/",
     "README.md",

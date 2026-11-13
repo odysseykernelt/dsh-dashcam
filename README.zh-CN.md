@@ -8,6 +8,14 @@
 
 零配置装上，所有被观测到的活动——读了哪些文件、连了哪些主机、跑了哪些命令、调了哪些工具——都会落进一份防篡改的 JSONL 账本（SHA-256 哈希链，可选 HMAC 封印），每一行都标注是哪个插件干的、这件事发生在契约之下（`profiled: true`）还是之外（`profiled: false`，零契约模式）。不拦任何调用，也不需要插件作者写或声明任何东西——被观测不该成为被观测者的负担。
 
+<img src="docs/screenshots/live.gif" width="860" alt="Agent Dashcam 面板 — 实时录制">
+
+| 回放 | 录像历史 |
+|---|---|
+| <img src="docs/screenshots/replay.gif" width="420" alt="回放：时间轴、事件列表、事件详情"> | <img src="docs/screenshots/history.gif" width="420" alt="录像历史：已录会话列表"> |
+
+*面板由假账本渲染（385 条演示记录，`docs/screenshots/demo-ledger.jsonl`）——演示数据，不是真实会话。`Ctrl+Shift+D` 开关面板。*
+
 **装上之后有什么变化**（默认挂载，零契约）：
 
 | | 装之前 | 装之后 |

@@ -8,6 +8,14 @@
 
 Install it with zero configuration and every observed action — files read, hosts contacted, commands run, tools invoked — lands in a tamper-evident JSONL ledger (SHA-256 hash chain, optional HMAC seal), each line stamped with which plugin did it and whether it happened under a contract (`profiled: true`) or outside any (`profiled: false`, zero-contract mode). Nothing is blocked, and no plugin author has to write or declare anything — being observed is not a burden on the observed.
 
+<img src="docs/screenshots/live.gif" width="860" alt="Agent Dashcam panel — live recording">
+
+| Replay | History |
+|---|---|
+| <img src="docs/screenshots/replay.gif" width="420" alt="Replay: timeline, event list, event detail"> | <img src="docs/screenshots/history.gif" width="420" alt="History: recorded sessions"> |
+
+*Panel captured from a synthetic ledger (385 demo records, `docs/screenshots/demo-ledger.jsonl`) — demo data, not a real session. Toggle the panel with `Ctrl+Shift+D`.*
+
 **What changes when you install it** (default mount, zero contract):
 
 | | Before | After |
