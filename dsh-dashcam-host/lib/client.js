@@ -130,7 +130,198 @@ const DASHCAM_CSS = `
 // 事件流、检索过滤。数据形状见 lib/panel.js sanitizeRecord/computeStatus/
 // clusterSessions——面板只消费脱敏后的展示形状，不接触账本原文。
 
-const TYPE_TEXT = { think: 'LLM', read: '读取', edit: '编辑', bash: '命令', net: '出网', tel: '遥测', error: '异常' };
+// ---------- i18n：zh / en 双语词典 ----------
+// 中文文案与 1.x 逐字节一致（勿顺手润色）；英文用自然 UI English。
+// 语言持久化在 localStorage["ddc-lang"]，默认按 navigator.language 探测。
+const LANG_KEY = 'ddc-lang';
+const I18N = {
+  zh: {
+    'type.think': 'LLM',
+    'type.read': '读取',
+    'type.edit': '编辑',
+    'type.bash': '命令',
+    'type.net': '出网',
+    'type.tel': '遥测',
+    'type.error': '异常',
+    'sub.title': '判定链账本 · 实时录制与回放',
+    'close.title': '关闭（Esc）',
+    'lang.title': '切换语言 / Switch language',
+    'tab.live': '实时录制',
+    'tab.replay': '回放',
+    'tab.history': '录像历史',
+    'metric.elapsed': '运行时长',
+    'metric.tools': '纳管调用',
+    'metric.files': '改动文件',
+    'metric.errors': '异常',
+    'card.stream': '实时事件流',
+    'card.step': '当前步骤',
+    'card.judge': '判定链状态',
+    'card.events': '事件',
+    'card.detail': '事件详情',
+    'card.history': '录像历史',
+    'judge.axis': '拦截 / 判定',
+    'stream.count': '共 {n} 条',
+    'step.waiting': '等待事件',
+    'kv.mode': '模式',
+    'mode.enforce': 'enforce（强制）',
+    'mode.advisory': 'advisory（旁路）',
+    'kv.bypass': '旁路命中',
+    'unit.bypass': '次（deny 未拦截）',
+    'kv.unmapped': '未纳管调用',
+    'unit.unmapped': '次（telemetry）',
+    'kv.version': '插件版本',
+    'kv.session': '会话 ID',
+    'kv.model': '模型',
+    'kv.ledger': '账本记录',
+    'unit.windowed': '（窗口截断）',
+    'kv.ledgerPath': '账本路径',
+    'empty.stream': '等待账本记录…',
+    'deny.prefix': '[拒绝] ',
+    'rp.pick': '选择录像',
+    'rp.sessionTitle': '{id} · {date}（{events} 事件 / {errors} 异常）',
+    'rp.recent': '最近记录',
+    'unit.entries': '条',
+    'rp.truncated': '已截断（只载入前 2000 条）',
+    'rp.empty': '该录像段没有可用记录',
+    'speed.label': '速度',
+    'play': '播放',
+    'pause': '暂停',
+    'detail.hint': '点击时间轴或事件查看详情',
+    'kv.time': '时间点',
+    'kv.rel': '相对',
+    'kv.seq': '序号',
+    'kv.rule': '规则',
+    'kv.decision': '决策',
+    'kv.intercepted': '（已拦截）',
+    'kv.paths': '路径',
+    'kv.commands': '命令',
+    'kv.hosts': '主机',
+    'kv.commandLine': '命令行',
+    'search.placeholder': '搜索 ID / 日期…',
+    'chip.all': '全部',
+    'chip.recording': '录制中',
+    'chip.completed': '已完成',
+    'st.recording': '录制中',
+    'st.completed': '已完成',
+    'empty.history.match': '没有匹配的录像',
+    'empty.history.none': '账本里还没有录像段',
+    'unit.sessions': '段',
+    'time.secAgo': '秒前',
+    'time.minAgo': '分钟前',
+    'unit.events': '事件',
+    'unit.errors': '异常',
+  },
+  en: {
+    'type.think': 'LLM',
+    'type.read': 'Reading',
+    'type.edit': 'Edit',
+    'type.bash': 'Command',
+    'type.net': 'Network',
+    'type.tel': 'Telemetry',
+    'type.error': 'Error',
+    'sub.title': 'Judgment ledger · live recording & replay',
+    'close.title': 'Close (Esc)',
+    'lang.title': 'Switch language / 切换语言',
+    'tab.live': 'Live',
+    'tab.replay': 'Replay',
+    'tab.history': 'History',
+    'metric.elapsed': 'Running time',
+    'metric.tools': 'Monitored calls',
+    'metric.files': 'Files touched',
+    'metric.errors': 'Errors',
+    'card.stream': 'Live events',
+    'card.step': 'Current step',
+    'card.judge': 'Judgment chain',
+    'card.events': 'Events',
+    'card.detail': 'Event detail',
+    'card.history': 'Recording history',
+    'judge.axis': 'Intercepted / Judged',
+    'stream.count': '{n} entries',
+    'step.waiting': 'Waiting for events',
+    'kv.mode': 'Mode',
+    'mode.enforce': 'enforce (blocking)',
+    'mode.advisory': 'advisory (bypass)',
+    'kv.bypass': 'Bypass hits',
+    'unit.bypass': 'hits (deny not enforced)',
+    'kv.unmapped': 'Unmonitored calls',
+    'unit.unmapped': 'hits (telemetry)',
+    'kv.version': 'Plugin version',
+    'kv.session': 'Session ID',
+    'kv.model': 'Model',
+    'kv.ledger': 'Ledger entry',
+    'unit.windowed': ' (windowed)',
+    'kv.ledgerPath': 'Ledger path',
+    'empty.stream': 'Waiting for ledger entries…',
+    'deny.prefix': '[denied] ',
+    'rp.pick': 'Select a recording',
+    'rp.sessionTitle': '{id} · {date} ({events} events / {errors} errors)',
+    'rp.recent': 'Recent recording',
+    'unit.entries': 'entries',
+    'rp.truncated': 'Truncated (first 2000 entries only)',
+    'rp.empty': 'No records in this segment',
+    'speed.label': 'Speed',
+    'play': 'Play',
+    'pause': 'Pause',
+    'detail.hint': 'Click the timeline or an event for details',
+    'kv.time': 'At',
+    'kv.rel': 'Offset',
+    'kv.seq': 'Seq',
+    'kv.rule': 'Rule',
+    'kv.decision': 'Decision',
+    'kv.intercepted': ' (blocked)',
+    'kv.paths': 'Path',
+    'kv.commands': 'Command',
+    'kv.hosts': 'Hosts',
+    'kv.commandLine': 'Command line',
+    'search.placeholder': 'Search ID / date…',
+    'chip.all': 'All',
+    'chip.recording': 'Recording',
+    'chip.completed': 'Completed',
+    'st.recording': 'Recording',
+    'st.completed': 'Completed',
+    'empty.history.match': 'No matching recordings',
+    'empty.history.none': 'No recordings in the ledger yet',
+    'unit.sessions': 'sessions',
+    'time.secAgo': 'sec ago',
+    'time.minAgo': 'min ago',
+    'unit.events': 'events',
+    'unit.errors': 'errors',
+  },
+};
+// 切换按钮永远显示「可切换到的那个语言」的名字，方便用户随时找到它。
+const LANG_TOGGLE_LABEL = { zh: 'EN', en: '中文' };
+
+// 宿主侧测试用：断言 zh/en 两包 key 集合一致（build.mjs 拼接时会剥掉 export 前缀）。
+const DASHCAM_I18N = I18N;
+
+function detectLanguage() {
+  try {
+    const saved = localStorage.getItem(LANG_KEY);
+    if (saved === 'zh' || saved === 'en') return saved;
+  } catch { /* 隐私模式等场景 localStorage 不可用 */ }
+  const nav = typeof navigator !== 'undefined' ? String(navigator.language || '') : '';
+  return nav.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
+
+let lang = detectLanguage();
+
+function t(key) {
+  const pack = I18N[lang] || I18N.en;
+  return Object.prototype.hasOwnProperty.call(pack, key) ? pack[key] : key;
+}
+
+function tf(key, params) {
+  let text = t(key);
+  for (const name of Object.keys(params)) text = text.replace(`{${name}}`, String(params[name]));
+  return text;
+}
+
+function typeText(type) {
+  const key = `type.${type}`;
+  const pack = I18N[lang] || I18N.en;
+  return Object.prototype.hasOwnProperty.call(pack, key) ? pack[key] : type;
+}
+
 const TYPE_ORDER = ['think', 'read', 'edit', 'bash', 'net', 'tel', 'error'];
 // 画布刻度：类型 → [高度比例, 颜色 CSS 变量名或色值]
 const MARK = {
@@ -197,53 +388,70 @@ function clamp(v, lo, hi) {
 function createDashcamPanel(options) {
   const api = options.api || {};
   const root = document.createElement('div');
-  root.className = 'ddc-root';
-  root.setAttribute('data-ddc-root', '1');
   root.style.display = 'none';
-  root.innerHTML = `
+
+  const state = {
+    view: 'live',
+    status: null,
+    live: [],           // 升序的脱敏记录（实时流，尾部窗口）
+    renderedSeq: 0,     // 已渲染到流里的最大 seq
+    elapsedSec: null,
+    hist: { sessions: [], filter: 'all', query: '' },
+    rp: { session: null, events: [], dur: 0, t: 0, playing: false, speed: 1, active: -1, startStamp: 0, truncated: false },
+  };
+  let rafId = 0;
+  let tipEl = null;
+  let els = null;
+  let resizeObserver = null;
+  const disposers = [];
+
+  // ---------- DOM 骨架（语言切换时按当前词典重跑） ----------
+  function panelTemplate() {
+    return `
     <div class="ddc-page">
       <header class="ddc-topbar">
         <div>
           <h1>Agent Dashcam</h1>
-          <p class="ddc-sub">判定链账本 · 实时录制与回放</p>
+          <p class="ddc-sub">${t('sub.title')}</p>
         </div>
         <div style="display:flex;align-items:center;gap:12px">
           <div class="ddc-rec"><span class="ddc-dot"></span><span class="ddc-lb">REC</span><span class="ddc-time num">--:--:--</span></div>
-          <button class="ddc-close" title="关闭（Esc）">×</button>
+          <button class="ddc-btn ddc-lang" data-ddc-lang="1" title="${t('lang.title')}" style="padding:7px 10px;font:600 11px/1 var(--ddc-mono);color:var(--ddc-text-2)">${LANG_TOGGLE_LABEL[lang] || 'EN'}</button>
+          <button class="ddc-close" title="${t('close.title')}">×</button>
         </div>
       </header>
       <nav class="ddc-tabs">
-        <button class="ddc-tab on" data-ddc-view="live">实时录制</button>
-        <button class="ddc-tab" data-ddc-view="replay">回放</button>
-        <button class="ddc-tab" data-ddc-view="history">录像历史</button>
+        <button class="ddc-tab on" data-ddc-view="live">${t('tab.live')}</button>
+        <button class="ddc-tab" data-ddc-view="replay">${t('tab.replay')}</button>
+        <button class="ddc-tab" data-ddc-view="history">${t('tab.history')}</button>
       </nav>
 
       <section class="ddc-view on" data-ddc-viewcard="live">
         <div class="ddc-metrics">
-          <div class="ddc-card ddc-m"><div class="ddc-l">运行时长</div><div class="ddc-v ddc-m-elapsed">--:--:--</div></div>
-          <div class="ddc-card ddc-m"><div class="ddc-l">纳管调用</div><div class="ddc-v ddc-m-tools">0</div></div>
-          <div class="ddc-card ddc-m"><div class="ddc-l">改动文件</div><div class="ddc-v ddc-m-files">0</div></div>
-          <div class="ddc-card ddc-m accent"><div class="ddc-l">异常</div><div class="ddc-v ddc-m-errors">0</div></div>
+          <div class="ddc-card ddc-m"><div class="ddc-l">${t('metric.elapsed')}</div><div class="ddc-v ddc-m-elapsed">--:--:--</div></div>
+          <div class="ddc-card ddc-m"><div class="ddc-l">${t('metric.tools')}</div><div class="ddc-v ddc-m-tools">0</div></div>
+          <div class="ddc-card ddc-m"><div class="ddc-l">${t('metric.files')}</div><div class="ddc-v ddc-m-files">0</div></div>
+          <div class="ddc-card ddc-m accent"><div class="ddc-l">${t('metric.errors')}</div><div class="ddc-v ddc-m-errors">0</div></div>
         </div>
         <div class="ddc-split">
           <section class="ddc-card" style="display:flex;flex-direction:column;min-height:0">
-            <div class="ddc-card-h"><h2>实时事件流</h2><span class="ddc-meta ddc-stream-meta">共 0 条</span></div>
+            <div class="ddc-card-h"><h2>${t('card.stream')}</h2><span class="ddc-meta ddc-stream-meta">${tf('stream.count', { n: 0 })}</span></div>
             <div class="ddc-body" style="flex:1;min-height:0">
               <div class="ddc-stream"></div>
             </div>
           </section>
           <div class="ddc-stack">
             <section class="ddc-card">
-              <div class="ddc-card-h"><h2>当前步骤</h2><span class="ddc-meta ddc-step-age">—</span></div>
+              <div class="ddc-card-h"><h2>${t('card.step')}</h2><span class="ddc-meta ddc-step-age">—</span></div>
               <div class="ddc-body">
-                <div class="ddc-step"><span class="ddc-tag t-tel ddc-step-tag">…</span><div><div class="ddc-title ddc-step-title">等待事件</div><div class="ddc-detail ddc-step-detail">—</div></div></div>
+                <div class="ddc-step"><span class="ddc-tag t-tel ddc-step-tag">…</span><div><div class="ddc-title ddc-step-title">${t('step.waiting')}</div><div class="ddc-detail ddc-step-detail">—</div></div></div>
               </div>
             </section>
             <section class="ddc-card">
-              <div class="ddc-card-h"><h2>判定链状态</h2></div>
+              <div class="ddc-card-h"><h2>${t('card.judge')}</h2></div>
               <div class="ddc-body">
                 <div style="display:flex;justify-content:space-between;align-items:baseline">
-                  <span style="font:400 12px/1 var(--ddc-font);color:var(--ddc-text-3)">拦截 / 判定</span>
+                  <span style="font:400 12px/1 var(--ddc-font);color:var(--ddc-text-3)">${t('judge.axis')}</span>
                   <span style="font:600 13px/1 var(--ddc-mono)" class="ddc-bar-val">0 / 0</span>
                 </div>
                 <div class="ddc-barbg"><div class="ddc-bar" style="width:0%"></div></div>
@@ -257,27 +465,27 @@ function createDashcamPanel(options) {
       <section class="ddc-view" data-ddc-viewcard="replay">
         <section class="ddc-card" style="display:flex;flex-direction:column;gap:10px;padding:var(--ddc-card-pad)">
           <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px">
-            <div style="font:600 14px/1.3 var(--ddc-font)"><span class="ddc-rp-title">选择录像</span></div>
+            <div style="font:600 14px/1.3 var(--ddc-font)"><span class="ddc-rp-title">${t('rp.pick')}</span></div>
             <div style="font:400 12px/1 var(--ddc-mono);color:var(--ddc-text-3)" class="ddc-rp-clock">--:--:--</div>
           </div>
           <canvas class="ddc-tl"></canvas>
           <div class="ddc-legend"></div>
           <div class="ddc-ctl">
-            <button class="ddc-btn primary ddc-play">播放</button>
+            <button class="ddc-btn primary ddc-play">${t('play')}</button>
             <span style="flex:1"></span>
-            <span style="font:400 12px/1 var(--ddc-font);color:var(--ddc-text-3)">速度</span>
+            <span style="font:400 12px/1 var(--ddc-font);color:var(--ddc-text-3)">${t('speed.label')}</span>
             ${SPEEDS.map((s) => `<button class="ddc-spd${s === 1 ? ' on' : ''}" data-ddc-spd="${s}">${s}×</button>`).join('')}
           </div>
         </section>
         <div class="ddc-rpsplit">
           <section class="ddc-card" style="display:flex;flex-direction:column;min-height:0">
-            <div class="ddc-card-h"><h2>事件</h2><span class="ddc-meta ddc-rp-meta">—</span></div>
+            <div class="ddc-card-h"><h2>${t('card.events')}</h2><span class="ddc-meta ddc-rp-meta">—</span></div>
             <div class="ddc-body" style="flex:1;min-height:0">
               <div class="ddc-evlist"></div>
             </div>
           </section>
           <section class="ddc-card" style="display:flex;flex-direction:column;min-height:0">
-            <div class="ddc-card-h"><h2>事件详情</h2></div>
+            <div class="ddc-card-h"><h2>${t('card.detail')}</h2></div>
             <div class="ddc-body ddc-rp-detail" style="flex:1;min-height:0;overflow-y:auto"></div>
           </section>
         </div>
@@ -285,68 +493,174 @@ function createDashcamPanel(options) {
 
       <section class="ddc-view" data-ddc-viewcard="history">
         <div class="ddc-toolbar">
-          <input class="ddc-search" placeholder="搜索 ID / 日期…" />
+          <input class="ddc-search" placeholder="${t('search.placeholder')}" />
           <div class="ddc-chips">
-            <button class="ddc-chip on" data-ddc-hf="all">全部</button>
-            <button class="ddc-chip" data-ddc-hf="recording">录制中</button>
-            <button class="ddc-chip" data-ddc-hf="completed">已完成</button>
+            <button class="ddc-chip on" data-ddc-hf="all">${t('chip.all')}</button>
+            <button class="ddc-chip" data-ddc-hf="recording">${t('chip.recording')}</button>
+            <button class="ddc-chip" data-ddc-hf="completed">${t('chip.completed')}</button>
           </div>
         </div>
         <div class="ddc-card" style="flex:1;min-height:0;display:flex;flex-direction:column">
-          <div class="ddc-card-h"><h2>录像历史</h2><span class="ddc-meta ddc-hist-meta">—</span></div>
+          <div class="ddc-card-h"><h2>${t('card.history')}</h2><span class="ddc-meta ddc-hist-meta">—</span></div>
           <div class="ddc-body" style="flex:1;min-height:0">
             <div class="ddc-hlist"></div>
           </div>
         </div>
       </section>
     </div>`;
+  }
 
-  const $ = (sel) => root.querySelector(sel);
-  const els = {
-    rec: $('.ddc-rec'),
-    recTime: $('.ddc-rec .ddc-time'),
-    close: $('.ddc-close'),
-    tabs: [...root.querySelectorAll('.ddc-tab')],
-    mElapsed: $('.ddc-m-elapsed'),
-    mTools: $('.ddc-m-tools'),
-    mFiles: $('.ddc-m-files'),
-    mErrors: $('.ddc-m-errors'),
-    stream: $('.ddc-stream'),
-    streamMeta: $('.ddc-stream-meta'),
-    stepAge: $('.ddc-step-age'),
-    stepTag: $('.ddc-step-tag'),
-    stepTitle: $('.ddc-step-title'),
-    stepDetail: $('.ddc-step-detail'),
-    bar: $('.ddc-bar'),
-    barVal: $('.ddc-bar-val'),
-    sessionKv: $('.ddc-session-kv'),
-    rpTitle: $('.ddc-rp-title'),
-    rpClock: $('.ddc-rp-clock'),
-    tl: $('.ddc-tl'),
-    legend: $('.ddc-legend'),
-    play: $('.ddc-play'),
-    spds: [...root.querySelectorAll('.ddc-spd')],
-    evlist: $('.ddc-evlist'),
-    rpMeta: $('.ddc-rp-meta'),
-    rpDetail: $('.ddc-rp-detail'),
-    search: $('.ddc-search'),
-    chips: [...root.querySelectorAll('.ddc-chip')],
-    hlist: $('.ddc-hlist'),
-    histMeta: $('.ddc-hist-meta'),
-  };
+  function collectEls() {
+    const $ = (sel) => root.querySelector(sel);
+    return {
+      rec: $('.ddc-rec'),
+      recTime: $('.ddc-rec .ddc-time'),
+      close: $('.ddc-close'),
+      lang: $('.ddc-lang'),
+      tabs: [...root.querySelectorAll('.ddc-tab')],
+      mElapsed: $('.ddc-m-elapsed'),
+      mTools: $('.ddc-m-tools'),
+      mFiles: $('.ddc-m-files'),
+      mErrors: $('.ddc-m-errors'),
+      stream: $('.ddc-stream'),
+      streamMeta: $('.ddc-stream-meta'),
+      stepAge: $('.ddc-step-age'),
+      stepTag: $('.ddc-step-tag'),
+      stepTitle: $('.ddc-step-title'),
+      stepDetail: $('.ddc-step-detail'),
+      bar: $('.ddc-bar'),
+      barVal: $('.ddc-bar-val'),
+      sessionKv: $('.ddc-session-kv'),
+      rpTitle: $('.ddc-rp-title'),
+      rpClock: $('.ddc-rp-clock'),
+      tl: $('.ddc-tl'),
+      legend: $('.ddc-legend'),
+      play: $('.ddc-play'),
+      spds: [...root.querySelectorAll('.ddc-spd')],
+      evlist: $('.ddc-evlist'),
+      rpMeta: $('.ddc-rp-meta'),
+      rpDetail: $('.ddc-rp-detail'),
+      search: $('.ddc-search'),
+      chips: [...root.querySelectorAll('.ddc-chip')],
+      hlist: $('.ddc-hlist'),
+      histMeta: $('.ddc-hist-meta'),
+    };
+  }
 
-  const state = {
-    view: 'live',
-    status: null,
-    live: [],           // 升序的脱敏记录（实时流，尾部窗口）
-    renderedSeq: 0,     // 已渲染到流里的最大 seq
-    elapsedSec: null,
-    hist: { sessions: [], filter: 'all', query: '' },
-    rp: { session: null, events: [], dur: 0, t: 0, playing: false, speed: 1, active: -1, startStamp: 0 },
-  };
-  let rafId = 0;
-  let tipEl = null;
-  const disposers = [];
+  function buildDom(preserveTabs) {
+    // 语言切换时保留 .ddc-tabs 节点：engine 对它挂了 MutationObserver（历史视图
+    // 按需刷新），节点换新会让 observer 盯着游离节点，历史自动刷新从此失效。
+    const savedNav = preserveTabs && els ? els.tabs[0].parentElement : null;
+    root.className = 'ddc-root';
+    root.setAttribute('data-ddc-root', '1');
+    root.innerHTML = panelTemplate();
+    if (savedNav) {
+      root.querySelector('.ddc-tabs').replaceWith(savedNav);
+      const tabKeys = { live: 'tab.live', replay: 'tab.replay', history: 'tab.history' };
+      savedNav.querySelectorAll('.ddc-tab').forEach((btn) => {
+        btn.textContent = t(tabKeys[btn.dataset.ddcView] || btn.dataset.ddcView);
+      });
+    }
+    els = collectEls();
+    wireEvents(!savedNav);
+    els.legend.innerHTML = TYPE_ORDER.map((type) => `<span><i style="background:${MARK[type][1]}"></i>${typeText(type)}</span>`).join('');
+    if (resizeObserver) resizeObserver.disconnect();
+    resizeObserver = new ResizeObserver(() => {
+      if (state.view === 'replay') drawTimeline();
+    });
+    resizeObserver.observe(els.tl);
+  }
+
+  function wireEvents(wireTabs) {
+    if (wireTabs) {
+      els.tabs.forEach((tab) => tab.addEventListener('click', () => setView(tab.dataset.ddcView)));
+    }
+    els.lang.addEventListener('click', switchLanguage);
+    els.close.addEventListener('click', () => {
+      if (typeof options.onClose === 'function') options.onClose();
+    });
+    els.play.addEventListener('click', () => (state.rp.playing ? pause() : play()));
+    els.spds.forEach((btn) =>
+      btn.addEventListener('click', () => {
+        state.rp.speed = Number(btn.dataset.ddcSpd) || 1;
+        els.spds.forEach((b) => b.classList.toggle('on', b === btn));
+        if (state.rp.playing) state.rp.startStamp = performance.now() - (state.rp.t / state.rp.speed) * 1000;
+      }),
+    );
+    els.tl.addEventListener('click', (event) => {
+      const { t } = eventAtX(event.offsetX);
+      seekTo(t);
+    });
+    els.tl.addEventListener('mousemove', (event) => {
+      const { t, idx } = eventAtX(event.offsetX);
+      if (idx < 0) {
+        if (tipEl) tipEl.style.display = 'none';
+        return;
+      }
+      const e = state.rp.events[idx];
+      const tip = ensureTip();
+      tip.innerHTML = `<div class="ddc-tt${e.type === 'error' || e.denied ? ' error' : ''}">${esc(typeText(e.type) || e.type)} · #${e.seq} · +${shortHms(e.t)}</div>
+        <div class="ddc-tt">${esc(e.title || '')}</div>
+        <div class="ddc-td">${esc(e.detail || '')}</div>`;
+      tip.style.display = 'block';
+      const pad = 14;
+      let x = event.clientX + pad;
+      let y = event.clientY + pad;
+      const box = tip.getBoundingClientRect();
+      if (x + box.width > window.innerWidth - 8) x = event.clientX - box.width - pad;
+      if (y + box.height > window.innerHeight - 8) y = event.clientY - box.height - pad;
+      tip.style.left = `${x}px`;
+      tip.style.top = `${y}px`;
+    });
+    els.tl.addEventListener('mouseleave', () => {
+      if (tipEl) tipEl.style.display = 'none';
+    });
+    els.search.addEventListener('input', () => {
+      state.hist.query = els.search.value || '';
+      renderHistory();
+    });
+    els.chips.forEach((chip) =>
+      chip.addEventListener('click', () => {
+        state.hist.filter = chip.dataset.ddcHf || 'all';
+        els.chips.forEach((c) => c.classList.toggle('on', c === chip));
+        renderHistory();
+      }),
+    );
+  }
+
+  // 语言切换：同一 root 节点上原位重建 DOM（panel.el 身份不变，engine 侧
+  // appendChild / display 控制 / 快捷查询都不受影响），state 全保留，
+  // 重建后按当前视图从 state 重新渲染，不丢已收到的事件。
+  function rebuild() {
+    const wasPlaying = state.rp.playing;
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    state.rp.playing = false;
+    buildDom(true);
+    els.search.value = state.hist.query;
+    els.chips.forEach((c) => c.classList.toggle('on', (c.dataset.ddcHf || 'all') === state.hist.filter));
+    state.renderedSeq = 0;
+    updateLive(null, null);
+    if (state.rp.session || state.rp.events.length) renderReplayList();
+    setView(state.view);
+    const text = state.elapsedSec == null ? '--:--:--' : hms(state.elapsedSec);
+    els.recTime.textContent = text;
+    els.mElapsed.textContent = text;
+    updateStepAge();
+    if (wasPlaying && state.rp.events.length && state.rp.t < state.rp.dur) play();
+  }
+
+  function switchLanguage() {
+    lang = lang === 'zh' ? 'en' : 'zh';
+    try {
+      localStorage.setItem(LANG_KEY, lang);
+    } catch { /* 同 detectLanguage：localStorage 不可用时不落盘，仅本次生效 */ }
+    rebuild();
+  }
+
+  buildDom(false);
 
   // ---------- 通用 ----------
   function setView(view) {
@@ -375,13 +689,13 @@ function createDashcamPanel(options) {
     time.textContent = timeText;
     const tag = document.createElement('span');
     tag.className = `ddc-tag t-${e.type}`;
-    tag.textContent = TYPE_TEXT[e.type] || e.type;
+    tag.textContent = typeText(e.type);
     const main = document.createElement('div');
     main.style.minWidth = '0';
     main.style.flex = '1';
     const title = document.createElement('div');
     title.className = 'ddc-title';
-    title.textContent = (e.denied && e.type !== 'error' ? '[拒绝] ' : '') + (e.title || '—');
+    title.textContent = (e.denied && e.type !== 'error' ? t('deny.prefix') : '') + (e.title || '—');
     const detail = document.createElement('div');
     detail.className = 'ddc-detail';
     detail.textContent = e.detail || '';
@@ -395,19 +709,19 @@ function createDashcamPanel(options) {
 
   function extraBlock(e) {
     const lines = [];
-    if (e.ruleId) lines.push(`规则   ${e.ruleId}`);
-    lines.push(`决策   ${e.denied ? 'deny' : 'allow'}${e.intercepted ? '（已拦截）' : ''}`);
+    if (e.ruleId) lines.push(`${t('kv.rule')}   ${e.ruleId}`);
+    lines.push(`${t('kv.decision')}   ${e.denied ? 'deny' : 'allow'}${e.intercepted ? t('kv.intercepted') : ''}`);
     if (e.extra && Array.isArray(e.extra.paths) && e.extra.paths.length) {
-      lines.push(`路径   ${e.extra.paths.join('\n       ')}`);
+      lines.push(`${t('kv.paths')}   ${e.extra.paths.join('\n       ')}`);
     }
     if (e.extra && Array.isArray(e.extra.commands) && e.extra.commands.length) {
-      lines.push(`命令   ${e.extra.commands.join('\n       ')}`);
+      lines.push(`${t('kv.commands')}   ${e.extra.commands.join('\n       ')}`);
     }
     if (e.extra && Array.isArray(e.extra.hosts) && e.extra.hosts.length) {
-      lines.push(`主机   ${e.extra.hosts.join(', ')}`);
+      lines.push(`${t('kv.hosts')}   ${e.extra.hosts.join(', ')}`);
     }
     if (e.extra && typeof e.extra.commandLine === 'string' && e.extra.commandLine) {
-      lines.push(`命令行 ${e.extra.commandLine}`);
+      lines.push(`${t('kv.commandLine')} ${e.extra.commandLine}`);
     }
     return lines.join('\n');
   }
@@ -429,14 +743,14 @@ function createDashcamPanel(options) {
       const ratio = s.judgments ? clamp((counts.intercepted || 0) / s.judgments, 0, 1) : 0;
       els.bar.style.width = `${(ratio * 100).toFixed(1)}%`;
       const kv = [];
-      kv.push(['模式', s.mode === 'enforce' ? 'enforce（强制）' : s.mode === 'advisory' ? 'advisory（旁路）' : '—', s.mode === 'enforce']);
-      kv.push(['旁路命中', `${counts.bypass || 0} 次（deny 未拦截）`, false]);
-      kv.push(['未纳管调用', `${counts.unmapped || 0} 次（telemetry）`, false]);
-      kv.push(['插件版本', s.version || '—', false]);
-      if (s.session && s.session.id) kv.push(['会话 ID', s.session.id, false]);
-      if (s.session && s.session.model) kv.push(['模型', s.session.model, false]);
-      kv.push(['账本记录', `#${s.ledgerSeq || 0}${s.windowed ? '（窗口截断）' : ''}`, false]);
-      if (s.ledgerPath) kv.push(['账本路径', s.ledgerPath, false]);
+      kv.push([t('kv.mode'), s.mode === 'enforce' ? t('mode.enforce') : s.mode === 'advisory' ? t('mode.advisory') : '—', s.mode === 'enforce']);
+      kv.push([t('kv.bypass'), `${counts.bypass || 0} ${t('unit.bypass')}`, false]);
+      kv.push([t('kv.unmapped'), `${counts.unmapped || 0} ${t('unit.unmapped')}`, false]);
+      kv.push([t('kv.version'), s.version || '—', false]);
+      if (s.session && s.session.id) kv.push([t('kv.session'), s.session.id, false]);
+      if (s.session && s.session.model) kv.push([t('kv.model'), s.session.model, false]);
+      kv.push([t('kv.ledger'), `#${s.ledgerSeq || 0}${s.windowed ? t('unit.windowed') : ''}`, false]);
+      if (s.ledgerPath) kv.push([t('kv.ledgerPath'), s.ledgerPath, false]);
       els.sessionKv.innerHTML = kv
         .map(([k, v, warn]) => `<div class="ddc-k">${esc(k)}</div><div class="ddc-val${warn ? ' warn' : ''}">${esc(v)}</div>`)
         .join('');
@@ -457,11 +771,11 @@ function createDashcamPanel(options) {
       const rows = els.stream.querySelectorAll('.ddc-ev');
       for (let i = rows.length - 1; i >= 400; i -= 1) rows[i].remove();
     }
-    els.streamMeta.textContent = `共 ${state.live.length} 条`;
+    els.streamMeta.textContent = tf('stream.count', { n: state.live.length });
     if (!state.live.length && !els.stream.querySelector('.ddc-empty')) {
       const empty = document.createElement('div');
       empty.className = 'ddc-empty';
-      empty.textContent = '等待账本记录…';
+      empty.textContent = t('empty.stream');
       els.stream.appendChild(empty);
     } else if (state.live.length) {
       const empty = els.stream.querySelector('.ddc-empty');
@@ -472,12 +786,18 @@ function createDashcamPanel(options) {
     if (last) {
       const isError = last.type === 'error' || last.denied;
       els.stepTag.className = `ddc-tag t-${last.type}`;
-      els.stepTag.textContent = TYPE_TEXT[last.type] || last.type;
-      els.stepTitle.textContent = (last.denied && last.type !== 'error' ? '[拒绝] ' : '') + (last.title || '—');
+      els.stepTag.textContent = typeText(last.type);
+      els.stepTitle.textContent = (last.denied && last.type !== 'error' ? t('deny.prefix') : '') + (last.title || '—');
       els.stepTitle.parentElement.parentElement.classList.toggle('error', !!isError);
       els.stepDetail.textContent = last.detail || '—';
       if (last.ts) els.stepAge.dataset.ddcTs = last.ts;
     }
+  }
+
+  function updateStepAge() {
+    if (!els.stepAge.dataset.ddcTs) return;
+    const age = Math.max(0, Math.floor((Date.now() - Date.parse(els.stepAge.dataset.ddcTs)) / 1000));
+    els.stepAge.textContent = age < 60 ? `${age} ${t('time.secAgo')}` : `${Math.floor(age / 60)} ${t('time.minAgo')}`;
   }
 
   function tickClock(connected) {
@@ -492,10 +812,7 @@ function createDashcamPanel(options) {
     els.recTime.textContent = text;
     els.rec.classList.toggle('ddc-off', !connected);
     els.mElapsed.textContent = text;
-    if (els.stepAge.dataset.ddcTs) {
-      const age = Math.max(0, Math.floor((Date.now() - Date.parse(els.stepAge.dataset.ddcTs)) / 1000));
-      els.stepAge.textContent = age < 60 ? `${age} 秒前` : `${Math.floor(age / 60)} 分钟前`;
-    }
+    updateStepAge();
     if (state.rp.playing) drawTimeline();
   }
 
@@ -512,12 +829,22 @@ function createDashcamPanel(options) {
     rp.t = 0;
     rp.active = -1;
     rp.speed = 1;
-    els.spds.forEach((b) => b.classList.toggle('on', b.dataset.ddcSpd === '1'));
-    els.rpTitle.textContent = session
-      ? `${session.id} · ${dateShort(session.started)}（${session.events} 事件 / ${session.errors} 异常）`
-      : '最近记录';
     // 服务端 limit 截断时如实标注，避免「看起来完整其实少了」。
-    els.rpMeta.textContent = `${rp.events.length} 条${truncated ? ' · 已截断（只载入前 2000 条）' : ''}`;
+    rp.truncated = truncated;
+    renderReplayList();
+    drawTimeline();
+    setView('replay');
+  }
+
+  // 回放列表/详情按 state.rp 重画：startReplay 与语言切换重建共用，
+  // 不动 rp.t/rp.active，重建不丢播放进度。
+  function renderReplayList() {
+    const rp = state.rp;
+    els.spds.forEach((b) => b.classList.toggle('on', Number(b.dataset.ddcSpd) === rp.speed));
+    els.rpTitle.textContent = rp.session
+      ? tf('rp.sessionTitle', { id: rp.session.id, date: dateShort(rp.session.started), events: rp.session.events, errors: rp.session.errors })
+      : t('rp.recent');
+    els.rpMeta.textContent = `${rp.events.length} ${t('unit.entries')}${rp.truncated ? ` · ${t('rp.truncated')}` : ''}`;
     els.evlist.innerHTML = '';
     for (const e of rp.events) {
       els.evlist.appendChild(evRow(e, shortHms(e.t), true));
@@ -525,30 +852,29 @@ function createDashcamPanel(options) {
     if (!rp.events.length) {
       const empty = document.createElement('div');
       empty.className = 'ddc-empty';
-      empty.textContent = '该录像段没有可用记录';
+      empty.textContent = t('rp.empty');
       els.evlist.appendChild(empty);
     }
-    renderDetail(-1);
-    drawTimeline();
-    setView('replay');
+    if (rp.active >= 0) syncActive();
+    else renderDetail(-1);
   }
 
   function renderDetail(idx) {
     const rp = state.rp;
     const e = idx >= 0 ? rp.events[idx] : null;
     if (!e) {
-      els.rpDetail.innerHTML = '<div class="ddc-empty">点击时间轴或事件查看详情</div>';
+      els.rpDetail.innerHTML = `<div class="ddc-empty">${t('detail.hint')}</div>`;
       return;
     }
     const block = extraBlock(e);
     els.rpDetail.innerHTML = `
-      <div class="ddc-step"><span class="ddc-tag t-${e.type}">${TYPE_TEXT[e.type] || e.type}</span>
-        <div><div class="ddc-title">${esc((e.denied && e.type !== 'error' ? '[拒绝] ' : '') + (e.title || '—'))}</div>
+      <div class="ddc-step"><span class="ddc-tag t-${e.type}">${typeText(e.type)}</span>
+        <div><div class="ddc-title">${esc((e.denied && e.type !== 'error' ? t('deny.prefix') : '') + (e.title || '—'))}</div>
         <div class="ddc-detail">${esc(e.detail || '')}</div></div></div>
       <div class="ddc-kv">
-        <div class="ddc-k">时间点</div><div class="ddc-val">${esc(clockFull(e.ts))}</div>
-        <div class="ddc-k">相对</div><div class="ddc-val">+${shortHms(e.t)}</div>
-        <div class="ddc-k">序号</div><div class="ddc-val">#${e.seq}</div>
+        <div class="ddc-k">${t('kv.time')}</div><div class="ddc-val">${esc(clockFull(e.ts))}</div>
+        <div class="ddc-k">${t('kv.rel')}</div><div class="ddc-val">+${shortHms(e.t)}</div>
+        <div class="ddc-k">${t('kv.seq')}</div><div class="ddc-val">#${e.seq}</div>
       </div>
       ${block ? `<pre class="ddc-diff">${esc(block)}</pre>` : ''}`;
   }
@@ -590,13 +916,13 @@ function createDashcamPanel(options) {
     if (rp.t >= rp.dur) rp.t = 0;
     rp.playing = true;
     rp.startStamp = performance.now() - (rp.t / rp.speed) * 1000;
-    els.play.textContent = '暂停';
+    els.play.textContent = t('pause');
     loop();
   }
 
   function pause() {
     state.rp.playing = false;
-    els.play.textContent = '播放';
+    els.play.textContent = t('play');
     if (rafId) {
       cancelAnimationFrame(rafId);
       rafId = 0;
@@ -755,13 +1081,13 @@ function createDashcamPanel(options) {
     if (!rows.length) {
       const empty = document.createElement('div');
       empty.className = 'ddc-empty';
-      empty.textContent = sessions.length ? '没有匹配的录像' : '账本里还没有录像段';
+      empty.textContent = sessions.length ? t('empty.history.match') : t('empty.history.none');
       els.hlist.appendChild(empty);
     }
     for (const s of rows) {
       const row = document.createElement('div');
       row.className = 'ddc-hrow';
-      const stText = s.status === 'recording' ? '<span class="ddc-st rec">录制中</span>' : '<span class="ddc-st done">已完成</span>';
+      const stText = s.status === 'recording' ? `<span class="ddc-st rec">${t('st.recording')}</span>` : `<span class="ddc-st done">${t('st.completed')}</span>`;
       row.innerHTML = `
         <span class="ddc-hid">${esc(s.id)}</span>
         <span class="ddc-hstart">${esc(clockFull(s.started))}<span style="color:var(--ddc-text-3)"> → ${esc(clock(s.ended))}</span></span>
@@ -774,62 +1100,15 @@ function createDashcamPanel(options) {
       });
       els.hlist.appendChild(row);
     }
-    els.histMeta.textContent = `${rows.length} / ${sessions.length} 段`;
+    els.histMeta.textContent = `${rows.length} / ${sessions.length} ${t('unit.sessions')}`;
   }
 
-  // ---------- 事件接线 ----------
-  els.close.addEventListener('click', () => {
-    if (typeof options.onClose === 'function') options.onClose();
+  // ---------- 全局接线 ----------
+  // 挂在具体节点上的事件接线都在 wireEvents()（语言重建时对新节点重跑）；
+  // 这里只放跨重建注册一次的监听。els / resizeObserver 是 let，闭包永远取当前值。
+  disposers.push(() => {
+    if (resizeObserver) resizeObserver.disconnect();
   });
-  els.tabs.forEach((tab) => tab.addEventListener('click', () => setView(tab.dataset.ddcView)));
-  els.play.addEventListener('click', () => (state.rp.playing ? pause() : play()));
-  els.spds.forEach((btn) =>
-    btn.addEventListener('click', () => {
-      state.rp.speed = Number(btn.dataset.ddcSpd) || 1;
-      els.spds.forEach((b) => b.classList.toggle('on', b === btn));
-      if (state.rp.playing) state.rp.startStamp = performance.now() - (state.rp.t / state.rp.speed) * 1000;
-    }),
-  );
-  els.tl.addEventListener('click', (event) => {
-    const { t } = eventAtX(event.offsetX);
-    seekTo(t);
-  });
-  els.tl.addEventListener('mousemove', (event) => {
-    const { t, idx } = eventAtX(event.offsetX);
-    if (idx < 0) {
-      if (tipEl) tipEl.style.display = 'none';
-      return;
-    }
-    const e = state.rp.events[idx];
-    const tip = ensureTip();
-    tip.innerHTML = `<div class="ddc-tt${e.type === 'error' || e.denied ? ' error' : ''}">${esc(TYPE_TEXT[e.type] || e.type)} · #${e.seq} · +${shortHms(e.t)}</div>
-      <div class="ddc-tt">${esc(e.title || '')}</div>
-      <div class="ddc-td">${esc(e.detail || '')}</div>`;
-    tip.style.display = 'block';
-    const pad = 14;
-    let x = event.clientX + pad;
-    let y = event.clientY + pad;
-    const box = tip.getBoundingClientRect();
-    if (x + box.width > window.innerWidth - 8) x = event.clientX - box.width - pad;
-    if (y + box.height > window.innerHeight - 8) y = event.clientY - box.height - pad;
-    tip.style.left = `${x}px`;
-    tip.style.top = `${y}px`;
-  });
-  els.tl.addEventListener('mouseleave', () => {
-    if (tipEl) tipEl.style.display = 'none';
-  });
-  els.search.addEventListener('input', () => {
-    state.hist.query = els.search.value || '';
-    renderHistory();
-  });
-  els.chips.forEach((chip) =>
-    chip.addEventListener('click', () => {
-      state.hist.filter = chip.dataset.ddcHf || 'all';
-      els.chips.forEach((c) => c.classList.toggle('on', c === chip));
-      renderHistory();
-    }),
-  );
-  els.legend.innerHTML = TYPE_ORDER.map((type) => `<span><i style="background:${MARK[type][1]}"></i>${TYPE_TEXT[type]}</span>`).join('');
 
   function onKeydown(event) {
     if (root.style.display === 'none') return;
@@ -860,12 +1139,6 @@ function createDashcamPanel(options) {
   }
   document.addEventListener('keydown', onKeydown, true);
   disposers.push(() => document.removeEventListener('keydown', onKeydown, true));
-
-  const resizeObserver = new ResizeObserver(() => {
-    if (state.view === 'replay') drawTimeline();
-  });
-  resizeObserver.observe(els.tl);
-  disposers.push(() => resizeObserver.disconnect());
 
   function dispose() {
     pause();

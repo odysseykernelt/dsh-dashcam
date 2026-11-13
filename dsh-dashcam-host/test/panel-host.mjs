@@ -300,5 +300,306 @@ function rec(seq, ts, capability, action, extra = {}) {
   check('apply: 卸载后路由清空', ws.routes.length === 0, String(ws.routes.length));
 }
 
+// ---------- 8) 面板 i18n：词典一致性 + 语言切换（内联 mini-DOM stub，不引第三方依赖） ----------
+{
+  // 环境 stub：localStorage / navigator / document / ResizeObserver / rAF。
+  // DOM stub 只覆盖面板用到的能力：template 解析、querySelector('.a .b' / [attr="v"])、
+  // classList、dataset、事件接线与 click()。
+  const langStore = new Map();
+  const localStorageStub = {
+    getItem: (k) => (langStore.has(k) ? langStore.get(k) : null),
+    setItem: (k, v) => { langStore.set(k, String(v)); },
+    removeItem: (k) => { langStore.delete(k); },
+  };
+  const VOID_TAGS = new Set(['input', 'br', 'img', 'hr', 'meta', 'link']);
+
+  class StubText {
+    constructor(text) { this.nodeType = 'text'; this.text = String(text); }
+  }
+
+  class StubElement {
+    constructor(tag) {
+      this.nodeType = 'element';
+      this.tagName = String(tag).toLowerCase();
+      this.childNodes = [];
+      this.parentNode = null;
+      this.attributes = {};
+      this.listeners = {};
+      this.className = '';
+      this.style = {};
+      this.value = '';
+      this.isConnected = false;
+      const attrs = this.attributes;
+      const toDash = (prop) => `data-${String(prop).replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
+      this.dataset = new Proxy({}, {
+        set(target, prop, value) { target[prop] = String(value); attrs[toDash(prop)] = String(value); return true; },
+        deleteProperty(target, prop) { delete target[prop]; delete attrs[toDash(prop)]; return true; },
+      });
+    }
+    get parentElement() { return this.parentNode && this.parentNode.nodeType === 'element' ? this.parentNode : null; }
+    getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; }
+    setAttribute(name, value) {
+      const v = String(value);
+      this.attributes[name] = v;
+      if (name === 'class') this.className = v;
+      if (String(name).startsWith('data-')) {
+        const key = String(name).slice(5).replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+        this.dataset[key] = v;
+      }
+    }
+    get classList() {
+      const el = this;
+      const names = () => el.className.split(/\s+/).filter(Boolean);
+      return {
+        contains: (c) => names().includes(c),
+        add: (c) => { const s = names(); if (!s.includes(c)) el.className = [...s, c].join(' '); },
+        remove: (c) => { el.className = names().filter((x) => x !== c).join(' '); },
+        toggle: (c, force) => {
+          const s = names();
+          const has = s.includes(c);
+          const want = force === undefined ? !has : !!force;
+          el.className = want ? [...s.filter((x) => x !== c), c].join(' ') : s.filter((x) => x !== c).join(' ');
+          return want;
+        },
+      };
+    }
+    appendChild(node) { node.parentNode = this; this.childNodes.push(node); markTree(node, true); return node; }
+    insertBefore(node, ref) {
+      node.parentNode = this;
+      const i = ref ? this.childNodes.indexOf(ref) : -1;
+      if (i < 0) this.childNodes.push(node); else this.childNodes.splice(i, 0, node);
+      markTree(node, true);
+      return node;
+    }
+    removeChild(node) {
+      const i = this.childNodes.indexOf(node);
+      if (i >= 0) this.childNodes.splice(i, 1);
+      node.parentNode = null;
+      markTree(node, false);
+      return node;
+    }
+    remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+    replaceWith(node) {
+      const p = this.parentNode;
+      if (!p) return;
+      p.childNodes[p.childNodes.indexOf(this)] = node;
+      this.parentNode = null;
+      markTree(this, false);
+      node.parentNode = p;
+      markTree(node, true);
+    }
+    set textContent(value) { this.childNodes = value === '' ? [] : [new StubText(value)]; }
+    get textContent() {
+      return this.childNodes.map((n) => (n.nodeType === 'text' ? n.text : n.textContent)).join('');
+    }
+    get children() { return this.childNodes.filter((n) => n.nodeType === 'element'); }
+    set innerHTML(html) { this.childNodes = parseHtml(String(html), this); markTree(this, true); }
+    get innerHTML() { return this.childNodes.map((n) => (n.nodeType === 'text' ? n.text : n.innerHTML)).join(''); }
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
+    removeEventListener(type, fn) { const l = this.listeners[type]; if (l) { const i = l.indexOf(fn); if (i >= 0) l.splice(i, 1); } }
+    click() {
+      const ev = { offsetX: 0, clientX: 0, clientY: 0, key: '', code: '', target: this, preventDefault() {} };
+      for (const fn of [...(this.listeners.click || [])]) fn(ev);
+    }
+    getBoundingClientRect() { return { width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 }; }
+    scrollIntoView() {}
+    querySelector(sel) { return queryAll(this, sel)[0] || null; }
+    querySelectorAll(sel) { return queryAll(this, sel); }
+  }
+
+  function markTree(node, value) {
+    if (!node || node.nodeType !== 'element') return;
+    node.isConnected = value;
+    for (const c of node.childNodes) if (c.nodeType === 'element') markTree(c, value);
+  }
+
+  function decodeEntities(s) {
+    return s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  }
+
+  function parseHtml(html, owner) {
+    const top = [];
+    const stack = [{ arr: top, el: owner }];
+    const tagRe = /<\/?([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
+    let last = 0;
+    let m;
+    while ((m = tagRe.exec(html)) !== null) {
+      if (m.index > last) stack[stack.length - 1].arr.push(new StubText(decodeEntities(html.slice(last, m.index))));
+      last = tagRe.lastIndex;
+      if (html[m.index + 1] === '/') { stack.pop(); continue; }
+      const frame = stack[stack.length - 1];
+      const el = new StubElement(m[1]);
+      // 分组：1=属性名，2=双引号值，3=单引号值（无值属性两组都为 undefined）
+      const attrRe = /([a-zA-Z_:@][-\w:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'))?/g;
+      let a;
+      while ((a = attrRe.exec(m[2])) !== null) {
+        el.setAttribute(a[1], a[2] === undefined && a[3] === undefined ? '' : decodeEntities(a[2] !== undefined ? a[2] : a[3]));
+      }
+      el.parentNode = frame.el;
+      frame.arr.push(el);
+      if (!m[3] && !VOID_TAGS.has(el.tagName)) stack.push({ arr: el.childNodes, el });
+    }
+    if (last < html.length) stack[stack.length - 1].arr.push(new StubText(decodeEntities(html.slice(last))));
+    return top;
+  }
+
+  function parseSelector(sel) {
+    return sel.trim().split(/\s+/).map((part) => {
+      const m = part.match(/^\.([A-Za-z0-9_-]+)((?:\[[^\]]*\])*)$/);
+      if (!m) throw new Error(`mini-DOM 不支持的选择器: ${sel}`);
+      const attrs = [];
+      const attrRe = /\[([-\w]+)(?:="([^"]*)")?\]/g;
+      let a;
+      while ((a = attrRe.exec(m[2])) !== null) attrs.push([a[1], a[2] === undefined ? null : a[2]]);
+      return { cls: m[1], attrs };
+    });
+  }
+
+  function matchPart(el, part) {
+    if (!el.classList.contains(part.cls)) return false;
+    for (const [k, v] of part.attrs) {
+      const actual = el.getAttribute(k);
+      if (actual === null) return false;
+      if (v !== null && actual !== v) return false;
+    }
+    return true;
+  }
+
+  function chainMatch(el, parts, i) {
+    if (!matchPart(el, parts[i])) return false;
+    if (i === 0) return true;
+    let p = el.parentElement;
+    while (p) {
+      if (chainMatch(p, parts, i - 1)) return true;
+      p = p.parentElement;
+    }
+    return false;
+  }
+
+  function queryAll(rootEl, sel) {
+    const parts = parseSelector(sel);
+    const out = [];
+    const walk = (el) => {
+      for (const c of el.children) {
+        if (chainMatch(c, parts, parts.length - 1)) out.push(c);
+        walk(c);
+      }
+    };
+    walk(rootEl);
+    return out;
+  }
+
+  const stubBody = new StubElement('body');
+  const docListeners = {};
+  const documentStub = {
+    createElement: (tag) => new StubElement(tag),
+    body: stubBody,
+    addEventListener(type, fn) { (docListeners[type] = docListeners[type] || []).push(fn); },
+    removeEventListener(type, fn) { const l = docListeners[type]; if (l) { const i = l.indexOf(fn); if (i >= 0) l.splice(i, 1); } },
+  };
+
+  const prevDocument = globalThis.document;
+  const prevLocalStorage = globalThis.localStorage;
+  const prevNavigator = globalThis.navigator;
+  const prevRO = globalThis.ResizeObserver;
+  const prevRaf = globalThis.requestAnimationFrame;
+  const prevCaf = globalThis.cancelAnimationFrame;
+  const prevGCS = globalThis.getComputedStyle;
+  Object.defineProperty(globalThis, 'document', { value: documentStub, configurable: true });
+  Object.defineProperty(globalThis, 'localStorage', { value: localStorageStub, configurable: true });
+  Object.defineProperty(globalThis, 'navigator', { value: { language: 'zh-CN' }, configurable: true });
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    value: class { constructor() {} observe() {} disconnect() {} unobserve() {} },
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, 'requestAnimationFrame', { value: () => 0, configurable: true });
+  Object.defineProperty(globalThis, 'cancelAnimationFrame', { value: () => {}, configurable: true });
+  Object.defineProperty(globalThis, 'getComputedStyle', { value: () => ({ getPropertyValue: () => '' }), configurable: true });
+
+  try {
+    const { createDashcamPanel, DASHCAM_I18N } = await import('../src/client/dashcam-panel.js');
+
+    // (a) zh/en 两包 key 集合完全一致（防漏翻）
+    const zhKeys = Object.keys(DASHCAM_I18N.zh).sort();
+    const enKeys = Object.keys(DASHCAM_I18N.en).sort();
+    check('i18n: zh/en 两包 key 集合完全一致（防漏翻）',
+      JSON.stringify(zhKeys) === JSON.stringify(enKeys) && zhKeys.length >= 70,
+      `zh=${zhKeys.length}, en=${enKeys.length}`);
+
+    // (b) 语言切换：DOM 出现英文文案 + localStorage 持久化；state 数据保留
+    const panel = createDashcamPanel({ onClose() {} });
+    const rootEl = panel.el;
+    const tabsNode = rootEl.querySelector('.ddc-tabs');
+    check('i18n: 默认 zh（navigator.language 以 zh 开头）',
+      rootEl.querySelector('.ddc-sub').textContent === '判定链账本 · 实时录制与回放'
+      && [...rootEl.querySelectorAll('.ddc-tab')].map((b) => b.textContent).join('|') === '实时录制|回放|录像历史'
+      && rootEl.querySelector('.ddc-lang').textContent === 'EN',
+      JSON.stringify([...rootEl.querySelectorAll('.ddc-tab')].map((b) => b.textContent)));
+
+    // 喂一条实时记录（与 lib/panel.js 脱敏输出的记录同形）
+    panel.updateLive(null, [{
+      seq: 1, ts: '2026-11-09T01:00:00.000Z', type: 'read', title: '读取 C:/a.txt',
+      detail: '', denied: false, intercepted: false,
+    }]);
+    check('i18n: 实时流 zh 渲染（类型标签 / 计数量词）',
+      rootEl.querySelector('.ddc-stream .ddc-ev .ddc-tag').textContent === '读取'
+      && rootEl.querySelector('.ddc-stream-meta').textContent === '共 1 条',
+      JSON.stringify(rootEl.querySelector('.ddc-stream-meta').textContent));
+
+    rootEl.querySelector('.ddc-lang').click();
+    check('i18n: 切换后 DOM 出现英文且 localStorage 落盘',
+      rootEl.querySelector('.ddc-sub').textContent === 'Judgment ledger · live recording & replay'
+      && [...rootEl.querySelectorAll('.ddc-tab')].map((b) => b.textContent).join('|') === 'Live|Replay|History'
+      && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-tag').textContent === 'Reading'
+      && rootEl.querySelector('.ddc-stream-meta').textContent === '1 entries'
+      && rootEl.querySelector('.ddc-play').textContent === 'Play'
+      && rootEl.querySelector('.ddc-search').getAttribute('placeholder') === 'Search ID / date…'
+      && rootEl.querySelector('.ddc-lang').textContent === '中文'
+      && langStore.get('ddc-lang') === 'en',
+      JSON.stringify({ sub: rootEl.querySelector('.ddc-sub').textContent, lang: langStore.get('ddc-lang') }));
+    check('i18n: 重建保留根节点与 tabs 节点（engine 观察器不失效）',
+      panel.el === rootEl && rootEl.querySelector('.ddc-tabs') === tabsNode);
+    check('i18n: 切换不清空已收到的事件',
+      rootEl.querySelectorAll('.ddc-stream .ddc-ev').length === 1,
+      String(rootEl.querySelectorAll('.ddc-stream .ddc-ev').length));
+
+    rootEl.querySelector('.ddc-lang').click();
+    check('i18n: 切回 zh 文案逐字节一致',
+      rootEl.querySelector('.ddc-sub').textContent === '判定链账本 · 实时录制与回放'
+      && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-tag').textContent === '读取'
+      && rootEl.querySelector('.ddc-stream-meta').textContent === '共 1 条'
+      && rootEl.querySelector('.ddc-lang').textContent === 'EN'
+      && langStore.get('ddc-lang') === 'zh',
+      JSON.stringify({ sub: rootEl.querySelector('.ddc-sub').textContent, lang: langStore.get('ddc-lang') }));
+
+    // 持久化生效：localStorage 里存过 en，重新 import 模块（模拟页面刷新）直接落英文
+    langStore.set('ddc-lang', 'en');
+    const fresh = await import('../src/client/dashcam-panel.js?persistence-check');
+    const panel2 = fresh.createDashcamPanel({ onClose() {} });
+    check('i18n: localStorage 持久化生效（重挂载直接英文）',
+      panel2.el.querySelector('.ddc-sub').textContent === 'Judgment ledger · live recording & replay'
+      && [...panel2.el.querySelectorAll('.ddc-tab')].map((b) => b.textContent).join('|') === 'Live|Replay|History',
+      JSON.stringify([...panel2.el.querySelectorAll('.ddc-tab')].map((b) => b.textContent)));
+    panel2.dispose();
+    panel.dispose();
+    langStore.delete('ddc-lang');
+  } finally {
+    // 还原全局 stub，避免影响同进程其他断言
+    const restore = (name, prev) => {
+      try {
+        if (prev === undefined) delete globalThis[name];
+        else Object.defineProperty(globalThis, name, { value: prev, configurable: true });
+      } catch { /* Node 内建 getter 不可重定义时忽略 */ }
+    };
+    restore('document', prevDocument);
+    restore('localStorage', prevLocalStorage);
+    restore('ResizeObserver', prevRO);
+    restore('requestAnimationFrame', prevRaf);
+    restore('cancelAnimationFrame', prevCaf);
+    restore('getComputedStyle', prevGCS);
+    restore('navigator', prevNavigator);
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

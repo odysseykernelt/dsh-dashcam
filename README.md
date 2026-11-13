@@ -94,7 +94,7 @@ The plugin declares, you grant, and both must match before a call goes through; 
 - **Tamper-evident records** — every record links to the previous one; change any line and it shows. An optional HMAC key strengthens it further.
 - **Never in your way** — if recording itself breaks, your tasks keep running; it warns loudly and marks the failure in the ledger.
 - **Verify without the host** — the `verify-ledger` tool re-checks the whole chain offline, no DeepSeek Harness install needed.
-- **Panels on desktop and web** — live view, replay, and session history.
+- **Panels on desktop and web** — live view, replay, and session history; the panel itself speaks Chinese and English (switch in the panel header).
 
 ## Honesty and limits
 

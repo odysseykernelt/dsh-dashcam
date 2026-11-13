@@ -1,6 +1,6 @@
 {
   "name": "dsh-dashcam",
-  "version": "2.0.3",
+  "version": "2.1.0",
   "description": "Tamper-evident audit ledger for DeepSeek Harness (DSH) plugins — zero-config dashcam recording what your AI plugins actually do.",
   "homepage": "https://github.com/odysseykernelt/dsh-dashcam#readme",
   "repository": {
