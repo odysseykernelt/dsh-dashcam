@@ -16,7 +16,12 @@
     "audit-ledger",
     "tamper-evident",
     "ai-agents",
-    "llm"
+    "llm",
+    "security",
+    "security-audit",
+    "permission-audit",
+    "observability",
+    "安全审计"
   ],
   "main": "dsh-dashcam-host/lib/index.js",
   "type": "commonjs",
