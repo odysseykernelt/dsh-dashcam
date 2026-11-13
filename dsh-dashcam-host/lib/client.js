@@ -210,6 +210,36 @@ const I18N = {
     'time.minAgo': '分钟前',
     'unit.events': '事件',
     'unit.errors': '异常',
+    // 事件标题/详情：宿主发结构化 key，面板按当前语言渲染。
+    // 中文串与旧版宿主侧拼装逐字节一致，勿顺手润色。
+    'ev.read': '读取 {target}',
+    'ev.readBare': '读取',
+    'ev.edit': '编辑 {target}',
+    'ev.editBare': '编辑',
+    'ev.delete': '删除 {target}',
+    'ev.deleteBare': '删除',
+    'ev.command': '命令 {target}',
+    'ev.commandBare': '命令',
+    'ev.net': '出网 {target}',
+    'ev.netBare': '出网',
+    'ev.llmRequest': 'LLM 请求',
+    'ev.inbound': '入站消息',
+    'ev.anomaly': '入站异常',
+    'ev.commandLine': '命令行存档',
+    'ev.unmapped': '未映射 · {tool}',
+    'ev.unmappedBare': '未映射工具',
+    'ev.unjudgeable': '无法判定 · {tool}',
+    'ev.unjudgeableBare': '无法判定',
+    'ev.mount': '判定链挂载',
+    'ev.ingressMount': 'ingress 挂载',
+    'ev.ingressDisabled': 'ingress 关闭',
+    'evd.morePaths': '等 {n} 个路径',
+    'evd.moreCommands': '等 {n} 条',
+    'evd.messages': '{n} 条消息',
+    'evd.chars': '{n} 字',
+    'evd.mountMode': '模式 {mode}',
+    'evd.disabled': '未启用',
+    'badge.title': 'Agent Dashcam（Ctrl+Shift+D，拖动可换位置）',
   },
   en: {
     'type.think': 'LLM',
@@ -286,6 +316,34 @@ const I18N = {
     'time.minAgo': 'min ago',
     'unit.events': 'events',
     'unit.errors': 'errors',
+    'ev.read': 'Reading {target}',
+    'ev.readBare': 'Reading',
+    'ev.edit': 'Editing {target}',
+    'ev.editBare': 'Editing',
+    'ev.delete': 'Deleting {target}',
+    'ev.deleteBare': 'Deleting',
+    'ev.command': 'Command {target}',
+    'ev.commandBare': 'Command',
+    'ev.net': 'Outbound {target}',
+    'ev.netBare': 'Outbound',
+    'ev.llmRequest': 'LLM request',
+    'ev.inbound': 'Inbound message',
+    'ev.anomaly': 'Inbound anomaly',
+    'ev.commandLine': 'Command line archive',
+    'ev.unmapped': 'Unmapped · {tool}',
+    'ev.unmappedBare': 'Unmapped tool',
+    'ev.unjudgeable': 'Unjudgeable · {tool}',
+    'ev.unjudgeableBare': 'Unjudgeable',
+    'ev.mount': 'Judgment chain mounted',
+    'ev.ingressMount': 'Ingress mounted',
+    'ev.ingressDisabled': 'Ingress disabled',
+    'evd.morePaths': '{n} paths total',
+    'evd.moreCommands': '{n} commands total',
+    'evd.messages': '{n} messages',
+    'evd.chars': '{n} chars',
+    'evd.mountMode': 'Mode {mode}',
+    'evd.disabled': 'Not enabled',
+    'badge.title': 'Agent Dashcam (Ctrl+Shift+D, drag to move)',
   },
 };
 // 切换按钮永远显示「可切换到的那个语言」的名字，方便用户随时找到它。
@@ -293,6 +351,11 @@ const LANG_TOGGLE_LABEL = { zh: 'EN', en: '中文' };
 
 // 宿主侧测试用：断言 zh/en 两包 key 集合一致（build.mjs 拼接时会剥掉 export 前缀）。
 const DASHCAM_I18N = I18N;
+
+// 徽章 tooltip 由 engine 持有（不在面板 DOM 里），挂在面板外按当前语言取文案。
+function badgeTitle() {
+  return t('badge.title');
+}
 
 function detectLanguage() {
   try {
@@ -320,6 +383,23 @@ function typeText(type) {
   const key = `type.${type}`;
   const pack = I18N[lang] || I18N.en;
   return Object.prototype.hasOwnProperty.call(pack, key) ? pack[key] : type;
+}
+
+// 事件标题/详情：宿主发结构化 key + 变量（见 lib/panel.js sanitizeRecord），
+// 这里按当前语言渲染。字符串部分原样输出（路径/命令/主机等数据），{k,v} 查词典。
+function evPart(part) {
+  if (typeof part === 'string') return part;
+  if (!part || !part.k) return '';
+  return part.v ? tf(part.k, part.v) : t(part.k);
+}
+
+function evTitle(e) {
+  return e.titleKey ? evPart({ k: e.titleKey, v: e.titleVars }) : (e.titleText || '');
+}
+
+function evDetail(e) {
+  const parts = Array.isArray(e.detailParts) ? e.detailParts : [];
+  return parts.map(evPart).filter(Boolean).join(' · ');
 }
 
 const TYPE_ORDER = ['think', 'read', 'edit', 'bash', 'net', 'tel', 'error'];
@@ -600,8 +680,8 @@ function createDashcamPanel(options) {
       const e = state.rp.events[idx];
       const tip = ensureTip();
       tip.innerHTML = `<div class="ddc-tt${e.type === 'error' || e.denied ? ' error' : ''}">${esc(typeText(e.type) || e.type)} · #${e.seq} · +${shortHms(e.t)}</div>
-        <div class="ddc-tt">${esc(e.title || '')}</div>
-        <div class="ddc-td">${esc(e.detail || '')}</div>`;
+        <div class="ddc-tt">${esc(evTitle(e))}</div>
+        <div class="ddc-td">${esc(evDetail(e))}</div>`;
       tip.style.display = 'block';
       const pad = 14;
       let x = event.clientX + pad;
@@ -658,6 +738,7 @@ function createDashcamPanel(options) {
       localStorage.setItem(LANG_KEY, lang);
     } catch { /* 同 detectLanguage：localStorage 不可用时不落盘，仅本次生效 */ }
     rebuild();
+    if (typeof options.onLanguageChange === 'function') options.onLanguageChange();
   }
 
   buildDom(false);
@@ -695,12 +776,12 @@ function createDashcamPanel(options) {
     main.style.flex = '1';
     const title = document.createElement('div');
     title.className = 'ddc-title';
-    title.textContent = (e.denied && e.type !== 'error' ? t('deny.prefix') : '') + (e.title || '—');
+    title.textContent = (e.denied && e.type !== 'error' ? t('deny.prefix') : '') + (evTitle(e) || '—');
     const detail = document.createElement('div');
     detail.className = 'ddc-detail';
-    detail.textContent = e.detail || '';
+    detail.textContent = evDetail(e);
     main.appendChild(title);
-    if (e.detail) main.appendChild(detail);
+    if (detail.textContent) main.appendChild(detail);
     row.appendChild(time);
     row.appendChild(tag);
     row.appendChild(main);
@@ -787,9 +868,9 @@ function createDashcamPanel(options) {
       const isError = last.type === 'error' || last.denied;
       els.stepTag.className = `ddc-tag t-${last.type}`;
       els.stepTag.textContent = typeText(last.type);
-      els.stepTitle.textContent = (last.denied && last.type !== 'error' ? t('deny.prefix') : '') + (last.title || '—');
+      els.stepTitle.textContent = (last.denied && last.type !== 'error' ? t('deny.prefix') : '') + (evTitle(last) || '—');
       els.stepTitle.parentElement.parentElement.classList.toggle('error', !!isError);
-      els.stepDetail.textContent = last.detail || '—';
+      els.stepDetail.textContent = evDetail(last) || '—';
       if (last.ts) els.stepAge.dataset.ddcTs = last.ts;
     }
   }
@@ -869,8 +950,8 @@ function createDashcamPanel(options) {
     const block = extraBlock(e);
     els.rpDetail.innerHTML = `
       <div class="ddc-step"><span class="ddc-tag t-${e.type}">${typeText(e.type)}</span>
-        <div><div class="ddc-title">${esc((e.denied && e.type !== 'error' ? t('deny.prefix') : '') + (e.title || '—'))}</div>
-        <div class="ddc-detail">${esc(e.detail || '')}</div></div></div>
+        <div><div class="ddc-title">${esc((e.denied && e.type !== 'error' ? t('deny.prefix') : '') + (evTitle(e) || '—'))}</div>
+        <div class="ddc-detail">${esc(evDetail(e))}</div></div></div>
       <div class="ddc-kv">
         <div class="ddc-k">${t('kv.time')}</div><div class="ddc-val">${esc(clockFull(e.ts))}</div>
         <div class="ddc-k">${t('kv.rel')}</div><div class="ddc-val">+${shortHms(e.t)}</div>
@@ -1206,7 +1287,7 @@ function mountDashcam() {
   // ---------- 徽章 ----------
   const badge = document.createElement('div');
   badge.className = 'ddc-badge';
-  badge.title = 'Agent Dashcam（Ctrl+Shift+D，拖动可换位置）';
+  badge.title = badgeTitle();
   badge.setAttribute('role', 'button');
   badge.setAttribute('tabindex', '0');
   badge.innerHTML = '<span class="ddc-dot"></span><span class="ddc-lb">REC</span><span class="ddc-time num">--:--:--</span>';
@@ -1296,6 +1377,7 @@ function mountDashcam() {
       },
     },
     onClose: () => close(),
+    onLanguageChange: () => { badge.title = badgeTitle(); },
   });
   document.body.appendChild(panel.el);
 

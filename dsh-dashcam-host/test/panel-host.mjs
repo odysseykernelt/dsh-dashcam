@@ -72,8 +72,12 @@ function rec(seq, ts, capability, action, extra = {}) {
   const read = sanitizeRecord(rec(1, '2026-11-09T01:00:00.000Z', 'fs.read', 'fs.read', {
     ruleId: 'r1', scope: { paths: ['C:/a.txt', 'C:/b.txt'] },
   }));
-  check('sanitize: fs.read → type read + 路径标题', read.type === 'read' && /^读取 C:\/a\.txt/.test(read.title), JSON.stringify(read));
-  check('sanitize: 多路径 detail', read.detail === '等 2 个路径', read.detail);
+  check('sanitize: fs.read → type read + 结构化标题 key',
+    read.type === 'read' && read.titleKey === 'ev.read' && read.titleVars && read.titleVars.target === 'C:/a.txt',
+    JSON.stringify(read));
+  check('sanitize: 多路径 detail 发模板 key（不拼死中文）',
+    JSON.stringify(read.detailParts) === JSON.stringify([{ k: 'evd.morePaths', v: { n: 2 } }]),
+    JSON.stringify(read.detailParts));
 
   const request = sanitizeRecord(rec(2, '2026-11-09T01:00:01.000Z', 'llm.ingress', 'llm.request', {
     ruleId: 'ingress-request',
@@ -84,14 +88,20 @@ function rec(seq, ts, capability, action, extra = {}) {
     },
   }));
   const flat = JSON.stringify(request);
-  check('sanitize: llm.request → think + 计数 detail', request.type === 'think' && request.detail.includes('deepseek-chat') && request.detail.includes('12 条消息'), request.detail);
+  check('sanitize: llm.request → think + 计数 detail 模板',
+    request.type === 'think' && flat.includes('deepseek-chat')
+    && JSON.stringify(request.detailParts).includes('"evd.messages"')
+    && JSON.stringify(request.detailParts).includes('"n":12'),
+    JSON.stringify(request.detailParts));
   check('sanitize: sample（消息 head 样本）不透出', !flat.includes('SECRET HEAD') && !flat.includes('sample'), flat);
   check('sanitize: 哈希链字段不透出', !flat.includes('deadbeef') && !flat.includes('feedface'), flat);
 
   const inbound = sanitizeRecord(rec(3, '2026-11-09T01:00:02.000Z', 'llm.ingress', 'llm.inbound', {
     ruleId: 'ingress-inbound', scope: { kind: 'user', len: 34, head: 'x'.repeat(200), sessionId: 'session-x' },
   }));
-  check('sanitize: llm.inbound head 截断到 48 字', inbound.detail.includes('x'.repeat(48)) && !inbound.detail.includes('x'.repeat(49)), inbound.detail);
+  check('sanitize: llm.inbound head 截断到 48 字',
+    inbound.detailParts.includes('x'.repeat(48)) && !JSON.stringify(inbound).includes('x'.repeat(49)),
+    JSON.stringify(inbound.detailParts));
 
   const deny = sanitizeRecord(rec(4, '2026-11-09T01:00:03.000Z', 'proc.spawn', 'proc.spawn', {
     decision: 'deny', intercepted: true, ruleId: 'r4', scope: { commands: ['rm -rf /'] },
@@ -106,7 +116,10 @@ function rec(seq, ts, capability, action, extra = {}) {
   const mount = sanitizeRecord(rec(6, '2026-11-09T01:00:05.000Z', 'telemetry', 'mount', {
     ruleId: 'mount', scope: { mode: 'advisory' },
   }));
-  check('sanitize: mount → 模式 detail', mount.type === 'tel' && mount.detail === '模式 advisory', JSON.stringify(mount));
+  check('sanitize: mount → 模式 detail 模板',
+    mount.type === 'tel' && mount.titleKey === 'ev.mount'
+    && JSON.stringify(mount.detailParts) === JSON.stringify([{ k: 'evd.mountMode', v: { mode: 'advisory' } }]),
+    JSON.stringify(mount));
 }
 
 // ---------- 2) computeStatus：运行段聚合（纳管/未纳管/旁路口径） ----------
@@ -202,7 +215,7 @@ function rec(seq, ts, capability, action, extra = {}) {
     await ws.find('GET', '/api/dsh-dashcam/records').handler(req, res);
     const body = jsonBody(res);
     check('records: since+limit 生效', body.records.length === 1 && body.records[0].seq === 3 && body.lastSeq === 3, res.body);
-    check('records: 脱敏形状（type/title，无 hash/scope.sample）', body.records[0].type === 'edit' && /^编辑 /.test(body.records[0].title) && !res.body.includes('deadbeef'), res.body);
+    check('records: 脱敏形状（type/titleKey，无 hash/scope.sample）', body.records[0].type === 'edit' && body.records[0].titleKey === 'ev.edit' && !res.body.includes('deadbeef'), res.body);
   }
   // 游标口径：lastSeq 只取实际返回的最后一条，截断时不再跳到文件尾部
   {
@@ -517,7 +530,7 @@ function rec(seq, ts, capability, action, extra = {}) {
   Object.defineProperty(globalThis, 'getComputedStyle', { value: () => ({ getPropertyValue: () => '' }), configurable: true });
 
   try {
-    const { createDashcamPanel, DASHCAM_I18N } = await import('../src/client/dashcam-panel.js');
+    const { createDashcamPanel, DASHCAM_I18N, badgeTitle } = await import('../src/client/dashcam-panel.js');
 
     // (a) zh/en 两包 key 集合完全一致（防漏翻）
     const zhKeys = Object.keys(DASHCAM_I18N.zh).sort();
@@ -527,7 +540,8 @@ function rec(seq, ts, capability, action, extra = {}) {
       `zh=${zhKeys.length}, en=${enKeys.length}`);
 
     // (b) 语言切换：DOM 出现英文文案 + localStorage 持久化；state 数据保留
-    const panel = createDashcamPanel({ onClose() {} });
+    let langChangeCalls = 0;
+    const panel = createDashcamPanel({ onClose() {}, onLanguageChange: () => { langChangeCalls += 1; } });
     const rootEl = panel.el;
     const tabsNode = rootEl.querySelector('.ddc-tabs');
     check('i18n: 默认 zh（navigator.language 以 zh 开头）',
@@ -536,27 +550,42 @@ function rec(seq, ts, capability, action, extra = {}) {
       && rootEl.querySelector('.ddc-lang').textContent === 'EN',
       JSON.stringify([...rootEl.querySelectorAll('.ddc-tab')].map((b) => b.textContent)));
 
+    check('i18n: 徽章 tooltip 默认 zh',
+      badgeTitle() === 'Agent Dashcam（Ctrl+Shift+D，拖动可换位置）', badgeTitle());
+
     // 喂一条实时记录（与 lib/panel.js 脱敏输出的记录同形）
     panel.updateLive(null, [{
-      seq: 1, ts: '2026-11-09T01:00:00.000Z', type: 'read', title: '读取 C:/a.txt',
-      detail: '', denied: false, intercepted: false,
+      seq: 1, ts: '2026-11-09T01:00:00.000Z', type: 'read',
+      titleKey: 'ev.read', titleVars: { target: 'C:/a.txt' }, titleText: 'fs.read',
+      detailParts: [{ k: 'evd.morePaths', v: { n: 2 } }], denied: false, intercepted: false,
     }]);
-    check('i18n: 实时流 zh 渲染（类型标签 / 计数量词）',
+    check('i18n: 实时流 zh 渲染（类型标签 / 计数量词 / 事件标题与详情）',
       rootEl.querySelector('.ddc-stream .ddc-ev .ddc-tag').textContent === '读取'
-      && rootEl.querySelector('.ddc-stream-meta').textContent === '共 1 条',
-      JSON.stringify(rootEl.querySelector('.ddc-stream-meta').textContent));
+      && rootEl.querySelector('.ddc-stream-meta').textContent === '共 1 条'
+      && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-title').textContent === '读取 C:/a.txt'
+      && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-detail').textContent === '等 2 个路径',
+      JSON.stringify({
+        meta: rootEl.querySelector('.ddc-stream-meta').textContent,
+        title: rootEl.querySelector('.ddc-stream .ddc-ev .ddc-title').textContent,
+        detail: rootEl.querySelector('.ddc-stream .ddc-ev .ddc-detail').textContent,
+      }));
 
     rootEl.querySelector('.ddc-lang').click();
     check('i18n: 切换后 DOM 出现英文且 localStorage 落盘',
       rootEl.querySelector('.ddc-sub').textContent === 'Judgment ledger · live recording & replay'
       && [...rootEl.querySelectorAll('.ddc-tab')].map((b) => b.textContent).join('|') === 'Live|Replay|History'
       && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-tag').textContent === 'Reading'
+      && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-title').textContent === 'Reading C:/a.txt'
+      && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-detail').textContent === '2 paths total'
       && rootEl.querySelector('.ddc-stream-meta').textContent === '1 entries'
       && rootEl.querySelector('.ddc-play').textContent === 'Play'
       && rootEl.querySelector('.ddc-search').getAttribute('placeholder') === 'Search ID / date…'
       && rootEl.querySelector('.ddc-lang').textContent === '中文'
       && langStore.get('ddc-lang') === 'en',
       JSON.stringify({ sub: rootEl.querySelector('.ddc-sub').textContent, lang: langStore.get('ddc-lang') }));
+    check('i18n: 徽章 tooltip 跟随切换 + onLanguageChange 回调',
+      badgeTitle() === 'Agent Dashcam (Ctrl+Shift+D, drag to move)' && langChangeCalls === 1,
+      JSON.stringify({ title: badgeTitle(), langChangeCalls }));
     check('i18n: 重建保留根节点与 tabs 节点（engine 观察器不失效）',
       panel.el === rootEl && rootEl.querySelector('.ddc-tabs') === tabsNode);
     check('i18n: 切换不清空已收到的事件',
@@ -567,6 +596,8 @@ function rec(seq, ts, capability, action, extra = {}) {
     check('i18n: 切回 zh 文案逐字节一致',
       rootEl.querySelector('.ddc-sub').textContent === '判定链账本 · 实时录制与回放'
       && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-tag').textContent === '读取'
+      && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-title').textContent === '读取 C:/a.txt'
+      && rootEl.querySelector('.ddc-stream .ddc-ev .ddc-detail').textContent === '等 2 个路径'
       && rootEl.querySelector('.ddc-stream-meta').textContent === '共 1 条'
       && rootEl.querySelector('.ddc-lang').textContent === 'EN'
       && langStore.get('ddc-lang') === 'zh',

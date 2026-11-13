@@ -4,7 +4,7 @@
 // 轮询口径：status 常轮询（徽章计时器本地走秒）；面板打开且处于实时视图时
 // 增量拉 records（since=lastSeq）；历史/回放按需拉。
 
-import { createDashcamPanel } from './dashcam-panel.js';
+import { createDashcamPanel, badgeTitle } from './dashcam-panel.js';
 
 const BADGE_KEY = 'dsh.dashcam.badgeHidden';
 const BADGE_POS_KEY = 'dsh.dashcam.badgePos';
@@ -47,7 +47,7 @@ export function mountDashcam() {
   // ---------- 徽章 ----------
   const badge = document.createElement('div');
   badge.className = 'ddc-badge';
-  badge.title = 'Agent Dashcam（Ctrl+Shift+D，拖动可换位置）';
+  badge.title = badgeTitle();
   badge.setAttribute('role', 'button');
   badge.setAttribute('tabindex', '0');
   badge.innerHTML = '<span class="ddc-dot"></span><span class="ddc-lb">REC</span><span class="ddc-time num">--:--:--</span>';
@@ -137,6 +137,7 @@ export function mountDashcam() {
       },
     },
     onClose: () => close(),
+    onLanguageChange: () => { badge.title = badgeTitle(); },
   });
   document.body.appendChild(panel.el);
 

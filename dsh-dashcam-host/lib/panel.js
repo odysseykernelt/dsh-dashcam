@@ -122,12 +122,18 @@ export function sanitizeRecord(record) {
   const ts = typeof record.ts === 'string' ? record.ts : null;
   if (!ts) return null;
   const scope = record.scope && typeof record.scope === 'object' ? record.scope : {};
+  const reason = typeof record.reason === 'string' ? record.reason : '';
+  // 展示文案不在宿主侧拼死：标题发 titleKey(+titleVars)，详情发 detailParts
+  // （字符串=原样数据，{k,v}=词典模板），由面板按当前语言渲染。titleText 只用于
+  // 未知 capability 的原样回退（action 本身是标识符，不翻译）。
   const out = {
     seq: Number(record.seq) || 0,
     ts,
     type: 'tel',
-    title: action || 'record',
-    detail: typeof record.reason === 'string' ? record.reason : '',
+    titleKey: '',
+    titleVars: null,
+    titleText: action || 'record',
+    detailParts: reason ? [reason] : [],
     denied: record.decision === 'deny',
     intercepted: record.intercepted === true,
     ruleId,
@@ -141,32 +147,45 @@ export function sanitizeRecord(record) {
 
   if (capability === 'fs.read' || capability === 'cred.read') {
     out.type = 'read';
-    out.title = paths[0] ? `读取 ${paths[0]}` : '读取';
-    out.detail = paths.length > 1 ? `等 ${paths.length} 个路径` : paths[0] || out.detail;
+    out.titleKey = paths[0] ? 'ev.read' : 'ev.readBare';
+    if (paths[0]) out.titleVars = { target: paths[0] };
+    out.detailParts = paths.length > 1
+      ? [{ k: 'evd.morePaths', v: { n: paths.length } }]
+      : paths[0] ? [paths[0]] : out.detailParts;
     if (paths.length) out.extra.paths = paths;
   } else if (capability === 'fs.write') {
     out.type = 'edit';
-    out.title = paths[0] ? `编辑 ${paths[0]}` : '编辑';
-    out.detail = paths.length > 1 ? `等 ${paths.length} 个路径` : paths[0] || out.detail;
+    out.titleKey = paths[0] ? 'ev.edit' : 'ev.editBare';
+    if (paths[0]) out.titleVars = { target: paths[0] };
+    out.detailParts = paths.length > 1
+      ? [{ k: 'evd.morePaths', v: { n: paths.length } }]
+      : paths[0] ? [paths[0]] : out.detailParts;
     if (paths.length) out.extra.paths = paths;
   } else if (capability === 'fs.delete') {
     out.type = 'edit';
-    out.title = paths[0] ? `删除 ${paths[0]}` : '删除';
-    out.detail = paths.length > 1 ? `等 ${paths.length} 个路径` : paths[0] || out.detail;
+    out.titleKey = paths[0] ? 'ev.delete' : 'ev.deleteBare';
+    if (paths[0]) out.titleVars = { target: paths[0] };
+    out.detailParts = paths.length > 1
+      ? [{ k: 'evd.morePaths', v: { n: paths.length } }]
+      : paths[0] ? [paths[0]] : out.detailParts;
     if (paths.length) out.extra.paths = paths;
   } else if (capability === 'proc.spawn') {
     out.type = 'bash';
-    out.title = commands[0] ? `命令 ${commands[0]}` : '命令';
-    out.detail = commands.length > 1 ? `等 ${commands.length} 条` : commands[0] || out.detail;
+    out.titleKey = commands[0] ? 'ev.command' : 'ev.commandBare';
+    if (commands[0]) out.titleVars = { target: commands[0] };
+    out.detailParts = commands.length > 1
+      ? [{ k: 'evd.moreCommands', v: { n: commands.length } }]
+      : commands[0] ? [commands[0]] : out.detailParts;
     if (commands.length) out.extra.commands = commands;
   } else if (capability === 'net.outbound') {
     out.type = 'net';
-    out.title = hosts[0] ? `出网 ${hosts[0]}` : '出网';
+    out.titleKey = hosts[0] ? 'ev.net' : 'ev.netBare';
+    if (hosts[0]) out.titleVars = { target: hosts[0] };
     if (hosts.length) out.extra.hosts = hosts;
   } else if (capability === 'llm.ingress') {
     if (action === 'llm.request') {
       out.type = 'think';
-      out.title = 'LLM 请求';
+      out.titleKey = 'ev.llmRequest';
       const messages = scope.messages && typeof scope.messages === 'object' ? scope.messages : null;
       const delta = messages && messages.delta && typeof messages.delta === 'object' ? messages.delta : null;
       const model = typeof scope.model === 'string' && scope.model
@@ -175,55 +194,63 @@ export function sanitizeRecord(record) {
           ? scope.provider
           : null;
       const count = messages && Number.isFinite(messages.count) ? messages.count : null;
-      out.detail = [
+      out.detailParts = [
         model,
-        count !== null ? `${count} 条消息` : null,
+        count !== null ? { k: 'evd.messages', v: { n: count } } : null,
         delta ? `+${delta.added ?? 0}/−${delta.removed ?? 0}` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ');
+      ].filter(Boolean);
       if (model) out.extra.model = model;
       if (typeof scope.sessionId === 'string' && scope.sessionId) out.extra.sessionId = scope.sessionId;
     } else if (action === 'llm.inbound') {
       out.type = 'think';
-      out.title = '入站消息';
+      out.titleKey = 'ev.inbound';
       const kind = typeof scope.kind === 'string' ? scope.kind : 'user';
       const len = Number.isFinite(scope.len) ? scope.len : null;
       const head = typeof scope.head === 'string' && scope.head ? scope.head.slice(0, HEAD_LIMIT) : '';
-      out.detail = [kind, len !== null ? `${len} 字` : null, head].filter(Boolean).join(' · ');
+      out.detailParts = [
+        kind,
+        len !== null ? { k: 'evd.chars', v: { n: len } } : null,
+        head,
+      ].filter(Boolean);
       if (typeof scope.sessionId === 'string' && scope.sessionId) out.extra.sessionId = scope.sessionId;
     } else if (action === 'llm.anomaly') {
       out.type = 'error';
-      out.title = '入站异常';
-      out.detail = [typeof scope.kind === 'string' ? scope.kind : null, Number.isFinite(scope.count) ? `× ${scope.count}` : null]
-        .filter(Boolean)
-        .join(' ');
+      out.titleKey = 'ev.anomaly';
+      // 旧版用单空格连接（不是 ' · '）；'× N' 与语言无关，先拼好再作为原样部分发出。
+      const parts = [
+        typeof scope.kind === 'string' ? scope.kind : null,
+        Number.isFinite(scope.count) ? `× ${scope.count}` : null,
+      ].filter(Boolean);
+      out.detailParts = parts.length ? [parts.join(' ')] : [];
     }
   } else if (capability === 'telemetry') {
     out.type = 'tel';
     if (ruleId === 'commandline-audit' || action === 'proc.commandline') {
-      out.title = '命令行存档';
-      out.detail = typeof scope.commandLine === 'string' && scope.commandLine
-        ? scope.commandLine.slice(0, 160)
+      out.titleKey = 'ev.commandLine';
+      const commandLine = typeof scope.commandLine === 'string' && scope.commandLine
+        ? scope.commandLine
+        : '';
+      out.detailParts = commandLine
+        ? [commandLine.slice(0, 160)]
         : typeof scope.commandLineHash === 'string' && scope.commandLineHash
-          ? scope.commandLineHash.slice(7, 19)
-          : '';
-      if (typeof scope.commandLine === 'string' && scope.commandLine) {
-        out.extra.commandLine = scope.commandLine.slice(0, 300);
-      }
+          ? [scope.commandLineHash.slice(7, 19)]
+          : [];
+      if (commandLine) out.extra.commandLine = commandLine.slice(0, 300);
     } else if (action === 'unmapped-tool') {
-      out.title = scope.tool ? `未映射 · ${scope.tool}` : '未映射工具';
+      out.titleKey = scope.tool ? 'ev.unmapped' : 'ev.unmappedBare';
+      if (scope.tool) out.titleVars = { tool: scope.tool };
     } else if (action === 'unjudgeable-tool') {
-      out.title = scope.tool ? `无法判定 · ${scope.tool}` : '无法判定';
-      out.detail = typeof scope.detail === 'string' ? scope.detail : out.detail;
+      out.titleKey = scope.tool ? 'ev.unjudgeable' : 'ev.unjudgeableBare';
+      if (scope.tool) out.titleVars = { tool: scope.tool };
+      if (typeof scope.detail === 'string') out.detailParts = [scope.detail];
     } else if (ruleId === 'mount' || action === 'mount') {
-      out.title = '判定链挂载';
-      out.detail = scope.mode ? `模式 ${scope.mode}` : '';
+      out.titleKey = 'ev.mount';
+      out.detailParts = scope.mode ? [{ k: 'evd.mountMode', v: { mode: scope.mode } }] : [];
     } else if (ruleId === 'ingress-mount' || action === 'ingress-mount') {
-      out.title = 'ingress 挂载';
-      out.detail = scope.enabled === false ? '未启用' : '';
+      out.titleKey = 'ev.ingressMount';
+      out.detailParts = scope.enabled === false ? [{ k: 'evd.disabled' }] : [];
     } else if (ruleId === 'ingress-disabled' || action === 'ingress-disabled') {
-      out.title = 'ingress 关闭';
+      out.titleKey = 'ev.ingressDisabled';
     }
   }
   return out;
