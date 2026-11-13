@@ -6,7 +6,7 @@
 
 ![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![npm](https://img.shields.io/npm/v/dsh-dashcam) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
 
-**dsh-dashcam is a dashcam for your AI plugins. Once installed, you can see exactly which plugin read your `.env`, which server it contacted, and what commands it ran — everything in the open. Zero configuration, zero changes to your plugins; it only records — it never blocks, and it never judges.**
+**dsh-dashcam is a dashcam for your AI plugins. Once installed, which plugin read your `.env`, which server it contacted, and what commands it ran — most of it shows up in the panel. Works out of the box, no changes to your plugins; it records, rather than blocks or judges.**
 
 ## What you get to see
 
@@ -89,25 +89,24 @@ The plugin declares, you grant, and both must match before a call goes through; 
 
 ## Core features
 
-- **Zero dependencies** — Node.js >= 20, install and it just works.
-- **One command to install, one to uninstall** — nothing left behind.
-- **Tamper-evident records** — every record links to the previous one; change any line and it shows. An optional HMAC key strengthens it further.
-- **Never in your way** — if recording itself breaks, your tasks keep running; it warns loudly and marks the failure in the ledger.
-- **Verify without the host** — the `verify-ledger` tool re-checks the whole chain offline, no DeepSeek Harness install needed.
+- **Zero dependencies** — Node.js >= 20, works out of the box.
+- **One command to install, one to uninstall** — uninstall removes the package itself.
+- **Tamper-evident records** — every record links to the previous one, so changed records can be caught by verification. An optional HMAC key strengthens it further.
+- **Stays out of the way** — if recording itself breaks, your tasks keep running; it warns loudly and does its best to mark the failure in the ledger.
 - **Panels on desktop and web** — live view, replay, and session history; the panel itself speaks Chinese and English (switch in the panel header).
-- **Grouped by conversation window** — the live stream is organized by chat window and day, with one-click filters by event type, window, or date.
-- **Whole-ledger search** — one keyword surfaces past events by plugin, message, path, command, host, or rule.
-- **Opens instantly** — the panel starts from the latest events and backfills the rest quietly, so big ledgers never block the view.
+- **Grouped by conversation window where possible** — the live stream is organized by chat window and day (records from older ledgers may lack attribution and fall into a "System" group), with filters by event type, window, or date.
+- **Ledger search** — find past events by keyword (plugin, message, path, command, host, rule…); very large ledgers may only search the recent part, and the panel says so.
+- **Latest first** — the panel starts from the most recent events; older ones backfill quietly.
 
 ## Honesty and limits
 
 Three rules the dashcam follows:
 
-- **It does not block you.** If the ledger can't be written, calls still go through — a recording failure never stops your task; the dashcam warns loudly and does its best to mark the failure in the ledger. (Advanced: the config key `policy.ledger.failMode: 'closed'` switches to "refuse to run when it can't be recorded".)
-- **It does not lie.** A denial is written only when a call was actually denied; things that didn't happen are never reported as if they did.
+- **It does not block you.** If the ledger can't be written, calls still go through — a recording failure does not stop your task; the dashcam warns loudly and does its best to mark the failure in the ledger. (Advanced: the config key `policy.ledger.failMode: 'closed'` switches to "refuse to run when it can't be recorded".)
+- **It does not lie.** A denial is written only when a call was actually denied; things that didn't happen are not reported as if they did.
 - **It says what it cannot see.** Tools outside its recording scope are still recorded as observed, and the mount record states which mode is active. No blind spot is dressed up as full coverage.
 
-**One thing worth thinking through before you install:** the ledger is sensitive data — it records exactly which files were touched and when. The recorder runs inside your agent's main process, and "it only records" is precisely why it sees everything. So install from a source you trust, keep the ledger out of backups you don't trust, and set an HMAC key (`ledgerMacKey`) if tamper-resistance matters. If you're not yet comfortable with one plugin observing another, try it in a separate test profile for a few days before making it part of your daily setup.
+**One thing worth thinking through before you install:** the ledger is sensitive data — it records exactly which files were touched and when. The recorder runs inside your agent's main process, and "it only records" is precisely why it sees what your agent sees. So install from a source you trust, keep the ledger out of backups you don't trust, and set an HMAC key (`ledgerMacKey`) if tamper-resistance matters. If you're not yet comfortable with one plugin observing another, try it in a separate test profile for a few days before making it part of your daily setup.
 
 ## Docs
 
