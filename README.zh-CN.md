@@ -1,5 +1,7 @@
 ﻿# dsh-dashcam
 
+<p align="center"><img src="assets/social-preview.png" width="860" alt="dsh-dashcam — 给 AI 插件装的行车记录仪"></p>
+
 [English](README.md) | **中文**
 
 ![CI](https://github.com/odysseykernelt/dsh-dashcam/actions/workflows/ci.yml/badge.svg) ![npm](https://img.shields.io/npm/v/dsh-dashcam) ![node](https://img.shields.io/badge/node-%3E%3D%2020-green) ![license](https://img.shields.io/badge/license-MIT-lightgrey)

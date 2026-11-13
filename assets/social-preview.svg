@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <!-- 主标题渐变：白 → 亮红 → 深酒红 -->
+    <linearGradient id="titleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="38%" stop-color="#f0b9b6"/>
+      <stop offset="62%" stop-color="#e0605c"/>
+      <stop offset="100%" stop-color="#8b1e2d"/>
+    </linearGradient>
+    <!-- 页面底色：近黑 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0d0a10"/>
+      <stop offset="55%" stop-color="#0a0a0f"/>
+      <stop offset="100%" stop-color="#14101a"/>
+    </linearGradient>
+    <!-- 酒红氛围光 -->
+    <radialGradient id="glowRed" cx="82%" cy="18%" r="55%">
+      <stop offset="0%" stop-color="#d9534f" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#8b1e2d" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowDeep" cx="8%" cy="95%" r="60%">
+      <stop offset="0%" stop-color="#d9534f" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <!-- 毛玻璃卡片：半透明 + 上亮下暗 -->
+    <linearGradient id="glassFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.075"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.028"/>
+    </linearGradient>
+    <linearGradient id="chipFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.045"/>
+    </linearGradient>
+    <linearGradient id="recBar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b1e2d" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#d9534f" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#8b1e2d" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景层 -->
+  <rect width="1280" height="640" fill="url(#bgGrad)"/>
+  <rect width="1280" height="640" fill="url(#glowRed)"/>
+  <rect width="1280" height="640" fill="url(#glowDeep)"/>
+
+  <!-- 细网格（极淡，营造仪表感） -->
+  <g stroke="#ffffff" stroke-opacity="0.03" stroke-width="1">
+    <path d="M0 160 H1280 M0 320 H1280 M0 480 H1280"/>
+    <path d="M213 0 V640 M426 0 V640 M640 0 V640 M854 0 V640 M1067 0 V640"/>
+  </g>
+
+  <!-- 顶部毛玻璃信息条 -->
+  <g>
+    <rect x="72" y="56" width="1136" height="72" rx="18" fill="url(#glassFill)" stroke="#ffffff" stroke-opacity="0.14"/>
+    <!-- REC 圆点 -->
+    <circle cx="112" cy="92" r="9" fill="#d9534f"/>
+    <circle cx="112" cy="92" r="15" fill="none" stroke="#d9534f" stroke-opacity="0.35" stroke-width="2"/>
+    <text x="140" y="99" font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="24" fill="#f2f2f5" letter-spacing="3">REC</text>
+    <text x="216" y="99" font-family="Segoe UI, Arial, sans-serif" font-size="21" fill="#f2f2f5" fill-opacity="0.62">DeepSeek Harness · plugin dashcam</text>
+    <text x="1172" y="99" text-anchor="end" font-family="Consolas, monospace" font-size="19" fill="#f0b9b6" fill-opacity="0.85">v2.0.3</text>
+  </g>
+
+  <!-- 主标题：粗体渐变艺术字（微斜切增加动感） -->
+  <g transform="translate(66,208) skewX(-6)">
+    <text x="0" y="0" font-family="Segoe UI Black, Segoe UI, Arial, sans-serif" font-weight="900" font-size="128" letter-spacing="-2" fill="url(#titleGrad)">dsh-dashcam</text>
+  </g>
+  <!-- 标题下的酒红分隔光条 -->
+  <rect x="72" y="248" width="640" height="4" rx="2" fill="url(#recBar)"/>
+
+  <!-- 一句话概括（酒红） -->
+  <text x="72" y="318" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-weight="700" font-size="40" fill="#e0605c">每次工具调用，留下可复核的防篡改账本</text>
+  <text x="72" y="372" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="26" fill="#f2f2f5" fill-opacity="0.60">只记录，不拦截 —— fail-open 是硬约束</text>
+
+  <!-- 吸引信息 chips：毛玻璃药丸 -->
+  <g font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="22" font-weight="600">
+    <g>
+      <rect x="72"  y="418" width="180" height="52" rx="26" fill="url(#chipFill)" stroke="#d9534f" stroke-opacity="0.55"/>
+      <circle cx="102" cy="444" r="6" fill="#d9534f"/>
+      <text x="120" y="452" fill="#f0b9b6">已上架 npm</text>
+    </g>
+    <g>
+      <rect x="272" y="418" width="212" height="52" rx="26" fill="url(#chipFill)" stroke="#ffffff" stroke-opacity="0.16"/>
+      <text x="296" y="452" fill="#f2f2f5" fill-opacity="0.88">desktop / web 双端</text>
+    </g>
+    <g>
+      <rect x="504" y="418" width="200" height="52" rx="26" fill="url(#chipFill)" stroke="#ffffff" stroke-opacity="0.16"/>
+      <text x="528" y="452" fill="#f2f2f5" fill-opacity="0.88">0 配置即装</text>
+    </g>
+    <g>
+      <rect x="724" y="418" width="272" height="52" rx="26" fill="url(#chipFill)" stroke="#ffffff" stroke-opacity="0.16"/>
+      <text x="748" y="452" fill="#f2f2f5" fill-opacity="0.88">独立 verify-ledger 校验</text>
+    </g>
+  </g>
+
+  <!-- 底部账本行：真实字段示例（毛玻璃条） -->
+  <g>
+    <rect x="72" y="516" width="1136" height="76" rx="16" fill="url(#glassFill)" stroke="#ffffff" stroke-opacity="0.12"/>
+    <text x="100" y="560" font-family="Consolas, monospace" font-size="21" fill="#f2f2f5">
+      <tspan fill="#8b1e2d" font-weight="700">{"seq":8893</tspan><tspan fill="#f2f2f5" fill-opacity="0.92">,</tspan><tspan fill="#a8c8f0">"ts"</tspan><tspan fill="#f2f2f5" fill-opacity="0.92">:"2026-11-13T03:49:50Z",</tspan><tspan fill="#a8c8f0">"action"</tspan><tspan fill="#f2f2f5" fill-opacity="0.92">:"llm.request",</tspan><tspan fill="#a8c8f0">"decision"</tspan><tspan fill="#f2f2f5" fill-opacity="0.92">:"allow",</tspan>
+    </text>
+    <text x="100" y="584" font-family="Consolas, monospace" font-size="19" fill="#f2f2f5" fill-opacity="0.62">
+      <tspan>"prevHash":"f50e3ffb…" → </tspan><tspan fill="#e0605c">"hash":"9091d078…" </tspan><tspan fill-opacity="0.5">（哈希链：改动任何一行都会被揪出）</tspan>
+    </text>
+  </g>
+</svg>
