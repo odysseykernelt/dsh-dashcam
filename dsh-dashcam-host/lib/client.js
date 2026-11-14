@@ -71,7 +71,7 @@ const DASHCAM_CSS = `
 .ddc-empty{flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:28px;color:var(--ddc-text-3);font:400 13px/1.6 var(--ddc-font);text-align:center}
 .ddc-kv{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font:400 13px/1.5 var(--ddc-font)}
 .ddc-kv .ddc-k{color:var(--ddc-text-3);white-space:nowrap}
-.ddc-kv .ddc-val{color:var(--ddc-text);font-family:var(--ddc-mono);font-size:12px;word-break:break-all;text-align:right}
+.ddc-kv .ddc-val{color:var(--ddc-text);font-family:var(--ddc-mono);font-size:12px;word-break:normal;overflow-wrap:anywhere;text-align:right}
 .ddc-kv .ddc-val.warn{color:var(--ddc-accent-soft)}
 .ddc-bar{height:100%;border-radius:5px;background:linear-gradient(90deg,rgba(var(--ddc-accent-rgb),.8),var(--ddc-accent));transition:width 500ms ease}
 .ddc-barbg{height:10px;border-radius:5px;background:rgba(255,255,255,.08);overflow:hidden}
