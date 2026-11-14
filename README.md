@@ -79,11 +79,11 @@ The plugin declares, you grant, and both must match before a call goes through; 
 
 ## The panels
 
-<img src="docs/screenshots/live.gif" width="860" alt="Agent Dashcam panel — live recording">
+<img src="docs/screenshots/live.en.gif" width="860" alt="Agent Dashcam panel — live recording">
 
 | Replay | History |
 |---|---|
-| <img src="docs/screenshots/replay.gif" width="420" alt="Replay: timeline, event list, event detail"> | <img src="docs/screenshots/history.gif" width="420" alt="History: recorded sessions"> |
+| <img src="docs/screenshots/replay.en.gif" width="420" alt="Replay: timeline, event list, event detail"> | <img src="docs/screenshots/history.en.gif" width="420" alt="History: recorded sessions"> |
 
 *The panels render demo data (`docs/screenshots/demo-ledger.jsonl`) — not a real session. Toggle with `Ctrl+Shift+D`.*
 

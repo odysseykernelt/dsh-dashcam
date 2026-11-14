@@ -12,6 +12,7 @@
 //   node tools/screenshots/make-demo-shots.mjs     # 全流程（要 Edge + ffmpeg）
 //   node tools/screenshots/make-demo-shots.mjs --html-only
 //   node tools/screenshots/make-demo-shots.mjs --encode-only
+//   node tools/screenshots/make-demo-shots.mjs --lang=en   # 英文版，输出 *.en.gif
 //
 // 注意：截图必须在**不受 DSH 文件沙箱限制**的终端里跑——Chromium 多进程要开
 // 命名管道，沙箱里起不来（mojo platform_channel 会 0x5 拒绝访问）。
@@ -25,7 +26,14 @@ import { pathToFileURL } from 'node:url';
 const ROOT = resolve(import.meta.dirname, '../..');
 const BUILD = join(ROOT, '.build', 'shots');
 const OUT = join(ROOT, 'docs', 'screenshots');
-const HTML_PATH = join(BUILD, 'demo.html');
+
+// 语言：`--lang=en` 出英文版，文件名带 .en 后缀，不覆盖中文那组。
+// 面板文案自带 zh/en 双语，演示页只需要把 ddc-lang 钉成对应语言，
+// 再把 <html lang> 和左下角的 DEMO 标记一起换掉。
+const LANG_ARG = process.argv.slice(2).find((arg) => arg.startsWith('--lang='));
+const LANG = (LANG_ARG ? LANG_ARG.slice('--lang='.length).trim() : 'zh') === 'en' ? 'en' : 'zh';
+const LANG_SUFFIX = LANG === 'en' ? '.en' : '';
+const HTML_PATH = join(BUILD, `demo${LANG_SUFFIX}.html`);
 const LEDGER_PATH = join(OUT, 'demo-ledger.jsonl');
 
 // 1028×816 让面板正好是 980×720（CSS 里是 min(980px, 100vw-48px) 这类写法）。
@@ -84,12 +92,15 @@ const COMMANDS = [
 ];
 const HOSTS = ['api.deepseek.com', 'registry.npmjs.org', 'api.github.com'];
 const TOOLS = ['mcp__github__get_file_contents', 'mcp__browser__open', 'subagent_scan'];
+// 英文版截图里的对话内容也得是英文，否则中文碎句会漏进英文界面。
+const M = (zh, en) => (LANG === 'en' ? en : zh);
+
 const HEADS = [
-  '把面板里的拒绝事件标红',
-  'README 首屏能不能压短一点',
-  '这个规则命中之后会不会漏记账',
-  '帮我看下 test 为什么挂在 CI 上',
-  '把账本路径写进面板状态里',
+  M('把面板里的拒绝事件标红', 'mark denied events red in the panel'),
+  M('README 首屏能不能压短一点', 'can the README hero be shorter'),
+  M('这个规则命中之后会不会漏记账', 'does this rule miss ledger entries'),
+  M('帮我看下 test 为什么挂在 CI 上', 'why do the tests fail on CI'),
+  M('把账本路径写进面板状态里', 'put the ledger path in the panel status'),
 ];
 
 const iso = (baseMs, offsetSec) => new Date(baseMs + offsetSec * 1000).toISOString();
@@ -163,7 +174,7 @@ function featuredSession() {
 
   withSession(S_MAIN, () => {
     rows.push(
-      inbound(iso(base, 12), '把面板里的拒绝事件标红', S_MAIN),
+      inbound(iso(base, 12), M('把面板里的拒绝事件标红', 'mark denied events red in the panel'), S_MAIN),
       request(iso(base, 18), 12, 2, 0, S_MAIN),
       read(iso(base, 26), 'dsh-dashcam-host/src/client/dashcam-panel.js'),
       read(iso(base, 41), 'dsh-dashcam-host/src/client/dashcam-css.js'),
@@ -180,7 +191,7 @@ function featuredSession() {
       write(iso(base, 150), 'README.md'),
       bash(iso(base, 162), 'git diff --stat'),
       commandLine(iso(base, 163), 'git diff --stat'),
-      inbound(iso(base, 170), '首屏加一行对比表口牙', S_DOCS),
+      inbound(iso(base, 170), M('首屏加一行对比表口牙', 'add a comparison row to the hero'), S_DOCS),
     );
   });
 
@@ -206,12 +217,12 @@ function featuredSession() {
 
   withSession(S_MAIN, () => {
     rows.push(
-      inbound(iso(base, 275), '顺手把拒绝那条也标红', S_MAIN),
+      inbound(iso(base, 275), M('顺手把拒绝那条也标红', 'also flag that denied one in red'), S_MAIN),
       read(iso(base, 286), 'C:/Users/dev/.aws/credentials', {
         cred: true,
         decision: 'deny',
         ruleId: 'scope_mismatch',
-        reason: '授予存在但不覆盖请求范围：cred.read (paths: C:/Users/dev/.aws/credentials)',
+        reason: M('授予存在但不覆盖请求范围：cred.read (paths: C:/Users/dev/.aws/credentials)', 'grant exists but does not cover the requested scope: cred.read (paths: C:/Users/dev/.aws/credentials)'),
       }),
       read(iso(base, 300), 'docs/SPEC.md'),
       request(iso(base, 314), 24, 5, 2, S_MAIN),
@@ -219,13 +230,13 @@ function featuredSession() {
       unmapped(iso(base, 345), 'mcp__github__get_file_contents'),
       anomaly(iso(base, 358), 'inbound_changed', S_MAIN),
       bash(iso(base, 372), 'pnpm test'),
-      inbound(iso(base, 384), '中文那份也一起改', S_MAIN),
+      inbound(iso(base, 384), M('中文那份也一起改', 'update the zh-CN one too'), S_MAIN),
       request(iso(base, 396), 27, 1, 0, S_MAIN),
       read(iso(base, 404), 'README.zh-CN.md'),
       write(iso(base, 420), 'README.zh-CN.md'),
       bash(iso(base, 445), 'git diff --stat'),
       commandLine(iso(base, 446), 'git diff --stat'),
-      inbound(iso(base, 462), '这次先不 tag，等发版再说', S_MAIN),
+      inbound(iso(base, 462), M('这次先不 tag，等发版再说', "don't tag this time, wait for the release"), S_MAIN),
       request(iso(base, 492), 31, 6, 3, S_MAIN),
     );
   });
@@ -285,6 +296,23 @@ const SESSION_TITLES = {
   '01JC001003': '初始化仓库',
 };
 
+const SESSION_TITLES_EN = {
+  [S_MAIN]: 'Panel 2.2.0: filters',
+  [S_DOCS]: 'README hero rewrite',
+  [S_REL]: 'release v2.2.0 notes',
+  '01JC001013': 'Fix live view scroll jump',
+  '01JC001012': 'release notes draft',
+  '01JC001011': 'quick check: tests green?',
+  '01JC001010': 'session attribution dedupe',
+  '01JC001009': 'polish English README',
+  '01JC001008': 'add a denied type filter',
+  '01JC001007': 'ledger rotation policy',
+  '01JC001006': 'plugin page screenshots',
+  '01JC001005': 'CI quirks on Windows',
+  '01JC001004': 'just look at the logs',
+  '01JC001003': 'init repo',
+};
+
 function buildLedger() {
   const featured = featuredSession();
   const others = [
@@ -305,7 +333,7 @@ function buildLedger() {
   all.sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
   all.push(...featured.records);
   all.forEach((rec, index) => { rec.seq = 104 + index; });
-  const sessionDirectory = { ...SESSION_TITLES };
+  const sessionDirectory = { ...(LANG === 'en' ? SESSION_TITLES_EN : SESSION_TITLES) };
   return { all, featured, sessionDirectory };
 }
 
@@ -353,7 +381,7 @@ function toBody(file) {
 function buildHtml(fixture) {
   const inline = JSON.stringify(fixture).replace(/</g, '\\u003c');
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${LANG === 'en' ? 'en' : 'zh-CN'}">
 <head>
 <meta charset="utf-8">
 <title>dsh-dashcam demo</title>
@@ -375,12 +403,12 @@ function buildHtml(fixture) {
 </style>
 </head>
 <body>
-<div class="ddc-demo-flag">DEMO · <b>模拟账本</b><br>not a real session</div>
+<div class="ddc-demo-flag">${LANG === 'en' ? 'DEMO · <b>simulated ledger</b>' : 'DEMO · <b>模拟账本</b>'}<br>not a real session</div>
 <script>
 (function () {
   // 面板挑语言是先读 localStorage['ddc-lang'] 再看 navigator.language；headless 的
-  // navigator 是 en-US，不先钉住整块 UI 会变英文。
-  try { localStorage.setItem('ddc-lang', 'zh'); } catch (e) {}
+  // navigator 是 en-US，不先钉住中文版整块 UI 会变英文。这里按 --lang 钉死。
+  try { localStorage.setItem('ddc-lang', '${LANG}'); } catch (e) {}
   var t0 = ${DEMO_NOW};
   var p0 = performance.now();
   var R = Date;
@@ -522,8 +550,8 @@ ${toBody('dsh-dashcam-host/src/client/dashcam-panel.js')}
     });
     // 列表比一屏长：慢慢往下滚，让「更早的录像」也露一下脸。
     at(2500, function () {
-      var list = q('.ddc-hlist');
-      var box = list && list.parentElement;
+      // .ddc-hlist 自己就是滚动容器（overflow-y:auto），父节点不滚，滚它会静默无效。
+      var box = q('.ddc-hlist');
       if (!box) return;
       var from = box.scrollTop;
       var to = Math.min(box.scrollHeight - box.clientHeight, from + 240);
@@ -744,23 +772,27 @@ async function main() {
 
   if (!args.has('--encode-only')) {
     const { ledgerText, fixture } = buildFixture();
-    writeFileSync(LEDGER_PATH, ledgerText);
+    // 英文版只把假账本内联进 demo 页，不覆盖 docs/ 里那份对外发布的演示数据（保持中文唯一一份）。
+    if (LANG === 'zh') writeFileSync(LEDGER_PATH, ledgerText);
     writeFileSync(HTML_PATH, buildHtml(fixture));
-    console.log(`[fixture] ${ledgerText.trim().split('\n').length} 条记录 → docs/screenshots/demo-ledger.jsonl`);
+    console.log(`[fixture] ${ledgerText.trim().split('\n').length} 条记录${LANG === 'zh' ? ' → docs/screenshots/demo-ledger.jsonl' : '（只内联进 demo.en.html，不落 docs/）'}`);
     console.log(`[html] ${HTML_PATH.replace(ROOT + '\\', '')}`);
   }
 
   if (args.has('--html-only')) return;
 
+  const frames = (view) => join(BUILD, 'frames', view + LANG_SUFFIX);
+  const outGif = (view) => join(OUT, view + LANG_SUFFIX + '.gif');
+
   if (!args.has('--encode-only')) {
-    if (wants('live')) await capture('live', join(BUILD, 'frames', 'live'), { durationMs: 8600, fpsCap: 30 });
-    if (wants('replay')) await capture('replay', join(BUILD, 'frames', 'replay'), { durationMs: 11000, fpsCap: 30 });
-    if (wants('history')) await capture('history', join(BUILD, 'frames', 'history'), { durationMs: 5200, fpsCap: 30 });
+    if (wants('live')) await capture('live', frames('live'), { durationMs: 8600, fpsCap: 30 });
+    if (wants('replay')) await capture('replay', frames('replay'), { durationMs: 11000, fpsCap: 30 });
+    if (wants('history')) await capture('history', frames('history'), { durationMs: 5200, fpsCap: 30 });
   }
 
-  if (wants('live')) await encode(join(BUILD, 'frames', 'live'), join(OUT, 'live.gif'));
-  if (wants('replay')) await encode(join(BUILD, 'frames', 'replay'), join(OUT, 'replay.gif'));
-  if (wants('history')) await encode(join(BUILD, 'frames', 'history'), join(OUT, 'history.gif'));
+  if (wants('live')) await encode(frames('live'), outGif('live'));
+  if (wants('replay')) await encode(frames('replay'), outGif('replay'));
+  if (wants('history')) await encode(frames('history'), outGif('history'));
 }
 
 main().catch((error) => {
