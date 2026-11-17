@@ -8,6 +8,8 @@
 
 **dsh-dashcam is a dashcam for your AI plugins. Once installed, which plugin read your `.env`, which server it contacted, and what commands it ran — most of it shows up in the panel. Works out of the box, no changes to your plugins; it records, rather than blocks or judges.**
 
+**Static scanners tell you what a plugin *can* do. The dashcam tells you what it *did*.**
+
 ## What you get to see
 
 | When this happens | Without the dashcam | With the dashcam |
