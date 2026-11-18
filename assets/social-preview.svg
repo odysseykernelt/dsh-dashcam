@@ -58,7 +58,7 @@
     <circle cx="112" cy="92" r="15" fill="none" stroke="#d9534f" stroke-opacity="0.35" stroke-width="2"/>
     <text x="140" y="99" font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="24" fill="#f2f2f5" letter-spacing="3">REC</text>
     <text x="216" y="99" font-family="Segoe UI, Arial, sans-serif" font-size="21" fill="#f2f2f5" fill-opacity="0.62">DeepSeek Harness · plugin dashcam</text>
-    <text x="1172" y="99" text-anchor="end" font-family="Consolas, monospace" font-size="19" fill="#f0b9b6" fill-opacity="0.85">v2.0.3</text>
+    <text x="1172" y="99" text-anchor="end" font-family="Consolas, monospace" font-size="19" fill="#f0b9b6" fill-opacity="0.85">v2.x</text>
   </g>
 
   <!-- 主标题：粗体渐变艺术字（微斜切增加动感） -->

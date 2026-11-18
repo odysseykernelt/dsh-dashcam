@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <!-- title gradient: white -> light red -> deep wine -->
+    <linearGradient id="titleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="38%" stop-color="#f0b9b6"/>
+      <stop offset="62%" stop-color="#e0605c"/>
+      <stop offset="100%" stop-color="#8b1e2d"/>
+    </linearGradient>
+    <!-- page background: near black -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0d0a10"/>
+      <stop offset="55%" stop-color="#0a0a0f"/>
+      <stop offset="100%" stop-color="#14101a"/>
+    </linearGradient>
+    <!-- wine ambient glow -->
+    <radialGradient id="glowRed" cx="82%" cy="18%" r="55%">
+      <stop offset="0%" stop-color="#d9534f" stop-opacity="0.22"/>
+      <stop offset="55%" stop-color="#8b1e2d" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowDeep" cx="8%" cy="95%" r="60%">
+      <stop offset="0%" stop-color="#d9534f" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <!-- glass card: translucent, brighter on top -->
+    <linearGradient id="glassFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.075"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.028"/>
+    </linearGradient>
+    <linearGradient id="chipFill" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.045"/>
+    </linearGradient>
+    <linearGradient id="recBar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b1e2d" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#d9534f" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#8b1e2d" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- background layers -->
+  <rect width="1280" height="640" fill="url(#bgGrad)"/>
+  <rect width="1280" height="640" fill="url(#glowRed)"/>
+  <rect width="1280" height="640" fill="url(#glowDeep)"/>
+
+  <!-- faint grid for the instrument feel -->
+  <g stroke="#ffffff" stroke-opacity="0.03" stroke-width="1">
+    <path d="M0 160 H1280 M0 320 H1280 M0 480 H1280"/>
+    <path d="M213 0 V640 M426 0 V640 M640 0 V640 M854 0 V640 M1067 0 V640"/>
+  </g>
+
+  <!-- top glass info bar -->
+  <g>
+    <rect x="72" y="56" width="1136" height="72" rx="18" fill="url(#glassFill)" stroke="#ffffff" stroke-opacity="0.14"/>
+    <circle cx="112" cy="92" r="9" fill="#d9534f"/>
+    <circle cx="112" cy="92" r="15" fill="none" stroke="#d9534f" stroke-opacity="0.35" stroke-width="2"/>
+    <text x="140" y="99" font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="24" fill="#f2f2f5" letter-spacing="3">REC</text>
+    <text x="216" y="99" font-family="Segoe UI, Arial, sans-serif" font-size="21" fill="#f2f2f5" fill-opacity="0.62">DeepSeek Harness · plugin dashcam</text>
+    <text x="1172" y="99" text-anchor="end" font-family="Consolas, monospace" font-size="19" fill="#f0b9b6" fill-opacity="0.85">v2.x</text>
+  </g>
+
+  <!-- main title -->
+  <g transform="translate(66,208) skewX(-6)">
+    <text x="0" y="0" font-family="Segoe UI Black, Segoe UI, Arial, sans-serif" font-weight="900" font-size="128" letter-spacing="-2" fill="url(#titleGrad)">dsh-dashcam</text>
+  </g>
+  <rect x="72" y="248" width="640" height="4" rx="2" fill="url(#recBar)"/>
+
+  <!-- one-line summary -->
+  <text x="72" y="315" font-family="Segoe UI, Arial, sans-serif" font-weight="700" font-size="38" fill="#e0605c">Every tool call leaves a tamper-evident record</text>
+  <text x="72" y="370" font-family="Segoe UI, Arial, sans-serif" font-size="26" fill="#f2f2f5" fill-opacity="0.60">Records only, never blocks — fail-open is the hard rule</text>
+
+  <!-- glass pills -->
+  <g font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="600">
+    <g>
+      <rect x="72"  y="418" width="150" height="52" rx="26" fill="url(#chipFill)" stroke="#d9534f" stroke-opacity="0.55"/>
+      <circle cx="102" cy="444" r="6" fill="#d9534f"/>
+      <text x="120" y="452" fill="#f0b9b6">On npm</text>
+    </g>
+    <g>
+      <rect x="242" y="418" width="212" height="52" rx="26" fill="url(#chipFill)" stroke="#ffffff" stroke-opacity="0.16"/>
+      <text x="266" y="452" fill="#f2f2f5" fill-opacity="0.88">Desktop &amp; web</text>
+    </g>
+    <g>
+      <rect x="474" y="418" width="248" height="52" rx="26" fill="url(#chipFill)" stroke="#ffffff" stroke-opacity="0.16"/>
+      <text x="498" y="452" fill="#f2f2f5" fill-opacity="0.88">Zero-config install</text>
+    </g>
+    <g>
+      <rect x="742" y="418" width="232" height="52" rx="26" fill="url(#chipFill)" stroke="#ffffff" stroke-opacity="0.16"/>
+      <text x="766" y="452" fill="#f2f2f5" fill-opacity="0.88">verify-ledger CLI</text>
+    </g>
+  </g>
+
+  <!-- bottom ledger line: real fields -->
+  <g>
+    <rect x="72" y="516" width="1136" height="76" rx="16" fill="url(#glassFill)" stroke="#ffffff" stroke-opacity="0.12"/>
+    <text x="100" y="560" font-family="Consolas, monospace" font-size="21" fill="#f2f2f5">
+      <tspan fill="#8b1e2d" font-weight="700">{"seq":8893</tspan><tspan fill="#f2f2f5" fill-opacity="0.92">,</tspan><tspan fill="#a8c8f0">"ts"</tspan><tspan fill="#f2f2f5" fill-opacity="0.92">:"2026-11-13T03:49:50Z",</tspan><tspan fill="#a8c8f0">"action"</tspan><tspan fill="#f2f2f5" fill-opacity="0.92">:"llm.request",</tspan><tspan fill="#a8c8f0">"decision"</tspan><tspan fill="#f2f2f5" fill-opacity="0.92">:"allow",</tspan>
+    </text>
+    <text x="100" y="584" font-family="Consolas, monospace" font-size="19" fill="#f2f2f5" fill-opacity="0.62">
+      <tspan>"prevHash":"f50e3ffb…" → </tspan><tspan fill="#e0605c">"hash":"9091d078…" </tspan><tspan fill-opacity="0.5">(hash chain: change any line and it shows)</tspan>
+    </text>
+  </g>
+</svg>

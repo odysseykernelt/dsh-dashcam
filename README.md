@@ -1,6 +1,6 @@
 # dsh-dashcam
 
-<p align="center"><img src="assets/social-preview.png" width="860" alt="dsh-dashcam — a dashcam for your AI plugins"></p>
+<p align="center"><img src="assets/social-preview.en.png" width="860" alt="dsh-dashcam — a dashcam for your AI plugins"></p>
 
 **English** | [中文](README.zh-CN.md)
 
@@ -9,6 +9,8 @@
 **dsh-dashcam is a dashcam for your AI plugins. Once installed, which plugin read your `.env`, which server it contacted, and what commands it ran — most of it shows up in the panel. Works out of the box, no changes to your plugins; it records, rather than blocks or judges.**
 
 **Static scanners tell you what a plugin *can* do. The dashcam tells you what it *did*.**
+
+<p align="center"><img src="docs/screenshots/live.en.gif" width="860" alt="Agent Dashcam panel — live recording"></p>
 
 ## What you get to see
 
@@ -79,9 +81,7 @@ config:
 
 The plugin declares, you grant, and both must match before a call goes through; anything else is recorded as a would-deny (and actually rejected with `enforce: true`). Same ledger, same chain — all your existing history stays compatible.
 
-## The panels
-
-<img src="docs/screenshots/live.en.gif" width="860" alt="Agent Dashcam panel — live recording">
+## Replay and history
 
 | Replay | History |
 |---|---|

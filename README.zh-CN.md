@@ -10,6 +10,8 @@
 
 **静态扫描工具告诉你插件「能」做什么,行车记录仪告诉你它「做了」什么。**
 
+<p align="center"><img src="docs/screenshots/live.gif" width="860" alt="Agent Dashcam 面板 — 实时录制"></p>
+
 ## 你能看到什么
 
 | 遇到这种事 | 以前 | 装了之后 |
@@ -79,9 +81,7 @@ config:
 
 插件先声明、你授权,两边都对上才放行;对不上的会被记成"本应拒绝"(`enforce: true` 时真的拒绝)。同一条账本,历史记录全部兼容。
 
-## 面板预览
-
-<img src="docs/screenshots/live.gif" width="860" alt="Agent Dashcam 面板 — 实时录制">
+## 回放与历史
 
 | 回放 | 录像历史 |
 |---|---|
