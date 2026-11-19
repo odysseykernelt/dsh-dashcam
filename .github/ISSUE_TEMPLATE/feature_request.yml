@@ -1,0 +1,48 @@
+name: Feature request
+description: A case the dashcam doesn't cover yet / 账本现在还看不见的场景
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project grows from concrete cases, not from feature lists. The most useful request describes **a situation where the ledger failed to tell you something**, not a generic capability.
+
+        If you're not sure whether it fits, a Discussion in the *Ideas* category is fine too — this form is for when you already know what you want to see in the ledger.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The situation
+      description: |
+        Describe the concrete case. What were you doing, what did a plugin do, and what was missing when you looked at the ledger or panel?
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How you work around it today
+      description: The manual step you do instead, if any.
+    validations:
+      required: false
+  - type: dropdown
+    id: layer
+    attributes:
+      label: Which layer does this belong to
+      description: Best guess is fine.
+      multiple: true
+      options:
+        - Recording (what gets observed)
+        - Guarding / policy (what gets denied)
+        - Ledger (format, verification, redaction)
+        - Panel / UI
+        - CLI
+        - Docs
+    validations:
+      required: true
+  - type: textarea
+    id: sketch
+    attributes:
+      label: What it would look like
+      description: Optional. A ledger line shape, a panel mockup, a command — anything that makes the idea concrete.
+    validations:
+      required: false

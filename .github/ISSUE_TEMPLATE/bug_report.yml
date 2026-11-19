@@ -1,0 +1,105 @@
+name: Bug report
+description: Install, ledger, panel, or verification went wrong / 安装、账本、面板或验链出问题
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two things first, so this goes fast:
+
+        1. **The ledger is sensitive data.** It records which files were touched and when. Before pasting any of it here, run:
+           ```bash
+           dsh-dashcam redact ~/.dsh/dsh-dashcam/ledger.jsonl --out /tmp/ledger.redacted.jsonl
+           ```
+           Paste only the redacted output. Paths are folded to `$HOME`; plugin attribution stays, so we can still see who did what.
+        2. **This is not a sandbox.** The dashcam records and judges; it does not block. If your question is "why didn't it stop that call", see `docs/SPEC.md` and `SECURITY.md` → Known boundaries first — that is expected behavior, not a bug.
+
+        If the error comes from DSH itself rather than the dashcam, please open it in the [DeepSeek Harness repo](https://github.com/deepseek-ai/deepseek-harness/issues) instead.
+  - type: input
+    id: dashcam-version
+    attributes:
+      label: dsh-dashcam version
+      description: Panel footer, or `npm ls dsh-dashcam` / `dsh plugin list`.
+      placeholder: "2.2.0"
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version
+      description: Output of `dsh --version` (and the profile you installed into, e.g. `web`).
+      placeholder: "0.2.1, profile web"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Node version
+      description: Output of `node -v` and your OS (CI runs on ubuntu-latest with Node 20 and 22).
+      placeholder: "Windows 11, node v22.9.0"
+    validations:
+      required: true
+  - type: input
+    id: plugin
+    attributes:
+      label: Plugin involved (if any)
+      description: Which plugin's calls went wrong — id and version from the ledger's `plugin` / `pluginVersion` fields.
+      placeholder: "my-plugin@0.3.0"
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+      description: One or two sentences. What did you expect the ledger, the panel, or the guard to show?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: What you saw instead. Include the exact error text if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Numbered steps. A minimal one is worth more than a long description.
+        1. install ...
+        2. run ...
+        3. see ...
+    validations:
+      required: true
+  - type: textarea
+    id: ledger
+    attributes:
+      label: Redacted ledger excerpt
+      description: |
+        Paste the relevant lines (redacted, see above). `dsh-dashcam verify-ledger` should still pass on the redacted file — if it doesn't, say so, that itself is a bug.
+      value: |
+        ```
+        ```
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      description: stderr output, gate report, panel console errors — whatever you have.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I redacted the ledger excerpt before pasting it.
+          required: true
+        - label: I looked for an existing issue with the same symptom.
+          required: true
+        - label: This is not a request for a security fix (those go through private reporting).
+          required: false

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/odysseykernelt/dsh-dashcam/security/advisories/new
+    about: Do not open a public issue for security reports. Use GitHub's private vulnerability reporting.
+  - name: Questions and discussion
+    url: https://github.com/deepseek-ai/deepseek-harness/discussions
+    about: For "how do I use this" questions, ideas without a concrete case, or anything that is not a bug report.
+  - name: Found a plugin that misbehaved?
+    url: https://github.com/odysseykernelt/dsh-dashcam/discussions
+    about: Share the redacted ledger excerpt and the behavior report there — that is what the dashcam is for.
