@@ -517,6 +517,9 @@ function createDashcamPanel(options) {
   let rafId = 0;
   let tipEl = null;
   let els = null;
+  // 实时流的渲染签名（见 renderStream）：声明必须早于 buildDom，
+  // 因为 buildDom 里也会重建流。内容没变时靠它跳过整树重画。
+  let liveSig = '';
   let resizeObserver = null;
   const disposers = [];
 
@@ -763,6 +766,7 @@ function createDashcamPanel(options) {
       if (liveSearchTimer) clearTimeout(liveSearchTimer);
       if (!query) {
         state.liveSearch = { query: '', records: [], total: 0, truncated: false, active: false };
+        liveSig = ''; // 搜索接管时流容器被换过，强制重画一次
         renderStream();
         return;
       }
@@ -820,6 +824,8 @@ function createDashcamPanel(options) {
     els.chips.forEach((c) => c.classList.toggle('on', (c.dataset.ddcHf || 'all') === state.hist.filter));
     syncLiveChips();
     state.renderedSeq = 0;
+    // buildDom 换了一整套节点：清掉渲染签名，让 updateLive 必然重画一次。
+    liveSig = '';
     updateLive(null, null);
     if (state.rp.session || state.rp.events.length) renderReplayList();
     setView(state.view);
@@ -906,6 +912,9 @@ function createDashcamPanel(options) {
   }
 
   // ---------- 实时 ----------
+  // 2.2.1 闪烁修复：status/records 轮询每 2-3s 回来一次，多数轮次没有新事件。
+  // 这两处都把「内容是否真的变了」串成签名，签名不变就不碰 DOM。
+  let lastKvHtml = '';
   function updateLive(status, records) {
     if (status) state.status = status;
     const s = state.status;
@@ -930,9 +939,13 @@ function createDashcamPanel(options) {
       if (s.session && s.session.model) kv.push([t('kv.model'), s.session.model, false]);
       kv.push([t('kv.ledger'), `#${s.ledgerSeq || 0}${s.windowed ? t('unit.windowed') : ''}`, false]);
       if (s.ledgerPath) kv.push([t('kv.ledgerPath'), s.ledgerPath, false]);
-      els.sessionKv.innerHTML = kv
+      const kvHtml = kv
         .map(([k, v, warn]) => `<div class="ddc-k">${esc(k)}</div><div class="ddc-val${warn ? ' warn' : ''}">${esc(v)}</div>`)
         .join('');
+      if (lastKvHtml !== kvHtml) {
+        lastKvHtml = kvHtml;
+        els.sessionKv.innerHTML = kvHtml;
+      }
     }
 
     if (Array.isArray(records) && records.length) {
@@ -1038,7 +1051,24 @@ function createDashcamPanel(options) {
   }
 
   // 组头 = 窗口标题 + 起始时间；组内跨天插日期分隔条。整体重画但保留 scroll。
-  function renderStream() {
+  // 2.2.1 闪烁修复：轮询每 2-3s 都会走到这里，但绝大多数轮次没有新事件。
+  // 先把「会影响渲染的内容」串成签名，签名没变直接返回——不碰 DOM 就不会闪。
+  function liveSigOf() {
+    const lf = state.liveFilter;
+    return [
+      state.live.length,
+      state.live.length ? state.live[state.live.length - 1].seq : 0,
+      state.sessionDir.size,
+      [...lf.types].sort().join(','),
+      [...lf.sessions].sort().join(','),
+      [...lf.dates].sort().join(','),
+    ].join('|');
+  }
+  function renderStream(force) {
+    if (state.liveSearch.active) return;
+    const sig = liveSigOf();
+    if (!force && sig === liveSig) return;
+    liveSig = sig;
     const scroller = els.stream;
     const savedScroll = scroller.scrollTop;
     const list = state.live.filter(liveFilterPass); // 升序
@@ -1492,7 +1522,17 @@ function createDashcamPanel(options) {
   }
 
   function updateSessionDirectory(entries) {
-    state.sessionDir = entries instanceof Map ? entries : new Map();
+    const next = entries instanceof Map ? entries : new Map();
+    // 2.2.1 闪烁修复：目录 30s 拉一次，多数时候一模一样。
+    // 标题没变就没有任何组头需要重画，直接返回——否则整条流每 30s 白闪一次。
+    let changed = next.size !== state.sessionDir.size;
+    if (!changed) {
+      for (const [id, title] of next) {
+        if (state.sessionDir.get(id) !== title) { changed = true; break; }
+      }
+    }
+    if (!changed) return;
+    state.sessionDir = next;
     if (!state.liveSearch.active) renderStream();
   }
 
@@ -1688,8 +1728,13 @@ function mountDashcam() {
       // 游标向前推进（to=本批最早 seq-1），直到覆盖 session.from 或达 2000 上限。
       loadSession: async (session) => {
         try {
+          // 2.2.1 修复：这里原来用 `session.to - 200` 当窗口起点——seq 是**全局**
+          // 序列号，窗口里会混进别的会话的事件，回放就出现了不属于这个会话的对话。
+          // 现在两条都改：① 请求带 session 过滤（服务端按 record.session 匹配）；
+          // ② 首屏用 tail 取这个会话的尾部 200 条，游标同步向前补齐。
+          const q = `session=${encodeURIComponent(session.id)}`;
           const first = await fetchJSON(
-            `/api/dsh-dashcam/records?since=${Math.max(session.from - 1, session.to - 200)}&to=${session.to}&limit=200`,
+            `/api/dsh-dashcam/records?${q}&to=${session.to}&tail=200`,
           );
           if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
           const records = first.records || [];
@@ -1698,7 +1743,7 @@ function mountDashcam() {
           let loaded = records.length;
           while (cursor >= session.from && loaded < 2000) {
             const batch = await fetchJSON(
-              `/api/dsh-dashcam/records?since=${Math.max(session.from - 1, cursor - 400)}&to=${cursor}&limit=400`,
+              `/api/dsh-dashcam/records?${q}&since=${Math.max(session.from - 1, 0)}&to=${cursor}&limit=400`,
             );
             if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
             const older = batch.records || [];

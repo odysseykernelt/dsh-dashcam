@@ -132,8 +132,13 @@ export function mountDashcam() {
       // 游标向前推进（to=本批最早 seq-1），直到覆盖 session.from 或达 2000 上限。
       loadSession: async (session) => {
         try {
+          // 2.2.1 修复：这里原来用 `session.to - 200` 当窗口起点——seq 是**全局**
+          // 序列号，窗口里会混进别的会话的事件，回放就出现了不属于这个会话的对话。
+          // 现在两条都改：① 请求带 session 过滤（服务端按 record.session 匹配）；
+          // ② 首屏用 tail 取这个会话的尾部 200 条，游标同步向前补齐。
+          const q = `session=${encodeURIComponent(session.id)}`;
           const first = await fetchJSON(
-            `/api/dsh-dashcam/records?since=${Math.max(session.from - 1, session.to - 200)}&to=${session.to}&limit=200`,
+            `/api/dsh-dashcam/records?${q}&to=${session.to}&tail=200`,
           );
           if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
           const records = first.records || [];
@@ -142,7 +147,7 @@ export function mountDashcam() {
           let loaded = records.length;
           while (cursor >= session.from && loaded < 2000) {
             const batch = await fetchJSON(
-              `/api/dsh-dashcam/records?since=${Math.max(session.from - 1, cursor - 400)}&to=${cursor}&limit=400`,
+              `/api/dsh-dashcam/records?${q}&since=${Math.max(session.from - 1, 0)}&to=${cursor}&limit=400`,
             );
             if (window.__DSH_DASHCAM_PANEL__ !== generation) return;
             const older = batch.records || [];

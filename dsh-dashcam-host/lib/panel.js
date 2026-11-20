@@ -389,6 +389,9 @@ function parseQuery(req) {
   const toRaw = Number(url.searchParams.get('to'));
   const limit = Number(url.searchParams.get('limit'));
   const tail = Number(url.searchParams.get('tail'));
+  // 2.2.1：会话过滤。seq 是全局序列号，同一个 seq 窗口里会混进别的会话的事件；
+  // 回放要的是「这个会话的记录」，必须按 record.session 精确筛。
+  const sessionRaw = (url.searchParams.get('session') || '').trim();
   return {
     since: Number.isFinite(since) && since > 0 ? Math.floor(since) : 0,
     to: Number.isFinite(toRaw) && toRaw > 0 ? Math.floor(toRaw) : null,
@@ -396,6 +399,7 @@ function parseQuery(req) {
     // tail（2.2.0）：只要窗口内**最后** N 条——首屏静默加载用，避免「从账本
     // 头开始慢慢追」。tail 与 since 互斥：给了 tail 就忽略 since。
     tail: Number.isFinite(tail) && tail > 0 ? Math.min(Math.floor(tail), RECORDS_LIMIT_MAX) : 0,
+    session: sessionRaw || null,
   };
 }
 
@@ -411,12 +415,13 @@ async function serveStatus(req, res, deps) {
 }
 
 async function serveRecords(req, res, deps) {
-  const { since, to, limit, tail } = parseQuery(req);
+  const { since, to, limit, tail, session } = parseQuery(req);
   const records = await readLedgerTailCached(deps.ledgerPath);
+  const inSession = (r) => !session || r.session === session;
   if (tail) {
-    // tail 口径：先按 to 过滤，再取窗口内最后 N 条（升序返回，面板拿
+    // tail 口径：先按 to / session 过滤，再取窗口内最后 N 条（升序返回，面板拿
     // records[0].seq - 1 当向前补齐的游标）。
-    const filtered = to ? records.filter((r) => (Number(r.seq) || 0) <= to) : records;
+    const filtered = records.filter((r) => inSession(r) && (!to || (Number(r.seq) || 0) <= to));
     const out = filtered.slice(-tail).map(sanitizeRecord).filter(Boolean);
     const body = JSON.stringify({ ok: true, lastSeq: out.length ? out[out.length - 1].seq : 0, truncated: false, records: out });
     res.writeHead(200, {
@@ -438,6 +443,7 @@ async function serveRecords(req, res, deps) {
     const seq = Number(record.seq) || 0;
     if (seq <= since) continue;
     if (to && seq > to) continue;
+    if (!inSession(record)) continue;
     if (out.length >= limit) {
       truncated = true;
       break;
